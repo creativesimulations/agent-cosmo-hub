@@ -107,7 +107,34 @@ const Index = () => {
     if (result.success) setInstallStep(4);
   };
 
-  return (
+  const handleLaunch = async () => {
+    setLaunching(true);
+    setLaunchOutput([`$ ainoval start --name "${agentName}" --port ${gatewayPort}`]);
+
+    // Write config first
+    await systemAPI.writeAgentConfig({
+      name: agentName,
+      port: parseInt(gatewayPort) || 8000,
+      provider: selectedProvider,
+    });
+    setLaunchOutput((prev) => [...prev, "✓ Configuration saved"]);
+
+    // Launch the agent
+    const result = await systemAPI.launchAgent(agentName, parseInt(gatewayPort) || 8000);
+    setLaunching(false);
+
+    if (result.success) {
+      setLaunchOutput((prev) => [
+        ...prev,
+        `✓ ${agentName} is running on http://localhost:${gatewayPort}`,
+        "✓ Gateway API active",
+        "✓ All systems operational",
+      ]);
+    } else {
+      setLaunchOutput((prev) => [...prev, `✗ Failed to start: ${result.stderr || 'Unknown error'}`]);
+    }
+  };
+
     <div className="flex-1 flex items-center justify-center min-h-screen p-8">
       <AnimatePresence mode="wait">
         {mode === "choose" && (
