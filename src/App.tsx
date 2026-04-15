@@ -3,8 +3,16 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import Index from "./pages/Index.tsx";
-import NotFound from "./pages/NotFound.tsx";
+import AppLayout from "./components/layout/AppLayout";
+import Index from "./pages/Index";
+import Dashboard from "./pages/Dashboard";
+import SubAgents from "./pages/SubAgents";
+import LLMConfig from "./pages/LLMConfig";
+import APIKeys from "./pages/APIKeys";
+import Skills from "./pages/Skills";
+import SettingsPage from "./pages/SettingsPage";
+import TerminalPage from "./pages/TerminalPage";
+import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
@@ -15,8 +23,16 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Index />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+          <Route element={<AppLayout />}>
+            <Route path="/" element={<Index />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/agents" element={<SubAgents />} />
+            <Route path="/models" element={<LLMConfig />} />
+            <Route path="/keys" element={<APIKeys />} />
+            <Route path="/skills" element={<Skills />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/terminal" element={<TerminalPage />} />
+          </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
