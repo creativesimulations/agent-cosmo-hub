@@ -309,7 +309,7 @@ logging:
 async function simulateCommand(cmd: string): Promise<CommandResult> {
   await delay(400 + Math.random() * 600);
 
-  if (cmd.includes('ver') || cmd.includes('sw_vers')) {
+  if (cmd === 'ver' || cmd.includes('sw_vers')) {
     return { success: true, stdout: 'Microsoft Windows [Version 10.0.22631.4460]', stderr: '', code: 0 };
   }
   if (cmd.includes('wsl --status')) {
