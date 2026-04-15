@@ -64,23 +64,44 @@ const Index = () => {
   const handleClone = async () => {
     setCloning(true);
     setCloneProgress(0);
-    for (let i = 0; i <= 100; i += 3) {
-      await new Promise((r) => setTimeout(r, 80));
-      setCloneProgress(i);
-    }
+    setCloneOutput(["$ git clone https://github.com/ainoval/agent.git"]);
+
+    // Simulate progress while the real command runs
+    const progressInterval = setInterval(() => {
+      setCloneProgress((prev) => Math.min(prev + 3, 90));
+    }, 200);
+
+    const result = await systemAPI.cloneRepo(gitToken);
+
+    clearInterval(progressInterval);
+    setCloneProgress(100);
+    setCloneOutput((prev) => [
+      ...prev,
+      result.success ? "✓ Repository cloned successfully" : `✗ ${result.stderr || 'Clone failed'}`,
+    ]);
     setCloning(false);
-    setInstallStep(3);
+    if (result.success) setInstallStep(3);
   };
 
   const handlePipInstall = async () => {
     setInstalling(true);
     setPipProgress(0);
-    for (let i = 0; i <= 100; i += 2) {
-      await new Promise((r) => setTimeout(r, 100));
-      setPipProgress(i);
-    }
+    setPipOutput(["$ python3 -m venv .venv", "$ pip install -e ."]);
+
+    const progressInterval = setInterval(() => {
+      setPipProgress((prev) => Math.min(prev + 2, 90));
+    }, 250);
+
+    const result = await systemAPI.setupPythonEnv();
+
+    clearInterval(progressInterval);
+    setPipProgress(100);
+    setPipOutput((prev) => [
+      ...prev,
+      result.success ? "✓ Agent installed successfully" : `✗ ${result.stderr || 'Install failed'}`,
+    ]);
     setInstalling(false);
-    setInstallStep(4);
+    if (result.success) setInstallStep(4);
   };
 
   return (
