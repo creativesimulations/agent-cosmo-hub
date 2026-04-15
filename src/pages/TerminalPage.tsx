@@ -10,7 +10,7 @@ interface TerminalLine {
 }
 
 const initialLines: TerminalLine[] = [
-  { type: "system", content: "Ainoval Agent Terminal v1.0" },
+  { type: "system", content: "Ronbot Agent Terminal v1.0" },
   { type: "system", content: "Type 'help' for available commands." },
   { type: "system", content: "─".repeat(50) },
   { type: "input", content: "$ agent status" },
@@ -74,7 +74,7 @@ const TerminalPage = () => {
           <div className="w-3 h-3 rounded-full bg-destructive/60" />
           <div className="w-3 h-3 rounded-full bg-warning/60" />
           <div className="w-3 h-3 rounded-full bg-success/60" />
-          <span className="text-xs text-muted-foreground ml-2 font-mono">ainoval-terminal</span>
+          <span className="text-xs text-muted-foreground ml-2 font-mono">ronbot-terminal</span>
         </div>
 
         {/* Terminal Content */}

@@ -22,6 +22,7 @@ import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import PrerequisiteCheck from "./PrerequisiteCheck";
 import { systemAPI } from "@/lib/systemAPI";
+import ronbotLogo from "@/assets/ronbot-logo.png";
 
 type Mode = "choose" | "connect" | "install";
 type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;

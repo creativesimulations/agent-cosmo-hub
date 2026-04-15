@@ -36,7 +36,7 @@ const versions: Version[] = [
     version: "0.1.0",
     date: "2024-01-10",
     changes: [
-      "Initial release of Ainoval Agent",
+      "Initial release of Ronbot Agent",
       "Core skills: web_search, code_execution, file_management",
       "Gateway support: REST API, Telegram, Discord",
     ],
@@ -108,7 +108,7 @@ const UpdateManager = () => {
           </div>
           <div className="glass-subtle rounded-lg p-3 text-xs text-muted-foreground space-y-1">
             <p className="text-foreground/80 font-medium mb-2">This will run:</p>
-            <p className="font-mono">$ cd ainoval-agent && git pull origin main</p>
+            <p className="font-mono">$ cd ronbot-agent && git pull origin main</p>
             <p className="font-mono">$ pip install -e . --upgrade</p>
             <p className="font-mono">$ agent restart</p>
           </div>

@@ -248,14 +248,14 @@ export const systemAPI = {
 
   /** Clone the agent repo */
   async cloneRepo(token: string, targetDir?: string): Promise<CommandResult> {
-    const dir = targetDir || '~/ainoval-agent';
-    const repoUrl = `https://${token}@github.com/ainoval/agent.git`;
+    const dir = targetDir || '~/ronbot-agent';
+    const repoUrl = `https://${token}@github.com/ronbot/agent.git`;
     return this.runCommand(`git clone ${repoUrl} ${dir}`, { timeout: 120000 });
   },
 
   /** Create venv and install agent */
   async setupPythonEnv(agentDir?: string): Promise<CommandResult> {
-    const dir = agentDir || '~/ainoval-agent';
+    const dir = agentDir || '~/ronbot-agent';
     const cmds = [
       `cd ${dir}`,
       'python3 -m venv .venv',
@@ -267,16 +267,16 @@ export const systemAPI = {
 
   /** Launch the agent */
   async launchAgent(name: string, port: number = 8000): Promise<CommandResult> {
-    const dir = '~/ainoval-agent';
+    const dir = '~/ronbot-agent';
     return this.runCommand(
-      `cd ${dir} && source .venv/bin/activate && ainoval start --name "${name}" --port ${port}`,
+      `cd ${dir} && source .venv/bin/activate && ronbot start --name "${name}" --port ${port}`,
       { timeout: 30000, cwd: dir }
     );
   },
 
   /** Write agent config.yaml */
   async writeAgentConfig(config: { name: string; port: number; provider: string }): Promise<{ success: boolean }> {
-    const yaml = `# Ainoval Agent Configuration
+    const yaml = `# Ronbot Agent Configuration
 agent:
   name: "${config.name}"
   version: "0.1.0"
@@ -300,7 +300,7 @@ logging:
   rotation: true
 `;
     const homeDir = (await this.getPlatform()).homeDir;
-    return this.writeFile(`${homeDir}/ainoval-agent/config.yaml`, yaml);
+    return this.writeFile(`${homeDir}/ronbot-agent/config.yaml`, yaml);
   },
 };
 
@@ -335,13 +335,13 @@ async function simulateCommand(cmd: string): Promise<CommandResult> {
   }
   if (cmd.includes('git clone')) {
     await delay(2000);
-    return { success: true, stdout: "Cloning into 'ainoval-agent'...\ndone.", stderr: '', code: 0 };
+    return { success: true, stdout: "Cloning into 'ronbot-agent'...\ndone.", stderr: '', code: 0 };
   }
   if (cmd.includes('pip install') || cmd.includes('venv')) {
     await delay(3000);
-    return { success: true, stdout: 'Successfully installed ainoval-agent-0.1.0', stderr: '', code: 0 };
+    return { success: true, stdout: 'Successfully installed ronbot-agent-0.1.0', stderr: '', code: 0 };
   }
-  if (cmd.includes('ainoval start')) {
+  if (cmd.includes('ronbot start')) {
     return { success: true, stdout: 'Agent started successfully', stderr: '', code: 0 };
   }
   if (cmd.includes('winget install') || cmd.includes('brew install') || cmd.includes('apt-get install') || cmd.includes('curl')) {
