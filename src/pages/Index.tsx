@@ -147,21 +147,21 @@ const Index = () => {
             className="max-w-2xl w-full space-y-8"
           >
             <div className="text-center space-y-4">
-              <motion.div
+              <motion.img
+                src={ronbotLogo}
+                alt="Ronbot"
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.1 }}
-                className="inline-flex items-center justify-center w-20 h-20 rounded-2xl gradient-primary glow-primary mx-auto"
-              >
-                <Zap className="w-10 h-10 text-primary-foreground" />
-              </motion.div>
+                className="w-20 h-20 mx-auto"
+              />
               <motion.h1
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2 }}
                 className="text-4xl font-bold text-foreground tracking-tight"
               >
-                Ainoval
+                Ronbot
               </motion.h1>
               <motion.p
                 initial={{ opacity: 0 }}
