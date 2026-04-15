@@ -47,6 +47,9 @@ const Index = () => {
   const [cloning, setCloning] = useState(false);
   const [pipProgress, setPipProgress] = useState(0);
   const [installing, setInstalling] = useState(false);
+  const [cloneOutput, setCloneOutput] = useState<string[]>([]);
+  const [pipOutput, setPipOutput] = useState<string[]>([]);
+  const [selectedProvider, setSelectedProvider] = useState("openai");
   const [agentName, setAgentName] = useState("Ron");
   const navigate = useNavigate();
 
