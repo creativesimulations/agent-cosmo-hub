@@ -30,9 +30,9 @@ interface Prerequisite {
 const initialPrereqs: Prerequisite[] = [
   { id: "os", name: "Operating System", description: "Detecting platform...", status: "pending", required: true },
   { id: "wsl2", name: "WSL2 (Windows)", description: "Windows Subsystem for Linux 2", status: "pending", required: true, windowsOnly: true },
-  { id: "python", name: "Python 3.11+", description: "Required runtime for Hermes", status: "pending", required: true },
+  { id: "python", name: "Python 3.11+", description: "Required runtime for agent", status: "pending", required: true },
   { id: "pip", name: "pip / pipx", description: "Python package manager", status: "pending", required: true },
-  { id: "git", name: "Git", description: "Version control for cloning Hermes repo", status: "pending", required: true },
+  { id: "git", name: "Git", description: "Version control for cloning agent repo", status: "pending", required: true },
   { id: "ollama", name: "Ollama", description: "Local model runtime (optional)", status: "pending", required: false },
 ];
 
@@ -110,7 +110,7 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
           <h2 className="text-xl font-semibold text-foreground">System Prerequisites</h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          We'll scan your system and install everything Hermes needs to run.
+          We'll scan your system and install everything your agent needs to run.
         </p>
       </div>
 

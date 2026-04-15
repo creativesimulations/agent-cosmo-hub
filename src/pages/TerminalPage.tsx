@@ -10,12 +10,12 @@ interface TerminalLine {
 }
 
 const initialLines: TerminalLine[] = [
-  { type: "system", content: "Hermes Agent Terminal v1.0" },
+  { type: "system", content: "Ainoval Agent Terminal v1.0" },
   { type: "system", content: "Type 'help' for available commands." },
   { type: "system", content: "─".repeat(50) },
-  { type: "input", content: "$ hermes status" },
+  { type: "input", content: "$ agent status" },
   { type: "output", content: "Agent: online | Uptime: 4h 23m | Sub-agents: 3" },
-  { type: "input", content: "$ hermes logs --tail 3" },
+  { type: "input", content: "$ agent logs --tail 3" },
   { type: "output", content: "[14:23:05] Sub-agent 'research-agent' spawned" },
   { type: "output", content: "[14:22:58] Task delegation: market analysis" },
   { type: "output", content: "[14:22:41] Rate limit warning: OpenAI 80%" },
@@ -41,14 +41,14 @@ const TerminalPage = () => {
     if (cmd === "help") {
       newLines.push({
         type: "output",
-        content: "Available: hermes status | hermes logs | hermes restart | hermes config | clear",
+        content: "Available: agent status | agent logs | agent restart | agent config | clear",
       });
     } else if (cmd === "clear") {
       setLines([]);
       setInput("");
       return;
-    } else if (cmd === "hermes restart") {
-      newLines.push({ type: "system", content: "Restarting Hermes agent..." });
+    } else if (cmd === "agent restart") {
+      newLines.push({ type: "system", content: "Restarting agent..." });
       newLines.push({ type: "output", content: "✓ Agent restarted successfully" });
     } else {
       newLines.push({ type: "output", content: `Executing: ${input}` });
@@ -65,7 +65,7 @@ const TerminalPage = () => {
           <TerminalIcon className="w-6 h-6 text-primary" />
           Terminal
         </h1>
-        <p className="text-sm text-muted-foreground">Direct CLI access to Hermes</p>
+        <p className="text-sm text-muted-foreground">Direct CLI access to your agent</p>
       </div>
 
       <GlassCard className="flex-1 flex flex-col overflow-hidden p-0">
@@ -74,7 +74,7 @@ const TerminalPage = () => {
           <div className="w-3 h-3 rounded-full bg-destructive/60" />
           <div className="w-3 h-3 rounded-full bg-warning/60" />
           <div className="w-3 h-3 rounded-full bg-success/60" />
-          <span className="text-xs text-muted-foreground ml-2 font-mono">hermes-terminal</span>
+          <span className="text-xs text-muted-foreground ml-2 font-mono">ainoval-terminal</span>
         </div>
 
         {/* Terminal Content */}

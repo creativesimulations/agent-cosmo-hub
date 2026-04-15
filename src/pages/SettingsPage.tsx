@@ -49,7 +49,7 @@ const SettingsPage = () => {
           <div className="space-y-3">
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">Agent Name</label>
-              <Input defaultValue="my-hermes-agent" className="bg-background/50 border-white/10" />
+              <Input defaultValue="Ron" className="bg-background/50 border-white/10" />
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">Gateway Port</label>

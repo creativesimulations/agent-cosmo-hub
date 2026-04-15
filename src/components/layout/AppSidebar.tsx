@@ -60,7 +60,7 @@ const AppSidebar = () => {
             <Zap className="w-4 h-4 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-sm font-semibold text-foreground tracking-tight">Hermes</h1>
+            <h1 className="text-sm font-semibold text-foreground tracking-tight">Ainoval</h1>
             <p className="text-[10px] text-muted-foreground">Agent Control Panel</p>
           </div>
         </NavLink>

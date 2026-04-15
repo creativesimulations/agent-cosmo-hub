@@ -4,11 +4,11 @@ import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-const defaultConfig = `# Hermes Agent Configuration
+const defaultConfig = `# Ainoval Agent Configuration
 # config.yaml
 
 agent:
-  name: "my-hermes-agent"
+  name: "Ron"
   version: "0.1.0"
   max_sub_agents: 10
   auto_restart: true
@@ -43,7 +43,7 @@ providers:
 
 logging:
   level: "info"
-  file: "hermes.log"
+  file: "agent.log"
   max_size: "50MB"
   rotation: true
 
@@ -91,7 +91,7 @@ const ConfigEditor = () => {
             <FileCode className="w-6 h-6 text-primary" />
             Config Editor
           </h1>
-          <p className="text-sm text-muted-foreground">Edit your Hermes agent configuration</p>
+          <p className="text-sm text-muted-foreground">Edit your agent configuration</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={handleRevert} className="text-muted-foreground hover:text-foreground">

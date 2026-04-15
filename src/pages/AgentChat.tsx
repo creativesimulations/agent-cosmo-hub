@@ -26,7 +26,7 @@ const AgentChat = () => {
     {
       id: "welcome",
       role: "assistant",
-      content: "Hello! I'm your Hermes agent. How can I assist you today? I can help with tasks, answer questions, or delegate work to specialized sub-agents.",
+      content: "Hello! I'm Ron, your AI agent. How can I assist you today? I can help with tasks, answer questions, or delegate work to specialized sub-agents.",
       timestamp: new Date(),
     },
   ]);
@@ -73,7 +73,7 @@ const AgentChat = () => {
           <MessageSquare className="w-6 h-6 text-primary" />
           Agent Chat
         </h1>
-        <p className="text-sm text-muted-foreground">Interact directly with your Hermes agent</p>
+        <p className="text-sm text-muted-foreground">Interact directly with your AI agent</p>
       </div>
 
       <GlassCard className="flex-1 flex flex-col overflow-hidden p-0">
@@ -125,7 +125,7 @@ const AgentChat = () => {
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Message your Hermes agent..."
+              placeholder="Message your agent..."
               className="bg-background/50 border-white/10 focus:border-primary/50 flex-1"
               disabled={isStreaming}
             />
