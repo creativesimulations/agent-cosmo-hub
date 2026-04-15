@@ -11,18 +11,24 @@ import {
   Loader2,
   Server,
   Globe,
+  GitBranch,
+  FolderGit2,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import PrerequisiteCheck from "./PrerequisiteCheck";
 
 type Mode = "choose" | "connect" | "install";
-type InstallStep = 0 | 1 | 2 | 3 | 4;
+type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 const installSteps = [
-  { title: "Prerequisites", desc: "Check Python & pip installation" },
-  { title: "Install Hermes", desc: "pip install hermes-agent" },
+  { title: "System Prerequisites", desc: "Detect & install required dependencies" },
+  { title: "Git Authentication", desc: "Configure Git access for repo cloning" },
+  { title: "Clone Hermes", desc: "Clone the NousResearch/hermes-agent repository" },
+  { title: "Python Environment", desc: "Create virtual environment & install Hermes" },
   { title: "Configure Provider", desc: "Set up your LLM provider" },
   { title: "Initial Config", desc: "Configure agent settings" },
   { title: "Launch Agent", desc: "Start your Hermes agent" },
@@ -33,6 +39,11 @@ const Index = () => {
   const [connectUrl, setConnectUrl] = useState("http://localhost:8000");
   const [connecting, setConnecting] = useState(false);
   const [installStep, setInstallStep] = useState<InstallStep>(0);
+  const [gitToken, setGitToken] = useState("");
+  const [cloneProgress, setCloneProgress] = useState(0);
+  const [cloning, setCloning] = useState(false);
+  const [pipProgress, setPipProgress] = useState(0);
+  const [installing, setInstalling] = useState(false);
   const navigate = useNavigate();
 
   const handleConnect = () => {
@@ -41,6 +52,28 @@ const Index = () => {
       setConnecting(false);
       navigate("/dashboard");
     }, 2000);
+  };
+
+  const handleClone = async () => {
+    setCloning(true);
+    setCloneProgress(0);
+    for (let i = 0; i <= 100; i += 3) {
+      await new Promise((r) => setTimeout(r, 80));
+      setCloneProgress(i);
+    }
+    setCloning(false);
+    setInstallStep(3);
+  };
+
+  const handlePipInstall = async () => {
+    setInstalling(true);
+    setPipProgress(0);
+    for (let i = 0; i <= 100; i += 2) {
+      await new Promise((r) => setTimeout(r, 100));
+      setPipProgress(i);
+    }
+    setInstalling(false);
+    setInstallStep(4);
   };
 
   return (
@@ -54,7 +87,6 @@ const Index = () => {
             exit={{ opacity: 0, scale: 0.95 }}
             className="max-w-2xl w-full space-y-8"
           >
-            {/* Hero */}
             <div className="text-center space-y-4">
               <motion.div
                 initial={{ opacity: 0, y: -20 }}
@@ -82,7 +114,6 @@ const Index = () => {
               </motion.p>
             </div>
 
-            {/* Options */}
             <div className="grid grid-cols-2 gap-4">
               <GlassCard
                 className="cursor-pointer hover:border-primary/30 transition-all group"
@@ -109,7 +140,7 @@ const Index = () => {
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">Install & Setup</h3>
                   <p className="text-sm text-muted-foreground">
-                    Walk through the full Hermes installation
+                    Full automated Hermes installation — no terminal needed
                   </p>
                 </div>
               </GlassCard>
@@ -125,12 +156,7 @@ const Index = () => {
             exit={{ opacity: 0, x: -30 }}
             className="max-w-md w-full space-y-6"
           >
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setMode("choose")}
-              className="text-muted-foreground hover:text-foreground"
-            >
+            <Button variant="ghost" size="sm" onClick={() => setMode("choose")} className="text-muted-foreground hover:text-foreground">
               <ArrowLeft className="w-4 h-4 mr-1" /> Back
             </Button>
 
@@ -140,11 +166,8 @@ const Index = () => {
                   <Server className="w-5 h-5 text-primary" />
                   Connect to Agent
                 </h2>
-                <p className="text-sm text-muted-foreground">
-                  Enter the URL of your running Hermes gateway
-                </p>
+                <p className="text-sm text-muted-foreground">Enter the URL of your running Hermes gateway</p>
               </div>
-
               <div className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground">Gateway URL</label>
@@ -155,19 +178,13 @@ const Index = () => {
                     className="bg-background/50 border-white/10 focus:border-primary/50"
                   />
                 </div>
-
                 <div className="glass-subtle rounded-lg p-3 flex items-start gap-2">
                   <Globe className="w-4 h-4 text-accent mt-0.5 shrink-0" />
                   <p className="text-xs text-muted-foreground">
                     Auto-detection: We'll also scan localhost for running instances
                   </p>
                 </div>
-
-                <Button
-                  onClick={handleConnect}
-                  disabled={connecting}
-                  className="w-full gradient-primary text-primary-foreground hover:opacity-90"
-                >
+                <Button onClick={handleConnect} disabled={connecting} className="w-full gradient-primary text-primary-foreground hover:opacity-90">
                   {connecting ? (
                     <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Connecting...</>
                   ) : (
@@ -198,54 +215,113 @@ const Index = () => {
 
             {/* Step Indicator */}
             <div className="flex items-center gap-1">
-              {installSteps.map((step, i) => (
-                <div key={i} className="flex-1 flex items-center gap-1">
-                  <div
-                    className={cn(
-                      "h-1 flex-1 rounded-full transition-all",
-                      i <= installStep ? "gradient-primary" : "bg-white/10"
-                    )}
-                  />
+              {installSteps.map((_, i) => (
+                <div key={i} className="flex-1">
+                  <div className={cn("h-1 rounded-full transition-all", i <= installStep ? "gradient-primary" : "bg-white/10")} />
                 </div>
               ))}
             </div>
 
             <GlassCard className="space-y-5">
               <div className="space-y-1">
-                <p className="text-xs text-primary font-mono">
-                  Step {installStep + 1} of {installSteps.length}
-                </p>
-                <h2 className="text-xl font-semibold text-foreground">
-                  {installSteps[installStep].title}
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  {installSteps[installStep].desc}
-                </p>
+                <p className="text-xs text-primary font-mono">Step {installStep + 1} of {installSteps.length}</p>
+                <h2 className="text-xl font-semibold text-foreground">{installSteps[installStep].title}</h2>
+                <p className="text-sm text-muted-foreground">{installSteps[installStep].desc}</p>
               </div>
 
-              {/* Step Content */}
               <div className="glass-subtle rounded-lg p-4 space-y-3">
+                {/* Step 0: Prerequisites */}
                 {installStep === 0 && (
-                  <div className="space-y-2 font-mono text-sm">
-                    <p className="text-muted-foreground">$ python3 --version</p>
-                    <p className="text-success">Python 3.11.5</p>
-                    <p className="text-muted-foreground">$ pip --version</p>
-                    <p className="text-success">pip 23.3.1</p>
-                    <div className="flex items-center gap-2 pt-2">
-                      <CheckCircle2 className="w-4 h-4 text-success" />
-                      <span className="text-success text-xs">All prerequisites met</span>
-                    </div>
-                  </div>
+                  <PrerequisiteCheck onComplete={() => setInstallStep(1)} />
                 )}
+
+                {/* Step 1: Git Authentication */}
                 {installStep === 1 && (
-                  <div className="space-y-2 font-mono text-sm">
-                    <p className="text-muted-foreground">$ pip install hermes-agent</p>
-                    <p className="text-foreground/70">Collecting hermes-agent...</p>
-                    <p className="text-foreground/70">Installing collected packages...</p>
-                    <p className="text-success">Successfully installed hermes-agent-0.1.0</p>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <GitBranch className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium text-foreground">GitHub Access Token</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Enter a GitHub Personal Access Token (PAT) to clone the Hermes repository. 
+                      You can generate one at github.com → Settings → Developer settings → Personal access tokens.
+                    </p>
+                    <Input
+                      type="password"
+                      value={gitToken}
+                      onChange={(e) => setGitToken(e.target.value)}
+                      placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                      className="bg-background/50 border-white/10 font-mono text-sm"
+                    />
+                    <div className="glass-subtle rounded-lg p-2 text-xs text-muted-foreground">
+                      Required scopes: <code className="text-accent">repo</code> (read access)
+                    </div>
+                    <Button
+                      onClick={() => setInstallStep(2)}
+                      disabled={!gitToken}
+                      className="w-full gradient-primary text-primary-foreground"
+                    >
+                      Save & Continue <ArrowRight className="w-4 h-4 ml-1" />
+                    </Button>
                   </div>
                 )}
+
+                {/* Step 2: Clone Repo */}
                 {installStep === 2 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FolderGit2 className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium text-foreground">Clone Repository</span>
+                    </div>
+                    <div className="font-mono text-sm space-y-1">
+                      <p className="text-muted-foreground">$ git clone https://github.com/NousResearch/hermes-agent.git</p>
+                      {cloning && (
+                        <>
+                          <p className="text-foreground/70">Cloning into 'hermes-agent'...</p>
+                          <Progress value={cloneProgress} className="h-1 mt-2" />
+                          <p className="text-xs text-muted-foreground">{cloneProgress}% complete</p>
+                        </>
+                      )}
+                      {!cloning && cloneProgress >= 100 && (
+                        <p className="text-success">✓ Repository cloned successfully</p>
+                      )}
+                    </div>
+                    {!cloning && cloneProgress === 0 && (
+                      <Button onClick={handleClone} className="w-full gradient-primary text-primary-foreground">
+                        Clone Repository <ArrowRight className="w-4 h-4 ml-1" />
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Step 3: Python Environment */}
+                {installStep === 3 && (
+                  <div className="space-y-3">
+                    <div className="font-mono text-sm space-y-1">
+                      <p className="text-muted-foreground">$ python3 -m venv hermes-env</p>
+                      <p className="text-success">✓ Virtual environment created</p>
+                      <p className="text-muted-foreground">$ pip install -e ./hermes-agent</p>
+                      {installing && (
+                        <>
+                          <p className="text-foreground/70">Installing hermes-agent and dependencies...</p>
+                          <Progress value={pipProgress} className="h-1 mt-2" />
+                          <p className="text-xs text-muted-foreground">{pipProgress}% complete</p>
+                        </>
+                      )}
+                      {!installing && pipProgress >= 100 && (
+                        <p className="text-success">✓ hermes-agent installed successfully</p>
+                      )}
+                    </div>
+                    {!installing && pipProgress === 0 && (
+                      <Button onClick={handlePipInstall} className="w-full gradient-primary text-primary-foreground">
+                        Install Hermes <ArrowRight className="w-4 h-4 ml-1" />
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Step 4: Configure Provider */}
+                {installStep === 4 && (
                   <div className="space-y-3">
                     <label className="text-sm font-medium text-foreground">Default LLM Provider</label>
                     <div className="grid grid-cols-2 gap-2">
@@ -260,59 +336,63 @@ const Index = () => {
                     </div>
                   </div>
                 )}
-                {installStep === 3 && (
+
+                {/* Step 5: Agent Config */}
+                {installStep === 5 && (
                   <div className="space-y-3">
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-foreground">Agent Name</label>
-                      <Input
-                        placeholder="my-hermes-agent"
-                        className="bg-background/50 border-white/10"
-                      />
+                      <Input placeholder="my-hermes-agent" className="bg-background/50 border-white/10" />
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-foreground">Gateway Port</label>
-                      <Input
-                        defaultValue="8000"
-                        className="bg-background/50 border-white/10"
-                      />
+                      <Input defaultValue="8000" className="bg-background/50 border-white/10" />
                     </div>
                   </div>
                 )}
-                {installStep === 4 && (
+
+                {/* Step 6: Launch */}
+                {installStep === 6 && (
                   <div className="space-y-2 font-mono text-sm">
                     <p className="text-muted-foreground">$ hermes start</p>
                     <p className="text-foreground/70">Starting Hermes agent...</p>
                     <p className="text-success">✓ Agent running on http://localhost:8000</p>
                     <p className="text-success">✓ Gateway API active</p>
+                    <p className="text-success">✓ All systems operational</p>
                   </div>
                 )}
               </div>
 
-              <div className="flex justify-between">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={installStep === 0}
-                  onClick={() => setInstallStep((s) => (s - 1) as InstallStep)}
-                  className="text-muted-foreground"
-                >
-                  Previous
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    if (installStep === 4) {
-                      navigate("/dashboard");
-                    } else {
-                      setInstallStep((s) => (s + 1) as InstallStep);
-                    }
-                  }}
-                  className="gradient-primary text-primary-foreground"
-                >
-                  {installStep === 4 ? "Open Dashboard" : "Next"}
-                  <ArrowRight className="w-4 h-4 ml-1" />
-                </Button>
-              </div>
+              {/* Nav buttons (skip for step 0 which has its own continue) */}
+              {installStep > 0 && (
+                <div className="flex justify-between">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={installStep === 0}
+                    onClick={() => setInstallStep((s) => (s - 1) as InstallStep)}
+                    className="text-muted-foreground"
+                  >
+                    Previous
+                  </Button>
+                  {installStep >= 4 && (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        if (installStep === 6) {
+                          navigate("/dashboard");
+                        } else {
+                          setInstallStep((s) => (s + 1) as InstallStep);
+                        }
+                      }}
+                      className="gradient-primary text-primary-foreground"
+                    >
+                      {installStep === 6 ? "Open Dashboard" : "Next"}
+                      <ArrowRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  )}
+                </div>
+              )}
             </GlassCard>
           </motion.div>
         )}

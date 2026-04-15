@@ -1,18 +1,12 @@
 import { motion } from "framer-motion";
 import {
-  Activity,
-  Cpu,
-  HardDrive,
-  Clock,
-  RefreshCw,
-  Pause,
-  Terminal,
-  Network,
-  ArrowUpRight,
+  Activity, Cpu, HardDrive, Clock, RefreshCw, Pause, Terminal,
+  Network, ArrowUpRight, Gpu, DollarSign, BarChart3,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import StatusBadge from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 
 const mockSubAgents = [
   { id: 1, name: "research-agent", task: "Analyzing market trends for Q4", model: "gpt-4o", tokens: "12.4k" },
@@ -50,7 +44,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Metrics */}
+      {/* Metrics Row 1 */}
       <div className="grid grid-cols-4 gap-4">
         {[
           { label: "Status", value: "Online", icon: Activity, accent: "text-success" },
@@ -68,6 +62,74 @@ const Dashboard = () => {
             </div>
           </GlassCard>
         ))}
+      </div>
+
+      {/* Resource Monitor */}
+      <div className="grid grid-cols-3 gap-4">
+        <GlassCard variant="subtle" className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+              <BarChart3 className="w-3 h-3 text-primary" /> GPU Utilization
+            </h3>
+            <span className="text-xs text-muted-foreground">Ollama</span>
+          </div>
+          <div className="space-y-2">
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">VRAM</span>
+              <span className="text-foreground">6.2 / 8.0 GB</span>
+            </div>
+            <Progress value={78} className="h-1.5" />
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">Compute</span>
+              <span className="text-foreground">42%</span>
+            </div>
+            <Progress value={42} className="h-1.5" />
+          </div>
+        </GlassCard>
+
+        <GlassCard variant="subtle" className="space-y-3">
+          <h3 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+            <Activity className="w-3 h-3 text-accent" /> Token Usage (Today)
+          </h3>
+          <div className="space-y-2">
+            {[
+              { provider: "OpenAI", tokens: "84.2k", cost: "$1.26" },
+              { provider: "Anthropic", tokens: "23.1k", cost: "$0.69" },
+              { provider: "Ollama", tokens: "142.0k", cost: "Free" },
+            ].map((p) => (
+              <div key={p.provider} className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">{p.provider}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-foreground font-mono">{p.tokens}</span>
+                  <span className="text-accent">{p.cost}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="pt-2 border-t border-white/5 flex justify-between text-xs">
+            <span className="text-muted-foreground font-medium">Total Cost</span>
+            <span className="text-primary font-semibold">$1.95</span>
+          </div>
+        </GlassCard>
+
+        <GlassCard variant="subtle" className="space-y-3">
+          <h3 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+            <DollarSign className="w-3 h-3 text-warning" /> Cost History (7d)
+          </h3>
+          <div className="flex items-end gap-1 h-16">
+            {[0.8, 1.2, 0.5, 2.1, 1.8, 1.5, 1.95].map((v, i) => (
+              <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                <div
+                  className="w-full rounded-sm gradient-primary opacity-70"
+                  style={{ height: `${(v / 2.5) * 100}%` }}
+                />
+                <span className="text-[8px] text-muted-foreground">
+                  {["M", "T", "W", "T", "F", "S", "S"][i]}
+                </span>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
       </div>
 
       <div className="grid grid-cols-3 gap-4">

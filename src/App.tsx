@@ -12,6 +12,11 @@ import APIKeys from "./pages/APIKeys";
 import Skills from "./pages/Skills";
 import SettingsPage from "./pages/SettingsPage";
 import TerminalPage from "./pages/TerminalPage";
+import AgentChat from "./pages/AgentChat";
+import LogViewer from "./pages/LogViewer";
+import ConfigEditor from "./pages/ConfigEditor";
+import UpdateManager from "./pages/UpdateManager";
+import BackupRestore from "./pages/BackupRestore";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -32,6 +37,11 @@ const App = () => (
             <Route path="/skills" element={<Skills />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/terminal" element={<TerminalPage />} />
+            <Route path="/chat" element={<AgentChat />} />
+            <Route path="/logs" element={<LogViewer />} />
+            <Route path="/config" element={<ConfigEditor />} />
+            <Route path="/updates" element={<UpdateManager />} />
+            <Route path="/backups" element={<BackupRestore />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>
