@@ -29,7 +29,7 @@ const Dashboard = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Monitor your Hermes agent in real-time</p>
+          <p className="text-sm text-muted-foreground">Monitor your agent in real-time</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">

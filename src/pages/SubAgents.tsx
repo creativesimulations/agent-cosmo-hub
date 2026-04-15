@@ -16,7 +16,7 @@ interface AgentNode {
 
 const agentTree: AgentNode = {
   id: "root",
-  name: "hermes-main",
+  name: "ron-main",
   status: "online",
   task: "Orchestrating multi-step workflow",
   model: "gpt-4o",
