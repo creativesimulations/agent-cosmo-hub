@@ -31,10 +31,10 @@ interface Prerequisite {
 const initialPrereqs: Prerequisite[] = [
   { id: "os", name: "Operating System", description: "Detecting platform...", status: "pending", required: true },
   { id: "wsl2", name: "WSL2 (Windows)", description: "Windows Subsystem for Linux 2", status: "pending", required: true, windowsOnly: true },
-  { id: "python", name: "Python 3.11+", description: "Required runtime for agent", status: "pending", required: true },
-  { id: "pip", name: "pip / pipx", description: "Python package manager", status: "pending", required: true },
-  { id: "git", name: "Git", description: "Version control for cloning agent repo", status: "pending", required: true },
-  { id: "ollama", name: "Ollama", description: "Local model runtime (optional)", status: "pending", required: false },
+  { id: "python", name: "Python 3.11+", description: "Required runtime for Hermes Agent", status: "pending", required: true },
+  { id: "pip", name: "pip", description: "Python package manager", status: "pending", required: true },
+  { id: "curl", name: "curl", description: "Required to download the installer", status: "pending", required: true },
+  { id: "git", name: "Git", description: "Version control (used by Hermes)", status: "pending", required: true },
 ];
 
 const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
@@ -70,18 +70,17 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
           description: wsl.distro ? `${wsl.version} with ${wsl.distro}` : wsl.version,
         });
       } else {
-        updatePrereq("wsl2", { status: "missing", description: "WSL2 not installed" });
+        updatePrereq("wsl2", { status: "missing", description: "WSL2 required — native Windows is not supported by Hermes" });
       }
     } else {
-      // Not Windows — mark WSL as not required/found
       updatePrereq("wsl2", { status: "found", description: "Not required on this platform", version: "N/A" });
     }
 
     // 3. Check Python
-    updatePrereq("python", { status: "checking", description: "Searching for Python..." });
+    updatePrereq("python", { status: "checking", description: "Searching for Python 3.11+..." });
     const python = await systemAPI.checkPython();
     if (python.installed) {
-      updatePrereq("python", { status: "found", version: python.version, description: `Python ${python.version} found in PATH` });
+      updatePrereq("python", { status: "found", version: python.version, description: `Python ${python.version} found` });
     } else {
       updatePrereq("python", { status: "missing", description: "Python 3.11+ not found" });
     }
@@ -95,7 +94,16 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
       updatePrereq("pip", { status: "missing", description: "pip not found" });
     }
 
-    // 5. Check Git
+    // 5. Check curl
+    updatePrereq("curl", { status: "checking", description: "Checking curl..." });
+    const curl = await systemAPI.checkCurl();
+    if (curl.installed) {
+      updatePrereq("curl", { status: "found", version: curl.version, description: `curl ${curl.version} available` });
+    } else {
+      updatePrereq("curl", { status: "missing", description: "curl not found" });
+    }
+
+    // 6. Check Git
     updatePrereq("git", { status: "checking", description: "Checking Git..." });
     const git = await systemAPI.checkGit();
     if (git.installed) {
@@ -104,21 +112,17 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
       updatePrereq("git", { status: "missing", description: "Git not found" });
     }
 
-    // 6. Check Ollama
-    updatePrereq("ollama", { status: "checking", description: "Checking for Ollama..." });
-    const ollama = await systemAPI.checkOllama();
-    if (ollama.installed) {
-      updatePrereq("ollama", { status: "found", version: ollama.version, description: `Ollama ${ollama.version} installed` });
-    } else {
-      updatePrereq("ollama", { status: "missing", description: "Not installed (optional)" });
-    }
-
     setScanning(false);
     setScanComplete(true);
   };
 
   const installPrereq = async (id: string) => {
     updatePrereq(id, { status: "installing", installProgress: 10 });
+
+    // Simulate progress
+    const interval = setInterval(() => {
+      updatePrereq(id, { installProgress: Math.min(90, (Math.random() * 20) + 50) });
+    }, 500);
 
     let result;
     switch (id) {
@@ -129,18 +133,20 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
         result = await systemAPI.installPython();
         break;
       case "pip":
-        // pip comes with Python, try reinstalling Python
-        result = await systemAPI.installPython();
+        result = await systemAPI.installPython(); // pip comes with python
         break;
       case "git":
         result = await systemAPI.installGit();
         break;
-      case "ollama":
-        result = await systemAPI.installOllama();
+      case "curl":
+        result = await systemAPI.installCurl();
         break;
       default:
+        clearInterval(interval);
         return;
     }
+
+    clearInterval(interval);
 
     if (result?.success) {
       updatePrereq(id, { status: "installed", installProgress: 100, description: "Successfully installed" });
@@ -165,7 +171,7 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
           <h2 className="text-xl font-semibold text-foreground">System Prerequisites</h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          We'll scan your system and install everything your agent needs to run.
+          We'll scan your system and install everything needed to run Hermes Agent.
         </p>
       </div>
 
@@ -189,11 +195,6 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium text-foreground">{prereq.name}</p>
-                    {!prereq.required && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-muted-foreground">
-                        Optional
-                      </span>
-                    )}
                     {prereq.version && (
                       <span className="text-xs font-mono text-accent">{prereq.version}</span>
                     )}
@@ -224,7 +225,7 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
           {allRequiredMet ? (
             <div className="glass-subtle rounded-lg p-3 flex items-center gap-2 border border-success/20">
               <CheckCircle2 className="w-4 h-4 text-success" />
-              <p className="text-sm text-success">All required prerequisites are met!</p>
+              <p className="text-sm text-success">All prerequisites are met!</p>
             </div>
           ) : (
             <div className="glass-subtle rounded-lg p-3 flex items-center gap-2 border border-warning/20">
