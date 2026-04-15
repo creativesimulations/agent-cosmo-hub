@@ -135,6 +135,7 @@ const Index = () => {
     }
   };
 
+  return (
     <div className="flex-1 flex items-center justify-center min-h-screen p-8">
       <AnimatePresence mode="wait">
         {mode === "choose" && (
