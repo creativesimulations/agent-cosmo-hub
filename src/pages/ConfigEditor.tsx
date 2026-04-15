@@ -4,7 +4,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-const defaultConfig = `# Ainoval Agent Configuration
+const defaultConfig = `# Ronbot Agent Configuration
 # config.yaml
 
 agent:

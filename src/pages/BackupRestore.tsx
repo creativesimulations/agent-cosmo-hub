@@ -120,7 +120,7 @@ const BackupRestore = () => {
             <Upload className="w-8 h-8 text-muted-foreground mx-auto" />
             <div>
               <p className="text-sm text-foreground">Drop backup file here</p>
-              <p className="text-xs text-muted-foreground">or click to browse (.ainovalbackup)</p>
+              <p className="text-xs text-muted-foreground">or click to browse (.ronbotbackup)</p>
             </div>
           </div>
         </GlassCard>
