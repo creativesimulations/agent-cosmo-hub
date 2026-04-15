@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import PrerequisiteCheck from "./PrerequisiteCheck";
+import { systemAPI } from "@/lib/systemAPI";
 
 type Mode = "choose" | "connect" | "install";
 type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
@@ -46,6 +47,12 @@ const Index = () => {
   const [cloning, setCloning] = useState(false);
   const [pipProgress, setPipProgress] = useState(0);
   const [installing, setInstalling] = useState(false);
+  const [cloneOutput, setCloneOutput] = useState<string[]>([]);
+  const [pipOutput, setPipOutput] = useState<string[]>([]);
+  const [selectedProvider, setSelectedProvider] = useState("openai");
+  const [gatewayPort, setGatewayPort] = useState("8000");
+  const [launching, setLaunching] = useState(false);
+  const [launchOutput, setLaunchOutput] = useState<string[]>([]);
   const [agentName, setAgentName] = useState("Ron");
   const navigate = useNavigate();
 
@@ -60,26 +67,74 @@ const Index = () => {
   const handleClone = async () => {
     setCloning(true);
     setCloneProgress(0);
-    for (let i = 0; i <= 100; i += 3) {
-      await new Promise((r) => setTimeout(r, 80));
-      setCloneProgress(i);
-    }
+    setCloneOutput(["$ git clone https://github.com/ainoval/agent.git"]);
+
+    // Simulate progress while the real command runs
+    const progressInterval = setInterval(() => {
+      setCloneProgress((prev) => Math.min(prev + 3, 90));
+    }, 200);
+
+    const result = await systemAPI.cloneRepo(gitToken);
+
+    clearInterval(progressInterval);
+    setCloneProgress(100);
+    setCloneOutput((prev) => [
+      ...prev,
+      result.success ? "✓ Repository cloned successfully" : `✗ ${result.stderr || 'Clone failed'}`,
+    ]);
     setCloning(false);
-    setInstallStep(3);
+    if (result.success) setInstallStep(3);
   };
 
   const handlePipInstall = async () => {
     setInstalling(true);
     setPipProgress(0);
-    for (let i = 0; i <= 100; i += 2) {
-      await new Promise((r) => setTimeout(r, 100));
-      setPipProgress(i);
-    }
+    setPipOutput(["$ python3 -m venv .venv", "$ pip install -e ."]);
+
+    const progressInterval = setInterval(() => {
+      setPipProgress((prev) => Math.min(prev + 2, 90));
+    }, 250);
+
+    const result = await systemAPI.setupPythonEnv();
+
+    clearInterval(progressInterval);
+    setPipProgress(100);
+    setPipOutput((prev) => [
+      ...prev,
+      result.success ? "✓ Agent installed successfully" : `✗ ${result.stderr || 'Install failed'}`,
+    ]);
     setInstalling(false);
-    setInstallStep(4);
+    if (result.success) setInstallStep(4);
   };
 
-  return (
+  const handleLaunch = async () => {
+    setLaunching(true);
+    setLaunchOutput([`$ ainoval start --name "${agentName}" --port ${gatewayPort}`]);
+
+    // Write config first
+    await systemAPI.writeAgentConfig({
+      name: agentName,
+      port: parseInt(gatewayPort) || 8000,
+      provider: selectedProvider,
+    });
+    setLaunchOutput((prev) => [...prev, "✓ Configuration saved"]);
+
+    // Launch the agent
+    const result = await systemAPI.launchAgent(agentName, parseInt(gatewayPort) || 8000);
+    setLaunching(false);
+
+    if (result.success) {
+      setLaunchOutput((prev) => [
+        ...prev,
+        `✓ ${agentName} is running on http://localhost:${gatewayPort}`,
+        "✓ Gateway API active",
+        "✓ All systems operational",
+      ]);
+    } else {
+      setLaunchOutput((prev) => [...prev, `✗ Failed to start: ${result.stderr || 'Unknown error'}`]);
+    }
+  };
+
     <div className="flex-1 flex items-center justify-center min-h-screen p-8">
       <AnimatePresence mode="wait">
         {mode === "choose" && (
@@ -358,12 +413,23 @@ const Index = () => {
                   <div className="space-y-3">
                     <label className="text-sm font-medium text-foreground">Default LLM Provider</label>
                     <div className="grid grid-cols-2 gap-2">
-                      {["OpenAI", "Anthropic", "Ollama (Local)", "vLLM"].map((p) => (
+                      {[
+                        { label: "OpenAI", value: "openai" },
+                        { label: "Anthropic", value: "anthropic" },
+                        { label: "Ollama (Local)", value: "ollama" },
+                        { label: "vLLM", value: "vllm" },
+                      ].map((p) => (
                         <button
-                          key={p}
-                          className="px-3 py-2 rounded-lg border border-white/10 text-sm text-foreground hover:border-primary/30 hover:bg-primary/5 transition-all text-left"
+                          key={p.value}
+                          onClick={() => setSelectedProvider(p.value)}
+                          className={cn(
+                            "px-3 py-2 rounded-lg border text-sm text-foreground transition-all text-left",
+                            selectedProvider === p.value
+                              ? "border-primary/50 bg-primary/10"
+                              : "border-white/10 hover:border-primary/30 hover:bg-primary/5"
+                          )}
                         >
-                          {p}
+                          {p.label}
                         </button>
                       ))}
                     </div>
@@ -379,7 +445,7 @@ const Index = () => {
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-foreground">Gateway Port</label>
-                      <Input defaultValue="8000" className="bg-background/50 border-white/10" />
+                      <Input value={gatewayPort} onChange={(e) => setGatewayPort(e.target.value)} className="bg-background/50 border-white/10" />
                     </div>
                   </div>
                 )}
@@ -387,11 +453,27 @@ const Index = () => {
                 {/* Step 7: Launch */}
                 {installStep === 7 && (
                   <div className="space-y-2 font-mono text-sm">
-                    <p className="text-muted-foreground">$ ainoval start --name "{agentName}"</p>
-                    <p className="text-foreground/70">Starting {agentName}...</p>
-                    <p className="text-success">✓ {agentName} is running on http://localhost:8000</p>
-                    <p className="text-success">✓ Gateway API active</p>
-                    <p className="text-success">✓ All systems operational</p>
+                    {launchOutput.length === 0 && !launching && (
+                      <Button
+                        onClick={handleLaunch}
+                        className="w-full gradient-primary text-primary-foreground font-sans"
+                      >
+                        Launch {agentName} <ArrowRight className="w-4 h-4 ml-1" />
+                      </Button>
+                    )}
+                    {launching && (
+                      <>
+                        <p className="text-muted-foreground">$ ainoval start --name "{agentName}" --port {gatewayPort}</p>
+                        <p className="text-foreground/70 flex items-center gap-2">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Starting {agentName}...
+                        </p>
+                      </>
+                    )}
+                    {launchOutput.map((line, i) => (
+                      <p key={i} className={line.startsWith("✓") ? "text-success" : line.startsWith("✗") ? "text-destructive" : "text-muted-foreground"}>
+                        {line}
+                      </p>
+                    ))}
                   </div>
                 )}
               </div>
@@ -408,20 +490,22 @@ const Index = () => {
                   >
                     Previous
                   </Button>
-                  {installStep >= 5 && (
+                  {installStep >= 5 && installStep < 7 && (
                     <Button
                       size="sm"
-                      onClick={() => {
-                        if (installStep === 7) {
-                          navigate("/dashboard");
-                        } else {
-                          setInstallStep((s) => (s + 1) as InstallStep);
-                        }
-                      }}
+                      onClick={() => setInstallStep((s) => (s + 1) as InstallStep)}
                       className="gradient-primary text-primary-foreground"
                     >
-                      {installStep === 7 ? "Open Dashboard" : "Next"}
-                      <ArrowRight className="w-4 h-4 ml-1" />
+                      Next <ArrowRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  )}
+                  {installStep === 7 && launchOutput.some((l) => l.includes("All systems operational")) && (
+                    <Button
+                      size="sm"
+                      onClick={() => navigate("/dashboard")}
+                      className="gradient-primary text-primary-foreground"
+                    >
+                      Open Dashboard <ArrowRight className="w-4 h-4 ml-1" />
                     </Button>
                   )}
                 </div>

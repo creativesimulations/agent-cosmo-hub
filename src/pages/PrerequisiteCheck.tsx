@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   CheckCircle2,
@@ -13,6 +13,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import { systemAPI } from "@/lib/systemAPI";
 
 type CheckStatus = "pending" | "checking" | "found" | "missing" | "installing" | "installed" | "error";
 
@@ -38,7 +39,6 @@ const initialPrereqs: Prerequisite[] = [
 
 const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
   const [prereqs, setPrereqs] = useState(initialPrereqs);
-  const [detectedOS, setDetectedOS] = useState<string>("Detecting...");
   const [scanning, setScanning] = useState(false);
   const [scanComplete, setScanComplete] = useState(false);
 
@@ -46,56 +46,111 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
     setPrereqs((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
   };
 
-  const simulateScan = async () => {
+  const runScan = async () => {
     setScanning(true);
 
-    // Detect OS
-    await delay(600);
-    const os = "Windows 11 (x64)";
-    setDetectedOS(os);
-    updatePrereq("os", { status: "found", version: os, description: "Platform detected" });
+    // 1. Detect OS
+    updatePrereq("os", { status: "checking", description: "Detecting platform..." });
+    try {
+      const osInfo = await systemAPI.detectOS();
+      updatePrereq("os", { status: "found", version: osInfo.name, description: "Platform detected" });
+    } catch {
+      updatePrereq("os", { status: "error", description: "Failed to detect OS" });
+    }
 
-    // Check WSL2
-    await delay(800);
-    updatePrereq("wsl2", { status: "checking", description: "Checking WSL2 installation..." });
-    await delay(1200);
-    updatePrereq("wsl2", { status: "found", version: "WSL 2.0.14", description: "WSL2 with Ubuntu 22.04" });
+    // 2. Check WSL2 (Windows only)
+    const platform = await systemAPI.getPlatform();
+    if (platform.isWindows) {
+      updatePrereq("wsl2", { status: "checking", description: "Checking WSL2 installation..." });
+      const wsl = await systemAPI.checkWSL();
+      if (wsl.installed) {
+        updatePrereq("wsl2", {
+          status: "found",
+          version: wsl.version,
+          description: wsl.distro ? `${wsl.version} with ${wsl.distro}` : wsl.version,
+        });
+      } else {
+        updatePrereq("wsl2", { status: "missing", description: "WSL2 not installed" });
+      }
+    } else {
+      // Not Windows — mark WSL as not required/found
+      updatePrereq("wsl2", { status: "found", description: "Not required on this platform", version: "N/A" });
+    }
 
-    // Check Python
-    await delay(500);
+    // 3. Check Python
     updatePrereq("python", { status: "checking", description: "Searching for Python..." });
-    await delay(1000);
-    updatePrereq("python", { status: "found", version: "3.11.5", description: "Python 3.11.5 found in PATH" });
+    const python = await systemAPI.checkPython();
+    if (python.installed) {
+      updatePrereq("python", { status: "found", version: python.version, description: `Python ${python.version} found in PATH` });
+    } else {
+      updatePrereq("python", { status: "missing", description: "Python 3.11+ not found" });
+    }
 
-    // Check pip
-    await delay(400);
+    // 4. Check pip
     updatePrereq("pip", { status: "checking", description: "Checking pip..." });
-    await delay(800);
-    updatePrereq("pip", { status: "found", version: "23.3.1", description: "pip 23.3.1 available" });
+    const pip = await systemAPI.checkPip();
+    if (pip.installed) {
+      updatePrereq("pip", { status: "found", version: pip.version, description: `pip ${pip.version} available` });
+    } else {
+      updatePrereq("pip", { status: "missing", description: "pip not found" });
+    }
 
-    // Check Git
-    await delay(400);
+    // 5. Check Git
     updatePrereq("git", { status: "checking", description: "Checking Git..." });
-    await delay(900);
-    updatePrereq("git", { status: "found", version: "2.43.0", description: "Git 2.43.0 installed" });
+    const git = await systemAPI.checkGit();
+    if (git.installed) {
+      updatePrereq("git", { status: "found", version: git.version, description: `Git ${git.version} installed` });
+    } else {
+      updatePrereq("git", { status: "missing", description: "Git not found" });
+    }
 
-    // Check Ollama
-    await delay(400);
+    // 6. Check Ollama
     updatePrereq("ollama", { status: "checking", description: "Checking for Ollama..." });
-    await delay(1000);
-    updatePrereq("ollama", { status: "missing", description: "Not installed (optional)" });
+    const ollama = await systemAPI.checkOllama();
+    if (ollama.installed) {
+      updatePrereq("ollama", { status: "found", version: ollama.version, description: `Ollama ${ollama.version} installed` });
+    } else {
+      updatePrereq("ollama", { status: "missing", description: "Not installed (optional)" });
+    }
 
     setScanning(false);
     setScanComplete(true);
   };
 
   const installPrereq = async (id: string) => {
-    updatePrereq(id, { status: "installing", installProgress: 0 });
-    for (let i = 0; i <= 100; i += 5) {
-      await delay(150);
-      updatePrereq(id, { installProgress: i });
+    updatePrereq(id, { status: "installing", installProgress: 10 });
+
+    let result;
+    switch (id) {
+      case "wsl2":
+        result = await systemAPI.installWSL();
+        break;
+      case "python":
+        result = await systemAPI.installPython();
+        break;
+      case "pip":
+        // pip comes with Python, try reinstalling Python
+        result = await systemAPI.installPython();
+        break;
+      case "git":
+        result = await systemAPI.installGit();
+        break;
+      case "ollama":
+        result = await systemAPI.installOllama();
+        break;
+      default:
+        return;
     }
-    updatePrereq(id, { status: "installed", installProgress: 100, description: "Successfully installed" });
+
+    if (result?.success) {
+      updatePrereq(id, { status: "installed", installProgress: 100, description: "Successfully installed" });
+    } else {
+      updatePrereq(id, {
+        status: "error",
+        installProgress: 0,
+        description: `Installation failed: ${result?.stderr || 'Unknown error'}`,
+      });
+    }
   };
 
   const allRequiredMet = prereqs
@@ -115,7 +170,7 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
       </div>
 
       {!scanning && !scanComplete && (
-        <Button onClick={simulateScan} className="gradient-primary text-primary-foreground w-full">
+        <Button onClick={runScan} className="gradient-primary text-primary-foreground w-full">
           <Monitor className="w-4 h-4 mr-2" /> Scan System
         </Button>
       )}
@@ -206,7 +261,5 @@ const StatusIcon = ({ status }: { status: CheckStatus }) => {
       return <div className="w-4 h-4 rounded-full bg-white/10 shrink-0" />;
   }
 };
-
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export default PrerequisiteCheck;
