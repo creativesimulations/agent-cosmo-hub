@@ -418,7 +418,7 @@ const Index = () => {
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-foreground">Gateway Port</label>
-                      <Input defaultValue="8000" className="bg-background/50 border-white/10" />
+                      <Input value={gatewayPort} onChange={(e) => setGatewayPort(e.target.value)} className="bg-background/50 border-white/10" />
                     </div>
                   </div>
                 )}
@@ -426,11 +426,27 @@ const Index = () => {
                 {/* Step 7: Launch */}
                 {installStep === 7 && (
                   <div className="space-y-2 font-mono text-sm">
-                    <p className="text-muted-foreground">$ ainoval start --name "{agentName}"</p>
-                    <p className="text-foreground/70">Starting {agentName}...</p>
-                    <p className="text-success">✓ {agentName} is running on http://localhost:8000</p>
-                    <p className="text-success">✓ Gateway API active</p>
-                    <p className="text-success">✓ All systems operational</p>
+                    {launchOutput.length === 0 && !launching && (
+                      <Button
+                        onClick={handleLaunch}
+                        className="w-full gradient-primary text-primary-foreground font-sans"
+                      >
+                        Launch {agentName} <ArrowRight className="w-4 h-4 ml-1" />
+                      </Button>
+                    )}
+                    {launching && (
+                      <>
+                        <p className="text-muted-foreground">$ ainoval start --name "{agentName}" --port {gatewayPort}</p>
+                        <p className="text-foreground/70 flex items-center gap-2">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Starting {agentName}...
+                        </p>
+                      </>
+                    )}
+                    {launchOutput.map((line, i) => (
+                      <p key={i} className={line.startsWith("✓") ? "text-success" : line.startsWith("✗") ? "text-destructive" : "text-muted-foreground"}>
+                        {line}
+                      </p>
+                    ))}
                   </div>
                 )}
               </div>
