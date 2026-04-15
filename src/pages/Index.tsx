@@ -13,6 +13,7 @@ import {
   Globe,
   GitBranch,
   FolderGit2,
+  User,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -22,16 +23,17 @@ import { cn } from "@/lib/utils";
 import PrerequisiteCheck from "./PrerequisiteCheck";
 
 type Mode = "choose" | "connect" | "install";
-type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 const installSteps = [
   { title: "System Prerequisites", desc: "Detect & install required dependencies" },
   { title: "Git Authentication", desc: "Configure Git access for repo cloning" },
-  { title: "Clone Hermes", desc: "Clone the NousResearch/hermes-agent repository" },
-  { title: "Python Environment", desc: "Create virtual environment & install Hermes" },
+  { title: "Clone Agent", desc: "Clone the agent repository" },
+  { title: "Python Environment", desc: "Create virtual environment & install agent" },
+  { title: "Name Your Agent", desc: "Give your AI agent a name you'll enjoy talking to" },
   { title: "Configure Provider", desc: "Set up your LLM provider" },
   { title: "Initial Config", desc: "Configure agent settings" },
-  { title: "Launch Agent", desc: "Start your Hermes agent" },
+  { title: "Launch Agent", desc: "Start your AI agent" },
 ];
 
 const Index = () => {
@@ -44,6 +46,7 @@ const Index = () => {
   const [cloning, setCloning] = useState(false);
   const [pipProgress, setPipProgress] = useState(0);
   const [installing, setInstalling] = useState(false);
+  const [agentName, setAgentName] = useState("Ron");
   const navigate = useNavigate();
 
   const handleConnect = () => {
@@ -102,7 +105,7 @@ const Index = () => {
                 transition={{ delay: 0.2 }}
                 className="text-4xl font-bold text-foreground tracking-tight"
               >
-                Hermes Agent
+                Ainoval
               </motion.h1>
               <motion.p
                 initial={{ opacity: 0 }}
@@ -110,7 +113,7 @@ const Index = () => {
                 transition={{ delay: 0.3 }}
                 className="text-muted-foreground text-lg"
               >
-                Control Panel for NousResearch's AI Agent Framework
+                AI Agent Control Panel
               </motion.p>
             </div>
 
@@ -125,7 +128,7 @@ const Index = () => {
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">Connect</h3>
                   <p className="text-sm text-muted-foreground">
-                    Connect to a running Hermes agent instance
+                    Connect to a running agent instance
                   </p>
                 </div>
               </GlassCard>
@@ -140,7 +143,7 @@ const Index = () => {
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">Install & Setup</h3>
                   <p className="text-sm text-muted-foreground">
-                    Full automated Hermes installation — no terminal needed
+                    Full automated agent installation — no terminal needed
                   </p>
                 </div>
               </GlassCard>
@@ -166,7 +169,7 @@ const Index = () => {
                   <Server className="w-5 h-5 text-primary" />
                   Connect to Agent
                 </h2>
-                <p className="text-sm text-muted-foreground">Enter the URL of your running Hermes gateway</p>
+                <p className="text-sm text-muted-foreground">Enter the URL of your running agent gateway</p>
               </div>
               <div className="space-y-4">
                 <div className="space-y-2">
@@ -243,7 +246,7 @@ const Index = () => {
                       <span className="text-sm font-medium text-foreground">GitHub Access Token</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Enter a GitHub Personal Access Token (PAT) to clone the Hermes repository. 
+                      Enter a GitHub Personal Access Token (PAT) to clone the agent repository. 
                       You can generate one at github.com → Settings → Developer settings → Personal access tokens.
                     </p>
                     <Input
@@ -274,10 +277,10 @@ const Index = () => {
                       <span className="text-sm font-medium text-foreground">Clone Repository</span>
                     </div>
                     <div className="font-mono text-sm space-y-1">
-                      <p className="text-muted-foreground">$ git clone https://github.com/NousResearch/hermes-agent.git</p>
+                      <p className="text-muted-foreground">$ git clone https://github.com/ainoval/agent.git</p>
                       {cloning && (
                         <>
-                          <p className="text-foreground/70">Cloning into 'hermes-agent'...</p>
+                          <p className="text-foreground/70">Cloning into 'ainoval-agent'...</p>
                           <Progress value={cloneProgress} className="h-1 mt-2" />
                           <p className="text-xs text-muted-foreground">{cloneProgress}% complete</p>
                         </>
@@ -298,30 +301,60 @@ const Index = () => {
                 {installStep === 3 && (
                   <div className="space-y-3">
                     <div className="font-mono text-sm space-y-1">
-                      <p className="text-muted-foreground">$ python3 -m venv hermes-env</p>
+                      <p className="text-muted-foreground">$ python3 -m venv agent-env</p>
                       <p className="text-success">✓ Virtual environment created</p>
-                      <p className="text-muted-foreground">$ pip install -e ./hermes-agent</p>
+                      <p className="text-muted-foreground">$ pip install -e ./ainoval-agent</p>
                       {installing && (
                         <>
-                          <p className="text-foreground/70">Installing hermes-agent and dependencies...</p>
+                          <p className="text-foreground/70">Installing agent and dependencies...</p>
                           <Progress value={pipProgress} className="h-1 mt-2" />
                           <p className="text-xs text-muted-foreground">{pipProgress}% complete</p>
                         </>
                       )}
                       {!installing && pipProgress >= 100 && (
-                        <p className="text-success">✓ hermes-agent installed successfully</p>
+                        <p className="text-success">✓ Agent installed successfully</p>
                       )}
                     </div>
                     {!installing && pipProgress === 0 && (
                       <Button onClick={handlePipInstall} className="w-full gradient-primary text-primary-foreground">
-                        Install Hermes <ArrowRight className="w-4 h-4 ml-1" />
+                        Install Agent <ArrowRight className="w-4 h-4 ml-1" />
                       </Button>
                     )}
                   </div>
                 )}
 
-                {/* Step 4: Configure Provider */}
+                {/* Step 4: Name Your Agent */}
                 {installStep === 4 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <User className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium text-foreground">Name Your Agent</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Give your AI agent a personal name. This is who you'll be chatting with — pick something you're comfortable talking to!
+                    </p>
+                    <Input
+                      value={agentName}
+                      onChange={(e) => setAgentName(e.target.value)}
+                      placeholder="Ron"
+                      className="bg-background/50 border-white/10 text-lg font-semibold text-center"
+                    />
+                    <div className="glass-subtle rounded-lg p-3 text-center">
+                      <p className="text-sm text-muted-foreground">
+                        Your agent will greet you as: <span className="text-primary font-semibold">{agentName || "Ron"}</span>
+                      </p>
+                    </div>
+                    <Button
+                      onClick={() => setInstallStep(5)}
+                      className="w-full gradient-primary text-primary-foreground"
+                    >
+                      Continue <ArrowRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  </div>
+                )}
+
+                {/* Step 5: Configure Provider */}
+                {installStep === 5 && (
                   <div className="space-y-3">
                     <label className="text-sm font-medium text-foreground">Default LLM Provider</label>
                     <div className="grid grid-cols-2 gap-2">
@@ -337,12 +370,12 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 5: Agent Config */}
-                {installStep === 5 && (
+                {/* Step 6: Agent Config */}
+                {installStep === 6 && (
                   <div className="space-y-3">
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-foreground">Agent Name</label>
-                      <Input placeholder="my-hermes-agent" className="bg-background/50 border-white/10" />
+                      <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} className="bg-background/50 border-white/10" />
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-foreground">Gateway Port</label>
@@ -351,12 +384,12 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 6: Launch */}
-                {installStep === 6 && (
+                {/* Step 7: Launch */}
+                {installStep === 7 && (
                   <div className="space-y-2 font-mono text-sm">
-                    <p className="text-muted-foreground">$ hermes start</p>
-                    <p className="text-foreground/70">Starting Hermes agent...</p>
-                    <p className="text-success">✓ Agent running on http://localhost:8000</p>
+                    <p className="text-muted-foreground">$ ainoval start --name "{agentName}"</p>
+                    <p className="text-foreground/70">Starting {agentName}...</p>
+                    <p className="text-success">✓ {agentName} is running on http://localhost:8000</p>
                     <p className="text-success">✓ Gateway API active</p>
                     <p className="text-success">✓ All systems operational</p>
                   </div>
@@ -375,11 +408,11 @@ const Index = () => {
                   >
                     Previous
                   </Button>
-                  {installStep >= 4 && (
+                  {installStep >= 5 && (
                     <Button
                       size="sm"
                       onClick={() => {
-                        if (installStep === 6) {
+                        if (installStep === 7) {
                           navigate("/dashboard");
                         } else {
                           setInstallStep((s) => (s + 1) as InstallStep);
@@ -387,7 +420,7 @@ const Index = () => {
                       }}
                       className="gradient-primary text-primary-foreground"
                     >
-                      {installStep === 6 ? "Open Dashboard" : "Next"}
+                      {installStep === 7 ? "Open Dashboard" : "Next"}
                       <ArrowRight className="w-4 h-4 ml-1" />
                     </Button>
                   )}
