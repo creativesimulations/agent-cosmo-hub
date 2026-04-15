@@ -383,12 +383,23 @@ const Index = () => {
                   <div className="space-y-3">
                     <label className="text-sm font-medium text-foreground">Default LLM Provider</label>
                     <div className="grid grid-cols-2 gap-2">
-                      {["OpenAI", "Anthropic", "Ollama (Local)", "vLLM"].map((p) => (
+                      {[
+                        { label: "OpenAI", value: "openai" },
+                        { label: "Anthropic", value: "anthropic" },
+                        { label: "Ollama (Local)", value: "ollama" },
+                        { label: "vLLM", value: "vllm" },
+                      ].map((p) => (
                         <button
-                          key={p}
-                          className="px-3 py-2 rounded-lg border border-white/10 text-sm text-foreground hover:border-primary/30 hover:bg-primary/5 transition-all text-left"
+                          key={p.value}
+                          onClick={() => setSelectedProvider(p.value)}
+                          className={cn(
+                            "px-3 py-2 rounded-lg border text-sm text-foreground transition-all text-left",
+                            selectedProvider === p.value
+                              ? "border-primary/50 bg-primary/10"
+                              : "border-white/10 hover:border-primary/30 hover:bg-primary/5"
+                          )}
                         >
-                          {p}
+                          {p.label}
                         </button>
                       ))}
                     </div>
