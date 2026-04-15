@@ -8,7 +8,6 @@ import {
   Puzzle,
   Settings,
   Terminal,
-  Zap,
   Home,
   MessageSquare,
   FileText,
@@ -17,6 +16,7 @@ import {
   Archive,
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
+import ronbotLogo from "@/assets/ronbot-logo.png";
 
 const navGroups = [
   {
@@ -56,11 +56,9 @@ const AppSidebar = () => {
       {/* Logo */}
       <div className="p-5 border-b border-white/5 flex items-center justify-between">
         <NavLink to="/" className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center glow-primary">
-            <Zap className="w-4 h-4 text-primary-foreground" />
-          </div>
+          <img src={ronbotLogo} alt="Ronbot" className="w-8 h-8" />
           <div>
-            <h1 className="text-sm font-semibold text-foreground tracking-tight">Ainoval</h1>
+            <h1 className="text-sm font-semibold text-foreground tracking-tight">Ronbot</h1>
             <p className="text-[10px] text-muted-foreground">Agent Control Panel</p>
           </div>
         </NavLink>
