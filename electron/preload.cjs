@@ -1,0 +1,32 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  // Run a shell command and get stdout/stderr
+  runCommand: (cmd, options) => ipcRenderer.invoke('run-command', cmd, options),
+
+  // Run a command with streaming output via callback
+  runCommandStream: (cmd, options) => {
+    const id = Date.now().toString();
+    const promise = ipcRenderer.invoke('run-command-stream', cmd, { ...options, streamId: id });
+    return { id, promise };
+  },
+
+  // Listen for streaming output
+  onCommandOutput: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('command-output', handler);
+    return () => ipcRenderer.removeListener('command-output', handler);
+  },
+
+  // Platform detection
+  getPlatform: () => ipcRenderer.invoke('get-platform'),
+
+  // File system operations
+  fileExists: (filePath) => ipcRenderer.invoke('file-exists', filePath),
+  readFile: (filePath) => ipcRenderer.invoke('read-file', filePath),
+  writeFile: (filePath, content) => ipcRenderer.invoke('write-file', filePath, content),
+  mkdir: (dirPath) => ipcRenderer.invoke('mkdir', dirPath),
+
+  // Check if running in Electron
+  isElectron: true,
+});
