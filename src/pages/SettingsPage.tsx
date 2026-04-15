@@ -83,7 +83,7 @@ const SettingsPage = () => {
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <StatusBadge status={platform.configured ? (platform.enabled ? "online" : "idle") : "offline"} />
+                      <StatusBadge status={platform.configured ? (platform.enabled ? "online" : "offline") : "warning"} />
                       <span className="text-sm text-foreground">{platform.label}</span>
                       {!platform.configured && platform.tokenField && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
