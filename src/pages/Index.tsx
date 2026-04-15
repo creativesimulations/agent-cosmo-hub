@@ -50,6 +50,9 @@ const Index = () => {
   const [cloneOutput, setCloneOutput] = useState<string[]>([]);
   const [pipOutput, setPipOutput] = useState<string[]>([]);
   const [selectedProvider, setSelectedProvider] = useState("openai");
+  const [gatewayPort, setGatewayPort] = useState("8000");
+  const [launching, setLaunching] = useState(false);
+  const [launchOutput, setLaunchOutput] = useState<string[]>([]);
   const [agentName, setAgentName] = useState("Ron");
   const navigate = useNavigate();
 
