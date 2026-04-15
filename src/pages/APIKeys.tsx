@@ -54,7 +54,7 @@ const APIKeys = () => {
     setLoading(true);
     try {
       const envVars = await systemAPI.readEnvFile();
-      const entries: ApiKeyEntry[] = Object.entries(envVars).map(([envVar, value]) => ({
+      const entries: ApiKeyEntry[] = Object.entries(envVars).map(([envVar, value]: [string, string]) => ({
         envVar,
         provider: KNOWN_KEYS[envVar] || envVar,
         value,
