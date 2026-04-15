@@ -490,20 +490,22 @@ const Index = () => {
                   >
                     Previous
                   </Button>
-                  {installStep >= 5 && (
+                  {installStep >= 5 && installStep < 7 && (
                     <Button
                       size="sm"
-                      onClick={() => {
-                        if (installStep === 7) {
-                          navigate("/dashboard");
-                        } else {
-                          setInstallStep((s) => (s + 1) as InstallStep);
-                        }
-                      }}
+                      onClick={() => setInstallStep((s) => (s + 1) as InstallStep)}
                       className="gradient-primary text-primary-foreground"
                     >
-                      {installStep === 7 ? "Open Dashboard" : "Next"}
-                      <ArrowRight className="w-4 h-4 ml-1" />
+                      Next <ArrowRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  )}
+                  {installStep === 7 && launchOutput.some((l) => l.includes("All systems operational")) && (
+                    <Button
+                      size="sm"
+                      onClick={() => navigate("/dashboard")}
+                      className="gradient-primary text-primary-foreground"
+                    >
+                      Open Dashboard <ArrowRight className="w-4 h-4 ml-1" />
                     </Button>
                   )}
                 </div>
