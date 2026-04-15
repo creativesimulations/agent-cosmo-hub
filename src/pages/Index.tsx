@@ -11,9 +11,11 @@ import {
   Loader2,
   Server,
   Globe,
-  GitBranch,
-  FolderGit2,
+  KeyRound,
   User,
+  Cpu,
+  Terminal,
+  Stethoscope,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -25,36 +27,83 @@ import { systemAPI } from "@/lib/systemAPI";
 import ronbotLogo from "@/assets/ronbot-logo.png";
 
 type Mode = "choose" | "connect" | "install";
-type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 const installSteps = [
   { title: "System Prerequisites", desc: "Detect & install required dependencies" },
-  { title: "Git Authentication", desc: "Configure Git access for repo cloning" },
-  { title: "Clone Agent", desc: "Clone the agent repository" },
-  { title: "Python Environment", desc: "Create virtual environment & install agent" },
-  { title: "Name Your Agent", desc: "Give your AI agent a name you'll enjoy talking to" },
-  { title: "Configure Provider", desc: "Set up your LLM provider" },
-  { title: "Initial Config", desc: "Configure agent settings" },
-  { title: "Launch Agent", desc: "Start your AI agent" },
+  { title: "Install Hermes Agent", desc: "Download and install the AI agent framework" },
+  { title: "Name Your Agent", desc: "Give your AI agent a name" },
+  { title: "API Keys", desc: "Configure your LLM provider credentials" },
+  { title: "Choose Model", desc: "Select your preferred AI model" },
+  { title: "Verify Installation", desc: "Run diagnostics to confirm everything works" },
+  { title: "Launch", desc: "Start your AI agent" },
 ];
+
+// Provider definitions with their env var names and key prefixes
+const LLM_PROVIDERS = [
+  { id: "openrouter", label: "OpenRouter", envVar: "OPENROUTER_API_KEY", prefix: "sk-or-", hint: "200+ models including Hermes 3. Get a key at openrouter.ai", defaultModel: "openrouter/nous/hermes-3-llama-3.1-70b" },
+  { id: "openai", label: "OpenAI", envVar: "OPENAI_API_KEY", prefix: "sk-", hint: "GPT-4o and more. Get a key at platform.openai.com", defaultModel: "openai/gpt-4o" },
+  { id: "anthropic", label: "Anthropic", envVar: "ANTHROPIC_API_KEY", prefix: "sk-ant-", hint: "Claude models. Get a key at console.anthropic.com", defaultModel: "anthropic/claude-3.5-sonnet" },
+  { id: "nous", label: "Nous Portal", envVar: "NOUS_API_KEY", prefix: "", hint: "Nous Research's own portal. Get a key at portal.nousresearch.com", defaultModel: "nous/hermes-3-llama-3.1-70b" },
+  { id: "ollama", label: "Ollama (Local)", envVar: "", prefix: "", hint: "Run models locally — no API key needed. Install Ollama first.", defaultModel: "ollama/llama3.1" },
+];
+
+const MODEL_OPTIONS: Record<string, { id: string; label: string }[]> = {
+  openrouter: [
+    { id: "openrouter/nous/hermes-3-llama-3.1-70b", label: "Hermes 3 Llama 3.1 70B" },
+    { id: "openrouter/anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
+    { id: "openrouter/openai/gpt-4o", label: "GPT-4o" },
+    { id: "openrouter/meta-llama/llama-3.1-70b-instruct", label: "Llama 3.1 70B" },
+  ],
+  openai: [
+    { id: "openai/gpt-4o", label: "GPT-4o" },
+    { id: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
+    { id: "openai/o1", label: "o1" },
+  ],
+  anthropic: [
+    { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
+    { id: "anthropic/claude-3-haiku", label: "Claude 3 Haiku" },
+  ],
+  nous: [
+    { id: "nous/hermes-3-llama-3.1-70b", label: "Hermes 3 Llama 3.1 70B" },
+  ],
+  ollama: [
+    { id: "ollama/llama3.1", label: "Llama 3.1" },
+    { id: "ollama/mistral", label: "Mistral 7B" },
+    { id: "ollama/hermes-3", label: "Hermes 3 (if pulled)" },
+  ],
+};
 
 const Index = () => {
   const [mode, setMode] = useState<Mode>("choose");
   const [connectUrl, setConnectUrl] = useState("http://localhost:8000");
   const [connecting, setConnecting] = useState(false);
   const [installStep, setInstallStep] = useState<InstallStep>(0);
-  const [gitToken, setGitToken] = useState("");
-  const [cloneProgress, setCloneProgress] = useState(0);
-  const [cloning, setCloning] = useState(false);
-  const [pipProgress, setPipProgress] = useState(0);
+
+  // Install state
+  const [installProgress, setInstallProgress] = useState(0);
   const [installing, setInstalling] = useState(false);
-  const [cloneOutput, setCloneOutput] = useState<string[]>([]);
-  const [pipOutput, setPipOutput] = useState<string[]>([]);
-  const [selectedProvider, setSelectedProvider] = useState("openai");
-  const [gatewayPort, setGatewayPort] = useState("8000");
+  const [installOutput, setInstallOutput] = useState<string[]>([]);
+  const [installComplete, setInstallComplete] = useState(false);
+
+  // Agent name
+  const [agentName, setAgentName] = useState("Ron");
+
+  // API keys
+  const [selectedProvider, setSelectedProvider] = useState("openrouter");
+  const [apiKey, setApiKey] = useState("");
+  const [keySaved, setKeySaved] = useState(false);
+
+  // Model
+  const [selectedModel, setSelectedModel] = useState("openrouter/nous/hermes-3-llama-3.1-70b");
+
+  // Doctor / launch
+  const [doctorRunning, setDoctorRunning] = useState(false);
+  const [doctorOutput, setDoctorOutput] = useState<string[]>([]);
+  const [doctorPassed, setDoctorPassed] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [launchOutput, setLaunchOutput] = useState<string[]>([]);
-  const [agentName, setAgentName] = useState("Ron");
+
   const navigate = useNavigate();
 
   const handleConnect = () => {
@@ -65,76 +114,96 @@ const Index = () => {
     }, 2000);
   };
 
-  const handleClone = async () => {
-    setCloning(true);
-    setCloneProgress(0);
-    setCloneOutput(["$ git clone https://github.com/ainoval/agent.git"]);
-
-    // Simulate progress while the real command runs
-    const progressInterval = setInterval(() => {
-      setCloneProgress((prev) => Math.min(prev + 3, 90));
-    }, 200);
-
-    const result = await systemAPI.cloneRepo(gitToken);
-
-    clearInterval(progressInterval);
-    setCloneProgress(100);
-    setCloneOutput((prev) => [
-      ...prev,
-      result.success ? "✓ Repository cloned successfully" : `✗ ${result.stderr || 'Clone failed'}`,
-    ]);
-    setCloning(false);
-    if (result.success) setInstallStep(3);
-  };
-
-  const handlePipInstall = async () => {
+  // ─── Step 1: Install Hermes ───────────────────────────────
+  const handleInstallHermes = async () => {
     setInstalling(true);
-    setPipProgress(0);
-    setPipOutput(["$ python3 -m venv .venv", "$ pip install -e ."]);
+    setInstallProgress(0);
+    setInstallOutput(["$ curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"]);
 
     const progressInterval = setInterval(() => {
-      setPipProgress((prev) => Math.min(prev + 2, 90));
-    }, 250);
+      setInstallProgress((prev) => Math.min(prev + 2, 90));
+      setInstallOutput((prev) => {
+        const messages = [
+          "Checking Python version...",
+          "Creating virtual environment...",
+          "Installing hermes-agent and dependencies...",
+          "Installing tools...",
+          "Setting up PATH...",
+        ];
+        const idx = Math.min(Math.floor(prev.length / 2), messages.length - 1);
+        if (!prev.includes(messages[idx])) return [...prev, messages[idx]];
+        return prev;
+      });
+    }, 800);
 
-    const result = await systemAPI.setupPythonEnv();
+    const result = await systemAPI.installHermes();
 
     clearInterval(progressInterval);
-    setPipProgress(100);
-    setPipOutput((prev) => [
-      ...prev,
-      result.success ? "✓ Agent installed successfully" : `✗ ${result.stderr || 'Install failed'}`,
-    ]);
+    setInstallProgress(100);
+
+    if (result.success) {
+      setInstallOutput((prev) => [...prev, "✓ Hermes Agent installed successfully!"]);
+      setInstallComplete(true);
+      setTimeout(() => setInstallStep(2), 1000);
+    } else {
+      setInstallOutput((prev) => [...prev, `✗ Installation failed: ${result.stderr || "Unknown error"}`]);
+    }
     setInstalling(false);
-    if (result.success) setInstallStep(4);
   };
 
+  // ─── Step 3: Save API Key ────────────────────────────────
+  const handleSaveApiKey = async () => {
+    const provider = LLM_PROVIDERS.find((p) => p.id === selectedProvider);
+    if (!provider || !provider.envVar) {
+      // Ollama — no key needed
+      setKeySaved(true);
+      return;
+    }
+    await systemAPI.setEnvVar(provider.envVar, apiKey);
+    setKeySaved(true);
+  };
+
+  // ─── Step 4: Save Model ──────────────────────────────────
+  const handleSaveModel = async () => {
+    await systemAPI.writeInitialConfig({ model: selectedModel });
+    setInstallStep(5);
+  };
+
+  // ─── Step 5: Run Doctor ──────────────────────────────────
+  const handleDoctor = async () => {
+    setDoctorRunning(true);
+    setDoctorOutput(["$ hermes doctor"]);
+
+    const result = await systemAPI.hermesDoctor();
+
+    const lines = result.stdout.split("\n").filter(Boolean);
+    setDoctorOutput((prev) => [...prev, ...lines]);
+    setDoctorPassed(result.success);
+    setDoctorRunning(false);
+  };
+
+  // ─── Step 6: Launch ──────────────────────────────────────
   const handleLaunch = async () => {
     setLaunching(true);
-    setLaunchOutput([`$ ainoval start --name "${agentName}" --port ${gatewayPort}`]);
+    setLaunchOutput([`$ hermes`]);
 
-    // Write config first
-    await systemAPI.writeAgentConfig({
-      name: agentName,
-      port: parseInt(gatewayPort) || 8000,
-      provider: selectedProvider,
-    });
-    setLaunchOutput((prev) => [...prev, "✓ Configuration saved"]);
-
-    // Launch the agent
-    const result = await systemAPI.launchAgent(agentName, parseInt(gatewayPort) || 8000);
-    setLaunching(false);
+    const result = await systemAPI.startAgent();
 
     if (result.success) {
       setLaunchOutput((prev) => [
         ...prev,
-        `✓ ${agentName} is running on http://localhost:${gatewayPort}`,
-        "✓ Gateway API active",
+        `✓ ${agentName} is ready!`,
+        "✓ Hermes Agent is running",
         "✓ All systems operational",
       ]);
     } else {
-      setLaunchOutput((prev) => [...prev, `✗ Failed to start: ${result.stderr || 'Unknown error'}`]);
+      setLaunchOutput((prev) => [...prev, `✗ Failed to start: ${result.stderr || "Unknown error"}`]);
     }
+    setLaunching(false);
   };
+
+  const currentProvider = LLM_PROVIDERS.find((p) => p.id === selectedProvider);
+  const needsApiKey = currentProvider?.envVar !== "";
 
   return (
     <div className="flex-1 flex items-center justify-center min-h-screen p-8">
@@ -185,7 +254,7 @@ const Index = () => {
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">Connect</h3>
                   <p className="text-sm text-muted-foreground">
-                    Connect to a running agent instance
+                    Connect to a running Hermes Agent instance
                   </p>
                 </div>
               </GlassCard>
@@ -200,7 +269,7 @@ const Index = () => {
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">Install & Setup</h3>
                   <p className="text-sm text-muted-foreground">
-                    Full automated agent installation — no terminal needed
+                    Full automated Hermes Agent installation — no terminal needed
                   </p>
                 </div>
               </GlassCard>
@@ -226,11 +295,11 @@ const Index = () => {
                   <Server className="w-5 h-5 text-primary" />
                   Connect to Agent
                 </h2>
-                <p className="text-sm text-muted-foreground">Enter the URL of your running agent gateway</p>
+                <p className="text-sm text-muted-foreground">Enter the URL of your running Hermes Agent</p>
               </div>
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Gateway URL</label>
+                  <label className="text-sm font-medium text-foreground">Agent URL</label>
                   <Input
                     value={connectUrl}
                     onChange={(e) => setConnectUrl(e.target.value)}
@@ -241,7 +310,7 @@ const Index = () => {
                 <div className="glass-subtle rounded-lg p-3 flex items-start gap-2">
                   <Globe className="w-4 h-4 text-accent mt-0.5 shrink-0" />
                   <p className="text-xs text-muted-foreground">
-                    Auto-detection: We'll also scan localhost for running instances
+                    We'll scan for running Hermes instances on localhost automatically.
                   </p>
                 </div>
                 <Button onClick={handleConnect} disabled={connecting} className="w-full gradient-primary text-primary-foreground hover:opacity-90">
@@ -295,100 +364,55 @@ const Index = () => {
                   <PrerequisiteCheck onComplete={() => setInstallStep(1)} />
                 )}
 
-                {/* Step 1: Git Authentication */}
+                {/* Step 1: Install Hermes Agent */}
                 {installStep === 1 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-2">
-                      <GitBranch className="w-4 h-4 text-primary" />
-                      <span className="text-sm font-medium text-foreground">GitHub Access Token</span>
+                      <Download className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium text-foreground">Install Hermes Agent</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Enter a GitHub Personal Access Token (PAT) to clone the agent repository. 
-                      You can generate one at github.com → Settings → Developer settings → Personal access tokens.
+                      This will download and install Hermes Agent from the official NousResearch repository.
+                      The installer handles virtualenv creation and all dependencies automatically.
                     </p>
-                    <Input
-                      type="password"
-                      value={gitToken}
-                      onChange={(e) => setGitToken(e.target.value)}
-                      placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-                      className="bg-background/50 border-white/10 font-mono text-sm"
-                    />
-                    <div className="glass-subtle rounded-lg p-2 text-xs text-muted-foreground">
-                      Required scopes: <code className="text-accent">repo</code> (read access)
+
+                    <div className="font-mono text-xs space-y-1 max-h-40 overflow-y-auto">
+                      {installOutput.map((line, i) => (
+                        <p key={i} className={
+                          line.startsWith("✓") ? "text-success" :
+                          line.startsWith("✗") ? "text-destructive" :
+                          line.startsWith("$") ? "text-muted-foreground" :
+                          "text-foreground/70"
+                        }>
+                          {line}
+                        </p>
+                      ))}
                     </div>
-                    <Button
-                      onClick={() => setInstallStep(2)}
-                      disabled={!gitToken}
-                      className="w-full gradient-primary text-primary-foreground"
-                    >
-                      Save & Continue <ArrowRight className="w-4 h-4 ml-1" />
-                    </Button>
+
+                    {installing && (
+                      <div className="space-y-1">
+                        <Progress value={installProgress} className="h-1" />
+                        <p className="text-xs text-muted-foreground text-right">{installProgress}%</p>
+                      </div>
+                    )}
+
+                    {!installing && !installComplete && (
+                      <Button onClick={handleInstallHermes} className="w-full gradient-primary text-primary-foreground">
+                        Install Hermes Agent <ArrowRight className="w-4 h-4 ml-1" />
+                      </Button>
+                    )}
                   </div>
                 )}
 
-                {/* Step 2: Clone Repo */}
+                {/* Step 2: Name Your Agent */}
                 {installStep === 2 && (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <FolderGit2 className="w-4 h-4 text-primary" />
-                      <span className="text-sm font-medium text-foreground">Clone Repository</span>
-                    </div>
-                    <div className="font-mono text-sm space-y-1">
-                      <p className="text-muted-foreground">$ git clone https://github.com/ainoval/agent.git</p>
-                      {cloning && (
-                        <>
-                          <p className="text-foreground/70">Cloning into 'ainoval-agent'...</p>
-                          <Progress value={cloneProgress} className="h-1 mt-2" />
-                          <p className="text-xs text-muted-foreground">{cloneProgress}% complete</p>
-                        </>
-                      )}
-                      {!cloning && cloneProgress >= 100 && (
-                        <p className="text-success">✓ Repository cloned successfully</p>
-                      )}
-                    </div>
-                    {!cloning && cloneProgress === 0 && (
-                      <Button onClick={handleClone} className="w-full gradient-primary text-primary-foreground">
-                        Clone Repository <ArrowRight className="w-4 h-4 ml-1" />
-                      </Button>
-                    )}
-                  </div>
-                )}
-
-                {/* Step 3: Python Environment */}
-                {installStep === 3 && (
-                  <div className="space-y-3">
-                    <div className="font-mono text-sm space-y-1">
-                      <p className="text-muted-foreground">$ python3 -m venv agent-env</p>
-                      <p className="text-success">✓ Virtual environment created</p>
-                      <p className="text-muted-foreground">$ pip install -e ./ainoval-agent</p>
-                      {installing && (
-                        <>
-                          <p className="text-foreground/70">Installing agent and dependencies...</p>
-                          <Progress value={pipProgress} className="h-1 mt-2" />
-                          <p className="text-xs text-muted-foreground">{pipProgress}% complete</p>
-                        </>
-                      )}
-                      {!installing && pipProgress >= 100 && (
-                        <p className="text-success">✓ Agent installed successfully</p>
-                      )}
-                    </div>
-                    {!installing && pipProgress === 0 && (
-                      <Button onClick={handlePipInstall} className="w-full gradient-primary text-primary-foreground">
-                        Install Agent <ArrowRight className="w-4 h-4 ml-1" />
-                      </Button>
-                    )}
-                  </div>
-                )}
-
-                {/* Step 4: Name Your Agent */}
-                {installStep === 4 && (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2">
                       <User className="w-4 h-4 text-primary" />
                       <span className="text-sm font-medium text-foreground">Name Your Agent</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Give your AI agent a personal name. This is who you'll be chatting with — pick something you're comfortable talking to!
+                      Give your AI agent a personal name. This is who you'll be chatting with!
                     </p>
                     <Input
                       value={agentName}
@@ -398,11 +422,11 @@ const Index = () => {
                     />
                     <div className="glass-subtle rounded-lg p-3 text-center">
                       <p className="text-sm text-muted-foreground">
-                        Your agent will greet you as: <span className="text-primary font-semibold">{agentName || "Ron"}</span>
+                        Your agent will be called: <span className="text-primary font-semibold">{agentName || "Ron"}</span>
                       </p>
                     </div>
                     <Button
-                      onClick={() => setInstallStep(5)}
+                      onClick={() => setInstallStep(3)}
                       className="w-full gradient-primary text-primary-foreground"
                     >
                       Continue <ArrowRight className="w-4 h-4 ml-1" />
@@ -410,23 +434,31 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 5: Configure Provider */}
-                {installStep === 5 && (
-                  <div className="space-y-3">
-                    <label className="text-sm font-medium text-foreground">Default LLM Provider</label>
+                {/* Step 3: API Keys */}
+                {installStep === 3 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <KeyRound className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium text-foreground">LLM Provider API Key</span>
+                    </div>
+
+                    <p className="text-xs text-muted-foreground">
+                      Choose your LLM provider and enter your API key. This will be stored locally in <code className="text-accent">~/.hermes/.env</code>
+                    </p>
+
                     <div className="grid grid-cols-2 gap-2">
-                      {[
-                        { label: "OpenAI", value: "openai" },
-                        { label: "Anthropic", value: "anthropic" },
-                        { label: "Ollama (Local)", value: "ollama" },
-                        { label: "vLLM", value: "vllm" },
-                      ].map((p) => (
+                      {LLM_PROVIDERS.map((p) => (
                         <button
-                          key={p.value}
-                          onClick={() => setSelectedProvider(p.value)}
+                          key={p.id}
+                          onClick={() => {
+                            setSelectedProvider(p.id);
+                            setApiKey("");
+                            setKeySaved(false);
+                            setSelectedModel(p.defaultModel);
+                          }}
                           className={cn(
                             "px-3 py-2 rounded-lg border text-sm text-foreground transition-all text-left",
-                            selectedProvider === p.value
+                            selectedProvider === p.id
                               ? "border-primary/50 bg-primary/10"
                               : "border-white/10 hover:border-primary/30 hover:bg-primary/5"
                           )}
@@ -435,73 +467,198 @@ const Index = () => {
                         </button>
                       ))}
                     </div>
+
+                    {currentProvider && (
+                      <div className="glass-subtle rounded-lg p-3 text-xs text-muted-foreground">
+                        {currentProvider.hint}
+                      </div>
+                    )}
+
+                    {needsApiKey && (
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-foreground">{currentProvider?.envVar}</label>
+                        <Input
+                          type="password"
+                          value={apiKey}
+                          onChange={(e) => { setApiKey(e.target.value); setKeySaved(false); }}
+                          placeholder={currentProvider?.prefix ? `${currentProvider.prefix}...` : "Enter API key"}
+                          className="bg-background/50 border-white/10 font-mono text-sm"
+                        />
+                      </div>
+                    )}
+
+                    {keySaved && (
+                      <div className="glass-subtle rounded-lg p-2 border border-success/20">
+                        <p className="text-xs text-success flex items-center gap-2">
+                          <CheckCircle2 className="w-3 h-3" /> API key saved to ~/.hermes/.env
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      {!keySaved && (
+                        <Button
+                          onClick={handleSaveApiKey}
+                          disabled={needsApiKey && !apiKey}
+                          className="flex-1 gradient-primary text-primary-foreground"
+                        >
+                          {needsApiKey ? "Save Key" : "Skip (No Key Needed)"} <CheckCircle2 className="w-4 h-4 ml-1" />
+                        </Button>
+                      )}
+                      {keySaved && (
+                        <Button
+                          onClick={() => setInstallStep(4)}
+                          className="flex-1 gradient-primary text-primary-foreground"
+                        >
+                          Continue <ArrowRight className="w-4 h-4 ml-1" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 )}
 
-                {/* Step 6: Agent Config */}
-                {installStep === 6 && (
+                {/* Step 4: Choose Model */}
+                {installStep === 4 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Cpu className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium text-foreground">Choose Model</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Select the default model for your agent. You can change this anytime with the <code className="text-accent">/model</code> command.
+                    </p>
+
+                    <div className="space-y-2">
+                      {(MODEL_OPTIONS[selectedProvider] || []).map((model) => (
+                        <button
+                          key={model.id}
+                          onClick={() => setSelectedModel(model.id)}
+                          className={cn(
+                            "w-full px-3 py-2 rounded-lg border text-sm text-foreground transition-all text-left font-mono",
+                            selectedModel === model.id
+                              ? "border-primary/50 bg-primary/10"
+                              : "border-white/10 hover:border-primary/30 hover:bg-primary/5"
+                          )}
+                        >
+                          {model.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="glass-subtle rounded-lg p-3 text-xs text-muted-foreground">
+                      Config will be written to <code className="text-accent">~/.hermes/config.yaml</code>
+                    </div>
+
+                    <Button
+                      onClick={handleSaveModel}
+                      className="w-full gradient-primary text-primary-foreground"
+                    >
+                      Save & Continue <ArrowRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  </div>
+                )}
+
+                {/* Step 5: Verify (hermes doctor) */}
+                {installStep === 5 && (
                   <div className="space-y-3">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-foreground">Agent Name</label>
-                      <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} className="bg-background/50 border-white/10" />
+                    <div className="flex items-center gap-2 mb-2">
+                      <Stethoscope className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium text-foreground">Verify Installation</span>
                     </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-foreground">Gateway Port</label>
-                      <Input value={gatewayPort} onChange={(e) => setGatewayPort(e.target.value)} className="bg-background/50 border-white/10" />
-                    </div>
-                  </div>
-                )}
+                    <p className="text-xs text-muted-foreground">
+                      Run <code className="text-accent">hermes doctor</code> to verify everything is configured correctly.
+                    </p>
 
-                {/* Step 7: Launch */}
-                {installStep === 7 && (
-                  <div className="space-y-2 font-mono text-sm">
-                    {launchOutput.length === 0 && !launching && (
-                      <Button
-                        onClick={handleLaunch}
-                        className="w-full gradient-primary text-primary-foreground font-sans"
-                      >
-                        Launch {agentName} <ArrowRight className="w-4 h-4 ml-1" />
+                    <div className="font-mono text-xs space-y-1 max-h-40 overflow-y-auto">
+                      {doctorOutput.map((line, i) => (
+                        <p key={i} className={
+                          line.startsWith("✓") ? "text-success" :
+                          line.startsWith("✗") ? "text-destructive" :
+                          line.startsWith("$") ? "text-muted-foreground" :
+                          "text-foreground/70"
+                        }>
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+
+                    {doctorRunning && (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Running diagnostics...
+                      </div>
+                    )}
+
+                    {!doctorRunning && !doctorPassed && (
+                      <Button onClick={handleDoctor} className="w-full gradient-primary text-primary-foreground">
+                        Run Diagnostics <Stethoscope className="w-4 h-4 ml-1" />
                       </Button>
                     )}
-                    {launching && (
+
+                    {doctorPassed && (
                       <>
-                        <p className="text-muted-foreground">$ ainoval start --name "{agentName}" --port {gatewayPort}</p>
-                        <p className="text-foreground/70 flex items-center gap-2">
-                          <Loader2 className="w-3 h-3 animate-spin" /> Starting {agentName}...
-                        </p>
+                        <div className="glass-subtle rounded-lg p-2 border border-success/20">
+                          <p className="text-xs text-success flex items-center gap-2">
+                            <CheckCircle2 className="w-3 h-3" /> All checks passed!
+                          </p>
+                        </div>
+                        <Button
+                          onClick={() => setInstallStep(6)}
+                          className="w-full gradient-primary text-primary-foreground"
+                        >
+                          Continue to Launch <ArrowRight className="w-4 h-4 ml-1" />
+                        </Button>
                       </>
                     )}
-                    {launchOutput.map((line, i) => (
-                      <p key={i} className={line.startsWith("✓") ? "text-success" : line.startsWith("✗") ? "text-destructive" : "text-muted-foreground"}>
-                        {line}
-                      </p>
-                    ))}
+                  </div>
+                )}
+
+                {/* Step 6: Launch */}
+                {installStep === 6 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Terminal className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium text-foreground">Launch {agentName}</span>
+                    </div>
+
+                    <div className="font-mono text-xs space-y-1">
+                      {launchOutput.map((line, i) => (
+                        <p key={i} className={
+                          line.startsWith("✓") ? "text-success" :
+                          line.startsWith("✗") ? "text-destructive" :
+                          "text-muted-foreground"
+                        }>
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+
+                    {launching && (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Starting {agentName}...
+                      </div>
+                    )}
+
+                    {launchOutput.length === 0 && !launching && (
+                      <Button onClick={handleLaunch} className="w-full gradient-primary text-primary-foreground">
+                        Launch {agentName} <Zap className="w-4 h-4 ml-1" />
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
 
-              {/* Nav buttons (skip for step 0 which has its own continue) */}
+              {/* Nav buttons */}
               {installStep > 0 && (
                 <div className="flex justify-between">
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={installStep === 0}
                     onClick={() => setInstallStep((s) => (s - 1) as InstallStep)}
                     className="text-muted-foreground"
                   >
                     Previous
                   </Button>
-                  {installStep >= 5 && installStep < 7 && (
-                    <Button
-                      size="sm"
-                      onClick={() => setInstallStep((s) => (s + 1) as InstallStep)}
-                      className="gradient-primary text-primary-foreground"
-                    >
-                      Next <ArrowRight className="w-4 h-4 ml-1" />
-                    </Button>
-                  )}
-                  {installStep === 7 && launchOutput.some((l) => l.includes("All systems operational")) && (
+                  {installStep === 6 && launchOutput.some((l) => l.includes("All systems operational")) && (
                     <Button
                       size="sm"
                       onClick={() => navigate("/dashboard")}

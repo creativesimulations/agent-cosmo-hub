@@ -1,87 +1,62 @@
-import { useState } from "react";
-import { FileCode, Save, RotateCcw, CheckCircle2, AlertCircle } from "lucide-react";
+import { useState, useEffect } from "react";
+import { FileCode, Save, RotateCcw, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { systemAPI } from "@/lib/systemAPI";
 
-const defaultConfig = `# Ronbot Agent Configuration
-# config.yaml
+const fallbackConfig = `# Ronbot — Hermes Agent Configuration
+# ~/.hermes/config.yaml
 
-agent:
-  name: "Ron"
-  version: "0.1.0"
-  max_sub_agents: 10
-  auto_restart: true
-
-gateway:
-  host: "0.0.0.0"
-  port: 8000
-  platforms:
-    - name: "rest_api"
-      enabled: true
-    - name: "telegram"
-      enabled: false
-      token: "\${TELEGRAM_BOT_TOKEN}"
-    - name: "discord"
-      enabled: false
-      token: "\${DISCORD_BOT_TOKEN}"
-
-providers:
-  default: "openai"
-  auxiliary: "anthropic"
-  models:
-    - provider: "openai"
-      model: "gpt-4o"
-      enabled: true
-    - provider: "anthropic"
-      model: "claude-3.5-sonnet"
-      enabled: true
-    - provider: "ollama"
-      model: "llama3.1"
-      endpoint: "http://localhost:11434"
-      enabled: false
-
-logging:
-  level: "info"
-  file: "agent.log"
-  max_size: "50MB"
-  rotation: true
-
-scheduler:
-  jobs:
-    - name: "health_check"
-      cron: "*/5 * * * *"
-      enabled: true
-    - name: "log_rotation"
-      cron: "0 0 * * *"
-      enabled: true`;
+model: openrouter/nous/hermes-3-llama-3.1-70b
+`;
 
 const ConfigEditor = () => {
-  const [config, setConfig] = useState(defaultConfig);
+  const [config, setConfig] = useState(fallbackConfig);
   const [saved, setSaved] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+
+  useEffect(() => {
+    loadConfig();
+  }, []);
+
+  const loadConfig = async () => {
+    setLoading(true);
+    const result = await systemAPI.readConfig();
+    if (result.success && result.content) {
+      setConfig(result.content);
+    }
+    setLoading(false);
+    setSaved(true);
+  };
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setConfig(e.target.value);
     setSaved(false);
-    // Simple validation
     const errors: string[] = [];
-    if (!e.target.value.includes("agent:")) errors.push("Missing 'agent' section");
-    if (!e.target.value.includes("gateway:")) errors.push("Missing 'gateway' section");
+    if (!e.target.value.includes("model:")) errors.push("Missing 'model' field");
     setValidationErrors(errors);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    await systemAPI.writeConfig(config);
     setSaved(true);
   };
 
   const handleRevert = () => {
-    setConfig(defaultConfig);
-    setSaved(true);
+    loadConfig();
     setValidationErrors([]);
   };
 
   const lineCount = config.split("\n").length;
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center h-[calc(100vh-2rem)]">
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-4 h-[calc(100vh-2rem)] flex flex-col">
@@ -91,7 +66,7 @@ const ConfigEditor = () => {
             <FileCode className="w-6 h-6 text-primary" />
             Config Editor
           </h1>
-          <p className="text-sm text-muted-foreground">Edit your agent configuration</p>
+          <p className="text-sm text-muted-foreground">Edit ~/.hermes/config.yaml</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={handleRevert} className="text-muted-foreground hover:text-foreground">
@@ -121,13 +96,12 @@ const ConfigEditor = () => {
       {saved && validationErrors.length === 0 && (
         <div className="glass-subtle rounded-lg p-2 border border-success/20">
           <p className="text-xs text-success flex items-center gap-2">
-            <CheckCircle2 className="w-3 h-3" /> Configuration is valid and saved
+            <CheckCircle2 className="w-3 h-3" /> Configuration saved
           </p>
         </div>
       )}
 
       <GlassCard className="flex-1 overflow-hidden p-0 flex">
-        {/* Line numbers */}
         <div className="py-4 px-3 border-r border-white/5 select-none overflow-hidden">
           {Array.from({ length: lineCount }, (_, i) => (
             <div key={i} className="text-xs text-muted-foreground/40 font-mono leading-6 text-right">
@@ -144,7 +118,7 @@ const ConfigEditor = () => {
       </GlassCard>
 
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>config.yaml — {lineCount} lines</span>
+        <span>~/.hermes/config.yaml — {lineCount} lines</span>
         <span>{saved ? "Saved" : "Unsaved changes"}</span>
       </div>
     </div>
