@@ -125,7 +125,7 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
         result = await systemAPI.installPython();
         break;
       case "pip":
-        result = await systemAPI.installPython();
+        result = await systemAPI.installPip();
         break;
       case "git":
         result = await systemAPI.installGit();
