@@ -8,13 +8,14 @@ import {
   Monitor,
   AlertTriangle,
   ChevronRight,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { systemAPI } from "@/lib/systemAPI";
 
-type CheckStatus = "pending" | "checking" | "found" | "missing" | "installing" | "installed" | "error";
+type CheckStatus = "pending" | "checking" | "found" | "missing" | "installing" | "installed" | "error" | "reboot_required";
 
 interface Prerequisite {
   id: string;
@@ -120,7 +121,21 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
     switch (id) {
       case "wsl2":
         result = await systemAPI.installWSL();
-        break;
+        clearInterval(interval);
+        if (result?.success) {
+          updatePrereq(id, {
+            status: "reboot_required",
+            installProgress: 100,
+            description: "WSL installed — a system reboot is required to complete setup. Please restart your computer, then re-run this scan.",
+          });
+        } else {
+          updatePrereq(id, {
+            status: "error",
+            installProgress: 0,
+            description: `Installation failed: ${result?.stderr || 'Unknown error'}`,
+          });
+        }
+        return;
       case "python":
         result = await systemAPI.installPython();
         break;
@@ -154,6 +169,8 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
   const allRequiredMet = prereqs
     .filter((p) => p.required)
     .every((p) => p.status === "found" || p.status === "installed");
+
+  const needsReboot = prereqs.some((p) => p.status === "reboot_required");
 
   return (
     <div className="space-y-6">
@@ -207,6 +224,11 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
                   <Download className="w-3 h-3 mr-1" /> Install
                 </Button>
               )}
+              {prereq.status === "reboot_required" && (
+                <span className="text-xs font-medium text-warning shrink-0 flex items-center gap-1">
+                  <RotateCcw className="w-3 h-3" /> Reboot needed
+                </span>
+              )}
             </div>
           </motion.div>
         ))}
@@ -214,7 +236,14 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
 
       {scanComplete && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          {allRequiredMet ? (
+          {needsReboot ? (
+            <div className="glass-subtle rounded-lg p-3 flex items-center gap-2 border border-warning/20">
+              <RotateCcw className="w-4 h-4 text-warning" />
+              <p className="text-sm text-warning">
+                A system reboot is required to finish WSL setup. Please restart your computer, then re-open this app and scan again.
+              </p>
+            </div>
+          ) : allRequiredMet ? (
             <div className="glass-subtle rounded-lg p-3 flex items-center gap-2 border border-success/20">
               <CheckCircle2 className="w-4 h-4 text-success" />
               <p className="text-sm text-success">All prerequisites are met!</p>
@@ -227,7 +256,7 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
           )}
           <Button
             onClick={onComplete}
-            disabled={!allRequiredMet}
+            disabled={!allRequiredMet || needsReboot}
             className="gradient-primary text-primary-foreground w-full mt-4"
           >
             Continue <ChevronRight className="w-4 h-4 ml-1" />
@@ -243,6 +272,8 @@ const StatusIcon = ({ status }: { status: CheckStatus }) => {
     case "found":
     case "installed":
       return <CheckCircle2 className="w-4 h-4 text-success shrink-0" />;
+    case "reboot_required":
+      return <RotateCcw className="w-4 h-4 text-warning shrink-0" />;
     case "missing":
       return <XCircle className="w-4 h-4 text-warning shrink-0" />;
     case "error":
