@@ -1,42 +1,11 @@
-import { useState, useRef, useEffect } from "react";
-import { motion } from "framer-motion";
-import { FileText, Search, Filter, Pause, Play, Trash2, Download } from "lucide-react";
+import { useState } from "react";
+import { FileText, Search, Filter, Pause, Play, Trash2, Download, AlertCircle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
-
-interface LogEntry {
-  id: number;
-  timestamp: string;
-  level: LogLevel;
-  source: string;
-  message: string;
-}
-
-const generateLogs = (): LogEntry[] => [
-  { id: 1, timestamp: "2024-01-15 14:23:05.123", level: "info", source: "gateway", message: "Health check: all systems nominal" },
-  { id: 2, timestamp: "2024-01-15 14:23:04.891", level: "info", source: "agent", message: "Sub-agent 'research-agent' spawned successfully" },
-  { id: 3, timestamp: "2024-01-15 14:23:03.456", level: "warn", source: "provider", message: "Rate limit approaching for OpenAI (80% of quota used)" },
-  { id: 4, timestamp: "2024-01-15 14:23:02.789", level: "debug", source: "agent", message: "Token usage: 12,432 prompt + 3,891 completion = 16,323 total" },
-  { id: 5, timestamp: "2024-01-15 14:23:01.234", level: "info", source: "agent", message: "Task delegation: market analysis → research-agent" },
-  { id: 6, timestamp: "2024-01-15 14:22:59.567", level: "error", source: "skill", message: "Failed to load skill 'web_scraper': timeout after 30s" },
-  { id: 7, timestamp: "2024-01-15 14:22:58.901", level: "info", source: "gateway", message: "Incoming request from Telegram platform" },
-  { id: 8, timestamp: "2024-01-15 14:22:57.345", level: "debug", source: "provider", message: "Model response latency: 1.23s (gpt-4o)" },
-  { id: 9, timestamp: "2024-01-15 14:22:56.678", level: "info", source: "agent", message: "code-writer completed: database schema migration" },
-  { id: 10, timestamp: "2024-01-15 14:22:55.012", level: "warn", source: "system", message: "Memory usage at 78% — consider increasing allocation" },
-  { id: 11, timestamp: "2024-01-15 14:22:54.345", level: "info", source: "scheduler", message: "Cron job 'health_check' executed successfully" },
-  { id: 12, timestamp: "2024-01-15 14:22:53.678", level: "debug", source: "agent", message: "Context window: 42,891 / 128,000 tokens used" },
-];
-
-const levelColors: Record<LogLevel, string> = {
-  debug: "text-muted-foreground",
-  info: "text-foreground/70",
-  warn: "text-warning",
-  error: "text-destructive",
-};
 
 const levelBadgeColors: Record<LogLevel, string> = {
   debug: "bg-white/5 text-muted-foreground",
@@ -46,23 +15,18 @@ const levelBadgeColors: Record<LogLevel, string> = {
 };
 
 const LogViewer = () => {
-  const [logs] = useState(generateLogs);
   const [search, setSearch] = useState("");
   const [activeFilters, setActiveFilters] = useState<LogLevel[]>(["debug", "info", "warn", "error"]);
   const [paused, setPaused] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // TODO: Replace with real logs from agent
+  const logs: never[] = [];
 
   const toggleFilter = (level: LogLevel) => {
     setActiveFilters((prev) =>
       prev.includes(level) ? prev.filter((l) => l !== level) : [...prev, level]
     );
   };
-
-  const filtered = logs.filter(
-    (log) =>
-      activeFilters.includes(log.level) &&
-      (search === "" || log.message.toLowerCase().includes(search.toLowerCase()) || log.source.toLowerCase().includes(search.toLowerCase()))
-  );
 
   return (
     <div className="p-6 space-y-4 h-[calc(100vh-2rem)] flex flex-col">
@@ -114,29 +78,16 @@ const LogViewer = () => {
         </div>
       </div>
 
-      <GlassCard className="flex-1 overflow-hidden p-0">
-        <div ref={scrollRef} className="h-full overflow-y-auto font-mono text-xs">
-          {filtered.map((log, i) => (
-            <motion.div
-              key={log.id}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex items-start gap-3 px-4 py-1.5 hover:bg-white/[0.02] border-b border-white/[0.03]"
-            >
-              <span className="text-muted-foreground/60 shrink-0 w-[180px]">{log.timestamp}</span>
-              <span className={cn("w-12 shrink-0 uppercase font-semibold", levelColors[log.level])}>
-                {log.level}
-              </span>
-              <span className="text-accent/60 shrink-0 w-20">[{log.source}]</span>
-              <span className={cn("flex-1", levelColors[log.level])}>{log.message}</span>
-            </motion.div>
-          ))}
+      <GlassCard className="flex-1 overflow-hidden flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <AlertCircle className="w-10 h-10 text-muted-foreground mx-auto opacity-40" />
+          <p className="text-sm text-muted-foreground">No logs yet. Logs will appear here when the agent is running.</p>
         </div>
       </GlassCard>
 
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{filtered.length} entries shown</span>
-        <span>{paused ? "⏸ Paused" : "● Live"}</span>
+        <span>0 entries</span>
+        <span>{paused ? "⏸ Paused" : "● Waiting for agent"}</span>
       </div>
     </div>
   );

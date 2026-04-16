@@ -9,7 +9,6 @@ import {
   AlertTriangle,
   ChevronRight,
 } from "lucide-react";
-import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
@@ -31,10 +30,10 @@ interface Prerequisite {
 const initialPrereqs: Prerequisite[] = [
   { id: "os", name: "Operating System", description: "Detecting platform...", status: "pending", required: true },
   { id: "wsl2", name: "WSL2 (Windows)", description: "Windows Subsystem for Linux 2", status: "pending", required: true, windowsOnly: true },
-  { id: "python", name: "Python 3.11+", description: "Required runtime for Hermes Agent", status: "pending", required: true },
+  { id: "python", name: "Python 3.11+", description: "Required runtime", status: "pending", required: true },
   { id: "pip", name: "pip", description: "Python package manager", status: "pending", required: true },
   { id: "curl", name: "curl", description: "Required to download the installer", status: "pending", required: true },
-  { id: "git", name: "Git", description: "Version control (used by Hermes)", status: "pending", required: true },
+  { id: "git", name: "Git", description: "Version control", status: "pending", required: true },
 ];
 
 const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
@@ -49,7 +48,6 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
   const runScan = async () => {
     setScanning(true);
 
-    // 1. Detect OS
     updatePrereq("os", { status: "checking", description: "Detecting platform..." });
     try {
       const osInfo = await systemAPI.detectOS();
@@ -58,7 +56,6 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
       updatePrereq("os", { status: "error", description: "Failed to detect OS" });
     }
 
-    // 2. Check WSL2 (Windows only)
     const platform = await systemAPI.getPlatform();
     if (platform.isWindows) {
       updatePrereq("wsl2", { status: "checking", description: "Checking WSL2 installation..." });
@@ -70,13 +67,12 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
           description: wsl.distro ? `${wsl.version} with ${wsl.distro}` : wsl.version,
         });
       } else {
-        updatePrereq("wsl2", { status: "missing", description: "WSL2 required — native Windows is not supported by Hermes" });
+        updatePrereq("wsl2", { status: "missing", description: "WSL2 required — native Windows is not supported" });
       }
     } else {
       updatePrereq("wsl2", { status: "found", description: "Not required on this platform", version: "N/A" });
     }
 
-    // 3. Check Python
     updatePrereq("python", { status: "checking", description: "Searching for Python 3.11+..." });
     const python = await systemAPI.checkPython();
     if (python.installed) {
@@ -85,7 +81,6 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
       updatePrereq("python", { status: "missing", description: "Python 3.11+ not found" });
     }
 
-    // 4. Check pip
     updatePrereq("pip", { status: "checking", description: "Checking pip..." });
     const pip = await systemAPI.checkPip();
     if (pip.installed) {
@@ -94,7 +89,6 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
       updatePrereq("pip", { status: "missing", description: "pip not found" });
     }
 
-    // 5. Check curl
     updatePrereq("curl", { status: "checking", description: "Checking curl..." });
     const curl = await systemAPI.checkCurl();
     if (curl.installed) {
@@ -103,7 +97,6 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
       updatePrereq("curl", { status: "missing", description: "curl not found" });
     }
 
-    // 6. Check Git
     updatePrereq("git", { status: "checking", description: "Checking Git..." });
     const git = await systemAPI.checkGit();
     if (git.installed) {
@@ -119,7 +112,6 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
   const installPrereq = async (id: string) => {
     updatePrereq(id, { status: "installing", installProgress: 10 });
 
-    // Simulate progress
     const interval = setInterval(() => {
       updatePrereq(id, { installProgress: Math.min(90, (Math.random() * 20) + 50) });
     }, 500);
@@ -133,7 +125,7 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
         result = await systemAPI.installPython();
         break;
       case "pip":
-        result = await systemAPI.installPython(); // pip comes with python
+        result = await systemAPI.installPython();
         break;
       case "git":
         result = await systemAPI.installGit();
@@ -171,7 +163,7 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
           <h2 className="text-xl font-semibold text-foreground">System Prerequisites</h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          We'll scan your system and install everything needed to run Hermes Agent.
+          We'll scan your system and install everything needed to run the agent.
         </p>
       </div>
 

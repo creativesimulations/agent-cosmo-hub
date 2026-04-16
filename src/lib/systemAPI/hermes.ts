@@ -10,8 +10,9 @@ const INSTALL_SCRIPT = 'https://raw.githubusercontent.com/NousResearch/hermes-ag
 export const hermesAPI = {
   /** Install Hermes Agent using the official install script */
   async install(): Promise<CommandResult> {
+    // Use 'yes' to auto-accept all interactive prompts (e.g. ffmpeg)
     return coreAPI.runCommand(
-      `curl -fsSL ${INSTALL_SCRIPT} | bash`,
+      `yes | curl -fsSL ${INSTALL_SCRIPT} | bash`,
       { timeout: 600000 }
     );
   },

@@ -31,7 +31,7 @@ type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 const installSteps = [
   { title: "System Prerequisites", desc: "Detect & install required dependencies" },
-  { title: "Install Hermes Agent", desc: "Download and install the AI agent framework" },
+  { title: "Install Agent", desc: "Download and install the AI agent framework" },
   { title: "Name Your Agent", desc: "Give your AI agent a name" },
   { title: "API Keys", desc: "Configure your LLM provider credentials" },
   { title: "Choose Model", desc: "Select your preferred AI model" },
@@ -41,10 +41,10 @@ const installSteps = [
 
 // Provider definitions with their env var names and key prefixes
 const LLM_PROVIDERS = [
-  { id: "openrouter", label: "OpenRouter", envVar: "OPENROUTER_API_KEY", prefix: "sk-or-", hint: "200+ models including Hermes 3. Get a key at openrouter.ai", defaultModel: "openrouter/nous/hermes-3-llama-3.1-70b" },
+  { id: "openrouter", label: "OpenRouter", envVar: "OPENROUTER_API_KEY", prefix: "sk-or-", hint: "200+ models via a single API. Get a key at openrouter.ai", defaultModel: "openrouter/nous/hermes-3-llama-3.1-70b" },
   { id: "openai", label: "OpenAI", envVar: "OPENAI_API_KEY", prefix: "sk-", hint: "GPT-4o and more. Get a key at platform.openai.com", defaultModel: "openai/gpt-4o" },
   { id: "anthropic", label: "Anthropic", envVar: "ANTHROPIC_API_KEY", prefix: "sk-ant-", hint: "Claude models. Get a key at console.anthropic.com", defaultModel: "anthropic/claude-3.5-sonnet" },
-  { id: "nous", label: "Nous Portal", envVar: "NOUS_API_KEY", prefix: "", hint: "Nous Research's own portal. Get a key at portal.nousresearch.com", defaultModel: "nous/hermes-3-llama-3.1-70b" },
+  { id: "nous", label: "Nous Portal", envVar: "NOUS_API_KEY", prefix: "", hint: "Nous Research portal. Get a key at portal.nousresearch.com", defaultModel: "nous/hermes-3-llama-3.1-70b" },
   { id: "ollama", label: "Ollama (Local)", envVar: "", prefix: "", hint: "Run models locally — no API key needed. Install Ollama first.", defaultModel: "ollama/llama3.1" },
 ];
 
@@ -114,11 +114,11 @@ const Index = () => {
     }, 2000);
   };
 
-  // ─── Step 1: Install Hermes ───────────────────────────────
-  const handleInstallHermes = async () => {
+  // ─── Step 1: Install Agent ───────────────────────────────
+  const handleInstallAgent = async () => {
     setInstalling(true);
     setInstallProgress(0);
-    setInstallOutput(["$ curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"]);
+    setInstallOutput(["Starting agent installation..."]);
 
     const progressInterval = setInterval(() => {
       setInstallProgress((prev) => Math.min(prev + 2, 90));
@@ -126,8 +126,8 @@ const Index = () => {
         const messages = [
           "Checking Python version...",
           "Creating virtual environment...",
-          "Installing hermes-agent and dependencies...",
-          "Installing tools...",
+          "Installing agent framework and dependencies...",
+          "Installing tools and ffmpeg...",
           "Setting up PATH...",
         ];
         const idx = Math.min(Math.floor(prev.length / 2), messages.length - 1);
@@ -142,7 +142,7 @@ const Index = () => {
     setInstallProgress(100);
 
     if (result.success) {
-      setInstallOutput((prev) => [...prev, "✓ Hermes Agent installed successfully!"]);
+      setInstallOutput((prev) => [...prev, "✓ Agent installed successfully!"]);
       setInstallComplete(true);
       setTimeout(() => setInstallStep(2), 1000);
     } else {
@@ -172,7 +172,7 @@ const Index = () => {
   // ─── Step 5: Run Doctor ──────────────────────────────────
   const handleDoctor = async () => {
     setDoctorRunning(true);
-    setDoctorOutput(["$ hermes doctor"]);
+    setDoctorOutput(["Running diagnostics..."]);
 
     const result = await systemAPI.hermesDoctor();
 
@@ -185,7 +185,7 @@ const Index = () => {
   // ─── Step 6: Launch ──────────────────────────────────────
   const handleLaunch = async () => {
     setLaunching(true);
-    setLaunchOutput([`$ hermes`]);
+    setLaunchOutput(["Starting agent..."]);
 
     const result = await systemAPI.startAgent();
 
@@ -193,7 +193,7 @@ const Index = () => {
       setLaunchOutput((prev) => [
         ...prev,
         `✓ ${agentName} is ready!`,
-        "✓ Hermes Agent is running",
+        "✓ Agent is running",
         "✓ All systems operational",
       ]);
     } else {
@@ -254,7 +254,7 @@ const Index = () => {
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">Connect</h3>
                   <p className="text-sm text-muted-foreground">
-                    Connect to a running Hermes Agent instance
+                    Connect to a running agent instance
                   </p>
                 </div>
               </GlassCard>
@@ -269,7 +269,7 @@ const Index = () => {
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">Install & Setup</h3>
                   <p className="text-sm text-muted-foreground">
-                    Full automated Hermes Agent installation — no terminal needed
+                    Full automated agent installation — no terminal needed
                   </p>
                 </div>
               </GlassCard>
@@ -295,7 +295,7 @@ const Index = () => {
                   <Server className="w-5 h-5 text-primary" />
                   Connect to Agent
                 </h2>
-                <p className="text-sm text-muted-foreground">Enter the URL of your running Hermes Agent</p>
+                <p className="text-sm text-muted-foreground">Enter the URL of your running agent</p>
               </div>
               <div className="space-y-4">
                 <div className="space-y-2">
@@ -310,7 +310,7 @@ const Index = () => {
                 <div className="glass-subtle rounded-lg p-3 flex items-start gap-2">
                   <Globe className="w-4 h-4 text-accent mt-0.5 shrink-0" />
                   <p className="text-xs text-muted-foreground">
-                    We'll scan for running Hermes instances on localhost automatically.
+                    We'll scan for running agent instances on localhost automatically.
                   </p>
                 </div>
                 <Button onClick={handleConnect} disabled={connecting} className="w-full gradient-primary text-primary-foreground hover:opacity-90">
@@ -364,16 +364,16 @@ const Index = () => {
                   <PrerequisiteCheck onComplete={() => setInstallStep(1)} />
                 )}
 
-                {/* Step 1: Install Hermes Agent */}
+                {/* Step 1: Install Agent */}
                 {installStep === 1 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Download className="w-4 h-4 text-primary" />
-                      <span className="text-sm font-medium text-foreground">Install Hermes Agent</span>
+                      <span className="text-sm font-medium text-foreground">Install Agent</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      This will download and install Hermes Agent from the official NousResearch repository.
-                      The installer handles virtualenv creation and all dependencies automatically.
+                      This will download and install the AI agent framework.
+                      The installer handles virtual environment creation, dependencies, and ffmpeg automatically.
                     </p>
 
                     <div className="font-mono text-xs space-y-1 max-h-40 overflow-y-auto">
@@ -397,8 +397,8 @@ const Index = () => {
                     )}
 
                     {!installing && !installComplete && (
-                      <Button onClick={handleInstallHermes} className="w-full gradient-primary text-primary-foreground">
-                        Install Hermes Agent <ArrowRight className="w-4 h-4 ml-1" />
+                      <Button onClick={handleInstallAgent} className="w-full gradient-primary text-primary-foreground">
+                        Install Agent <ArrowRight className="w-4 h-4 ml-1" />
                       </Button>
                     )}
                   </div>
@@ -443,7 +443,7 @@ const Index = () => {
                     </div>
 
                     <p className="text-xs text-muted-foreground">
-                      Choose your LLM provider and enter your API key. This will be stored locally in <code className="text-accent">~/.hermes/.env</code>
+                      Choose your LLM provider and enter your API key. This will be stored securely on your machine.
                     </p>
 
                     <div className="grid grid-cols-2 gap-2">
@@ -490,7 +490,7 @@ const Index = () => {
                     {keySaved && (
                       <div className="glass-subtle rounded-lg p-2 border border-success/20">
                         <p className="text-xs text-success flex items-center gap-2">
-                          <CheckCircle2 className="w-3 h-3" /> API key saved to ~/.hermes/.env
+                          <CheckCircle2 className="w-3 h-3" /> API key saved securely
                         </p>
                       </div>
                     )}
@@ -525,7 +525,7 @@ const Index = () => {
                       <span className="text-sm font-medium text-foreground">Choose Model</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Select the default model for your agent. You can change this anytime with the <code className="text-accent">/model</code> command.
+                      Select the default model for your agent. You can change this anytime from the settings.
                     </p>
 
                     <div className="space-y-2">
@@ -545,10 +545,6 @@ const Index = () => {
                       ))}
                     </div>
 
-                    <div className="glass-subtle rounded-lg p-3 text-xs text-muted-foreground">
-                      Config will be written to <code className="text-accent">~/.hermes/config.yaml</code>
-                    </div>
-
                     <Button
                       onClick={handleSaveModel}
                       className="w-full gradient-primary text-primary-foreground"
@@ -558,7 +554,7 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 5: Verify (hermes doctor) */}
+                {/* Step 5: Verify */}
                 {installStep === 5 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-2">
@@ -566,7 +562,7 @@ const Index = () => {
                       <span className="text-sm font-medium text-foreground">Verify Installation</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Run <code className="text-accent">hermes doctor</code> to verify everything is configured correctly.
+                      Run diagnostics to verify everything is configured correctly.
                     </p>
 
                     <div className="font-mono text-xs space-y-1 max-h-40 overflow-y-auto">
