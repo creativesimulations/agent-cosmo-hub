@@ -193,10 +193,10 @@ const Index = () => {
     setKeySaved(true);
   };
 
-  // ─── Step 4: Save Model ──────────────────────────────────
+  // ─── Step 5: Save Model ──────────────────────────────────
   const handleSaveModel = async () => {
     await systemAPI.writeInitialConfig({ model: selectedModel });
-    setInstallStep(5);
+    setInstallStep(6);
   };
 
   // ─── Step 5: Run Doctor ──────────────────────────────────
