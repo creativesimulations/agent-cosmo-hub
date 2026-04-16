@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { Archive, Download, Upload, Trash2, Clock, CheckCircle2, FolderArchive, Loader2 } from "lucide-react";
+import { Archive, Download, Upload, Trash2, Clock, CheckCircle2, FolderArchive, Loader2, AlertCircle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -14,35 +13,12 @@ interface Backup {
   includes: string[];
 }
 
-const mockBackups: Backup[] = [
-  {
-    id: "1",
-    name: "Full Backup",
-    date: "2024-01-15 14:30",
-    size: "2.4 MB",
-    includes: ["Config", "API Keys", "Skills", "Schedules"],
-  },
-  {
-    id: "2",
-    name: "Config Only",
-    date: "2024-01-14 09:15",
-    size: "12 KB",
-    includes: ["Config"],
-  },
-  {
-    id: "3",
-    name: "Pre-Update Backup",
-    date: "2024-01-10 11:00",
-    size: "2.1 MB",
-    includes: ["Config", "API Keys", "Skills", "Schedules"],
-  },
-];
-
 const BackupRestore = () => {
-  const [backups, setBackups] = useState(mockBackups);
+  const [backups, setBackups] = useState<Backup[]>([]);
   const [creating, setCreating] = useState(false);
   const [createProgress, setCreateProgress] = useState(0);
   const [selectedItems, setSelectedItems] = useState(["config", "keys", "skills", "schedules"]);
+  const [agentConnected] = useState(false);
 
   const toggleItem = (item: string) => {
     setSelectedItems((prev) =>
@@ -51,22 +27,33 @@ const BackupRestore = () => {
   };
 
   const createBackup = async () => {
+    if (!agentConnected) return;
     setCreating(true);
     setCreateProgress(0);
-    for (let i = 0; i <= 100; i += 10) {
-      await new Promise((r) => setTimeout(r, 200));
-      setCreateProgress(i);
-    }
-    const newBackup: Backup = {
-      id: Date.now().toString(),
-      name: "Manual Backup",
-      date: new Date().toLocaleString(),
-      size: selectedItems.length > 2 ? "2.3 MB" : "15 KB",
-      includes: selectedItems.map((s) => s.charAt(0).toUpperCase() + s.slice(1)),
-    };
-    setBackups((prev) => [newBackup, ...prev]);
+    // TODO: implement real backup via systemAPI
     setCreating(false);
   };
+
+  if (!agentConnected) {
+    return (
+      <div className="p-6 space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            <Archive className="w-6 h-6 text-primary" />
+            Backup & Restore
+          </h1>
+          <p className="text-sm text-muted-foreground">Export and import your agent configuration</p>
+        </div>
+        <GlassCard className="flex items-center justify-center py-16">
+          <div className="text-center space-y-3">
+            <AlertCircle className="w-10 h-10 text-muted-foreground/40 mx-auto" />
+            <p className="text-sm text-muted-foreground">No agent connected</p>
+            <p className="text-xs text-muted-foreground/60">Install and start an agent to manage backups</p>
+          </div>
+        </GlassCard>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -120,7 +107,7 @@ const BackupRestore = () => {
             <Upload className="w-8 h-8 text-muted-foreground mx-auto" />
             <div>
               <p className="text-sm text-foreground">Drop backup file here</p>
-              <p className="text-xs text-muted-foreground">or click to browse (.ronbotbackup)</p>
+              <p className="text-xs text-muted-foreground">or click to browse</p>
             </div>
           </div>
         </GlassCard>
@@ -128,9 +115,13 @@ const BackupRestore = () => {
 
       <div className="space-y-3">
         <h3 className="text-sm font-semibold text-foreground">Backup History</h3>
-        {backups.map((backup, i) => (
-          <motion.div key={backup.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
-            <GlassCard variant="subtle" className="flex items-center justify-between">
+        {backups.length === 0 ? (
+          <GlassCard variant="subtle" className="text-center py-8">
+            <p className="text-sm text-muted-foreground/60">No backups yet</p>
+          </GlassCard>
+        ) : (
+          backups.map((backup) => (
+            <GlassCard key={backup.id} variant="subtle" className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <FolderArchive className="w-5 h-5 text-primary" />
                 <div>
@@ -139,8 +130,6 @@ const BackupRestore = () => {
                     <Clock className="w-3 h-3" /> {backup.date}
                     <span>•</span>
                     <span>{backup.size}</span>
-                    <span>•</span>
-                    <span>{backup.includes.join(", ")}</span>
                   </div>
                 </div>
               </div>
@@ -156,8 +145,8 @@ const BackupRestore = () => {
                 </Button>
               </div>
             </GlassCard>
-          </motion.div>
-        ))}
+          ))
+        )}
       </div>
     </div>
   );

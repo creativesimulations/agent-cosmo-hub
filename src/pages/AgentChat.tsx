@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
-import { MessageSquare, Send, Bot, User, Loader2, Sparkles } from "lucide-react";
+import { MessageSquare, Send, Bot, User, Loader2, AlertCircle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,24 +14,11 @@ interface Message {
   streaming?: boolean;
 }
 
-const sampleResponses = [
-  "I've analyzed the data and found 3 key patterns. Would you like me to elaborate on any of them?",
-  "The sub-agent has completed the research task. Here's a summary of the findings:\n\n1. Market trends indicate a 15% growth\n2. Competitor analysis shows 3 new entrants\n3. Customer sentiment is largely positive",
-  "I can help with that. Let me delegate this to a specialized sub-agent for code analysis. This should take about 30 seconds.",
-  "Configuration updated successfully. The new LLM provider settings are now active across all sub-agents.",
-];
-
 const AgentChat = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content: "Hello! I'm Ron, your AI agent. How can I assist you today? I can help with tasks, answer questions, or delegate work to specialized sub-agents.",
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [agentConnected] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,7 +26,7 @@ const AgentChat = () => {
   }, [messages]);
 
   const sendMessage = async () => {
-    if (!input.trim() || isStreaming) return;
+    if (!input.trim() || isStreaming || !agentConnected) return;
     const userMsg: Message = {
       id: Date.now().toString(),
       role: "user",
@@ -50,19 +37,7 @@ const AgentChat = () => {
     setInput("");
     setIsStreaming(true);
 
-    // Simulate streaming response
-    const response = sampleResponses[Math.floor(Math.random() * sampleResponses.length)];
-    const assistantId = (Date.now() + 1).toString();
-    setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "", timestamp: new Date(), streaming: true }]);
-
-    let streamed = "";
-    for (const char of response) {
-      streamed += char;
-      const current = streamed;
-      setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: current } : m)));
-      await new Promise((r) => setTimeout(r, 15));
-    }
-    setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, streaming: false } : m)));
+    // TODO: Send via agent gateway when connected
     setIsStreaming(false);
   };
 
@@ -77,45 +52,60 @@ const AgentChat = () => {
       </div>
 
       <GlassCard className="flex-1 flex flex-col overflow-hidden p-0">
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
-          {messages.map((msg) => (
-            <motion.div
-              key={msg.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className={cn("flex gap-3", msg.role === "user" && "flex-row-reverse")}
-            >
-              <div
-                className={cn(
-                  "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                  msg.role === "assistant" ? "bg-primary/15" : "bg-accent/15"
-                )}
-              >
-                {msg.role === "assistant" ? (
-                  <Bot className="w-4 h-4 text-primary" />
-                ) : (
-                  <User className="w-4 h-4 text-accent" />
-                )}
+        {!agentConnected ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center space-y-3">
+              <AlertCircle className="w-10 h-10 text-muted-foreground/40 mx-auto" />
+              <p className="text-sm text-muted-foreground">No agent connected</p>
+              <p className="text-xs text-muted-foreground/60">Install and start an agent to begin chatting</p>
+            </div>
+          </div>
+        ) : (
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+            {messages.length === 0 && (
+              <div className="flex-1 flex items-center justify-center h-full">
+                <p className="text-sm text-muted-foreground/40">Send a message to start the conversation</p>
               </div>
-              <div
-                className={cn(
-                  "max-w-[70%] rounded-xl px-4 py-3",
-                  msg.role === "assistant"
-                    ? "glass-subtle text-foreground"
-                    : "bg-primary/15 border border-primary/20 text-foreground"
-                )}
+            )}
+            {messages.map((msg) => (
+              <motion.div
+                key={msg.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={cn("flex gap-3", msg.role === "user" && "flex-row-reverse")}
               >
-                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-                {msg.streaming && (
-                  <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
-                )}
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  {msg.timestamp.toLocaleTimeString()}
-                </p>
-              </div>
-            </motion.div>
-          ))}
-        </div>
+                <div
+                  className={cn(
+                    "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                    msg.role === "assistant" ? "bg-primary/15" : "bg-accent/15"
+                  )}
+                >
+                  {msg.role === "assistant" ? (
+                    <Bot className="w-4 h-4 text-primary" />
+                  ) : (
+                    <User className="w-4 h-4 text-accent" />
+                  )}
+                </div>
+                <div
+                  className={cn(
+                    "max-w-[70%] rounded-xl px-4 py-3",
+                    msg.role === "assistant"
+                      ? "glass-subtle text-foreground"
+                      : "bg-primary/15 border border-primary/20 text-foreground"
+                  )}
+                >
+                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  {msg.streaming && (
+                    <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
+                  )}
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    {msg.timestamp.toLocaleTimeString()}
+                  </p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
 
         <div className="p-4 border-t border-white/5">
           <form
@@ -125,13 +115,13 @@ const AgentChat = () => {
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Message your agent..."
+              placeholder={agentConnected ? "Message your agent..." : "Agent not connected"}
               className="bg-background/50 border-white/10 focus:border-primary/50 flex-1"
-              disabled={isStreaming}
+              disabled={isStreaming || !agentConnected}
             />
             <Button
               type="submit"
-              disabled={!input.trim() || isStreaming}
+              disabled={!input.trim() || isStreaming || !agentConnected}
               className="gradient-primary text-primary-foreground"
             >
               {isStreaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
