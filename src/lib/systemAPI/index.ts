@@ -29,6 +29,7 @@ export const systemAPI = {
   checkHermes: prereqAPI.checkHermes.bind(prereqAPI),
   installWSL: prereqAPI.installWSL.bind(prereqAPI),
   installPython: prereqAPI.installPython.bind(prereqAPI),
+  installPip: prereqAPI.installPip.bind(prereqAPI),
   installGit: prereqAPI.installGit.bind(prereqAPI),
   installCurl: prereqAPI.installCurl.bind(prereqAPI),
 

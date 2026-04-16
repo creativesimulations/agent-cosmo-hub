@@ -27,11 +27,25 @@ function createWindow() {
 // Run a command and return stdout/stderr when complete
 ipcMain.handle('run-command', async (_event, cmd, options = {}) => {
   return new Promise((resolve) => {
+    // Refresh PATH on Windows so newly installed programs are found
+    let env = { ...process.env, ...options.env };
+    if (process.platform === 'win32') {
+      try {
+        const { execSync } = require('child_process');
+        const freshPath = execSync('powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable(\'Path\', \'Machine\') + \';\' + [Environment]::GetEnvironmentVariable(\'Path\', \'User\')"', { timeout: 5000 }).toString().trim();
+        if (freshPath) {
+          env.PATH = freshPath;
+          env.Path = freshPath;
+        }
+      } catch (e) {
+        // Fallback: use existing PATH
+      }
+    }
     const opts = {
       timeout: options.timeout || 60000,
       cwd: options.cwd || os.homedir(),
       shell: true,
-      env: { ...process.env, ...options.env },
+      env,
     };
     exec(cmd, opts, (error, stdout, stderr) => {
       resolve({

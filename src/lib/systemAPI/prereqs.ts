@@ -41,18 +41,22 @@ export const prereqAPI = {
 
   /** Check Python */
   async checkPython(): Promise<{ installed: boolean; version?: string; path?: string }> {
-    for (const cmd of ['python3 --version', 'python --version']) {
+    const platform = await coreAPI.getPlatform();
+    const cmds = platform.isWindows
+      ? ['python --version', 'python3 --version', 'py -3 --version']
+      : ['python3 --version', 'python --version'];
+
+    for (const cmd of cmds) {
       const result = await coreAPI.runCommand(cmd);
-      if (result.success) {
-        const version = result.stdout.match(/(\d+\.\d+\.\d+)/) || result.stderr.match(/(\d+\.\d+\.\d+)/);
-        if (version) {
-          const major = parseInt(version[1].split('.')[0]);
-          const minor = parseInt(version[1].split('.')[1]);
-          if (major >= 3 && minor >= 11) {
-            const whichCmd = cmd.includes('python3') ? 'which python3' : 'which python';
-            const whichResult = await coreAPI.runCommand(whichCmd);
-            return { installed: true, version: version[1], path: whichResult.stdout.trim() };
-          }
+      const output = result.stdout + result.stderr;
+      const version = output.match(/(\d+\.\d+\.\d+)/);
+      if (result.success && version) {
+        const major = parseInt(version[1].split('.')[0]);
+        const minor = parseInt(version[1].split('.')[1]);
+        if (major >= 3 && minor >= 11) {
+          const whichCmd = platform.isWindows ? `where ${cmd.split(' ')[0]}` : `which ${cmd.split(' ')[0]}`;
+          const whichResult = await coreAPI.runCommand(whichCmd);
+          return { installed: true, version: version[1], path: whichResult.stdout.trim().split('\n')[0] };
         }
       }
     }
@@ -61,9 +65,14 @@ export const prereqAPI = {
 
   /** Check pip */
   async checkPip(): Promise<{ installed: boolean; version?: string }> {
-    for (const cmd of ['pip3 --version', 'pip --version']) {
+    const platform = await coreAPI.getPlatform();
+    const cmds = platform.isWindows
+      ? ['pip --version', 'pip3 --version', 'py -3 -m pip --version']
+      : ['pip3 --version', 'pip --version'];
+
+    for (const cmd of cmds) {
       const result = await coreAPI.runCommand(cmd);
-      if (result.success) {
+      if (result.success && result.stdout.includes('pip')) {
         const version = result.stdout.match(/(\d+\.\d+[\.\d]*)/);
         return { installed: true, version: version?.[1] };
       }
@@ -139,9 +148,30 @@ export const prereqAPI = {
       return coreAPI.runCommand('winget install cURL.cURL --accept-package-agreements --accept-source-agreements', { timeout: 300000 });
     }
     if (platform.isMac) {
-      // curl is pre-installed on macOS
       return { success: true, stdout: 'curl is pre-installed on macOS', stderr: '', code: 0 };
     }
     return coreAPI.runCommand('sudo apt-get install -y curl', { timeout: 300000 });
+  },
+
+  /** Install pip (uses ensurepip or get-pip.py) */
+  async installPip(): Promise<CommandResult> {
+    const platform = await coreAPI.getPlatform();
+    if (platform.isWindows) {
+      // Try ensurepip first, then get-pip.py as fallback
+      const result = await coreAPI.runCommand('py -3 -m ensurepip --upgrade', { timeout: 120000 });
+      if (result.success) return result;
+      // Fallback: try python -m ensurepip
+      const result2 = await coreAPI.runCommand('python -m ensurepip --upgrade', { timeout: 120000 });
+      if (result2.success) return result2;
+      // Last resort: download get-pip.py
+      return coreAPI.runCommand(
+        'curl -sS https://bootstrap.pypa.io/get-pip.py -o %TEMP%\\get-pip.py && python %TEMP%\\get-pip.py',
+        { timeout: 300000 }
+      );
+    }
+    if (platform.isMac) {
+      return coreAPI.runCommand('python3 -m ensurepip --upgrade', { timeout: 120000 });
+    }
+    return coreAPI.runCommand('sudo apt-get install -y python3-pip', { timeout: 300000 });
   },
 };
