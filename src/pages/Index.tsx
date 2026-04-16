@@ -134,11 +134,19 @@ const Index = () => {
     }, 2000);
   };
 
-  // ─── Step 1: Install Agent ───────────────────────────────
+  // ─── Step 1: Toggle optional feature ─────────────────────
+  const toggleFeature = (featureId: string) => {
+    setSelectedFeatures((prev) =>
+      prev.includes(featureId) ? prev.filter((f) => f !== featureId) : [...prev, featureId]
+    );
+  };
+
+  // ─── Step 2: Install Agent ───────────────────────────────
   const handleInstallAgent = async () => {
     setInstalling(true);
     setInstallProgress(0);
-    setInstallOutput(["Starting agent installation..."]);
+    const extrasLabel = selectedFeatures.length > 0 ? ` with extras: ${selectedFeatures.join(", ")}` : "";
+    setInstallOutput([`Starting agent installation${extrasLabel}...`]);
 
     const progressInterval = setInterval(() => {
       setInstallProgress((prev) => Math.min(prev + 2, 90));
@@ -147,7 +155,7 @@ const Index = () => {
           "Checking Python version...",
           "Creating virtual environment...",
           "Installing agent framework and dependencies...",
-          "Installing tools and ffmpeg...",
+          ...(selectedFeatures.includes("voice") ? ["Installing ffmpeg for voice support..."] : []),
           "Setting up PATH...",
         ];
         const idx = Math.min(Math.floor(prev.length / 2), messages.length - 1);
@@ -156,7 +164,9 @@ const Index = () => {
       });
     }, 800);
 
-    const result = await systemAPI.installHermes();
+    // Build pip extras string from selected features
+    const extras = selectedFeatures.map((f) => OPTIONAL_FEATURES.find((o) => o.id === f)?.pipExtra).filter(Boolean);
+    const result = await systemAPI.installHermes(extras.length > 0 ? extras as string[] : undefined);
 
     clearInterval(progressInterval);
     setInstallProgress(100);
@@ -164,7 +174,7 @@ const Index = () => {
     if (result.success) {
       setInstallOutput((prev) => [...prev, "✓ Agent installed successfully!"]);
       setInstallComplete(true);
-      setTimeout(() => setInstallStep(2), 1000);
+      setTimeout(() => setInstallStep(3), 1000);
     } else {
       setInstallOutput((prev) => [...prev, `✗ Installation failed: ${result.stderr || "Unknown error"}`]);
     }
