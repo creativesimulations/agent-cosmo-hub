@@ -97,6 +97,9 @@ const Index = () => {
   const [connecting, setConnecting] = useState(false);
   const [installStep, setInstallStep] = useState<InstallStep>(0);
 
+  // Optional features
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>(["voice", "messaging"]);
+
   // Install state
   const [installProgress, setInstallProgress] = useState(0);
   const [installing, setInstalling] = useState(false);
