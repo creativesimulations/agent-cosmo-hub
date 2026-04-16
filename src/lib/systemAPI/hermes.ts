@@ -9,10 +9,24 @@ const INSTALL_SCRIPT = 'https://raw.githubusercontent.com/NousResearch/hermes-ag
 /** Hermes Agent installation, configuration, and lifecycle */
 export const hermesAPI = {
   /** Install Hermes Agent using the official install script */
-  async install(): Promise<CommandResult> {
-    // Use 'yes' to auto-accept all interactive prompts (e.g. ffmpeg)
+  async install(extras?: string[]): Promise<CommandResult> {
+    if (extras && extras.length > 0) {
+      // Install base first, then install extras via pip
+      const baseResult = await coreAPI.runCommand(
+        `yes | curl -fsSL ${INSTALL_SCRIPT} | bash`,
+        { timeout: 600000 }
+      );
+      if (!baseResult.success) return baseResult;
+      // Install optional extras
+      const extrasStr = extras.join(',');
+      return coreAPI.runCommand(
+        `pip install "hermes-agent[${extrasStr}]"`,
+        { timeout: 300000 }
+      );
+    }
+    // Base install only — skip ffmpeg and optional deps
     return coreAPI.runCommand(
-      `yes | curl -fsSL ${INSTALL_SCRIPT} | bash`,
+      `yes "n" | curl -fsSL ${INSTALL_SCRIPT} | bash`,
       { timeout: 600000 }
     );
   },

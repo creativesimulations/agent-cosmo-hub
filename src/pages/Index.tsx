@@ -16,27 +16,44 @@ import {
   Cpu,
   Terminal,
   Stethoscope,
+  Settings2,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import { Checkbox } from "@/components/ui/checkbox";
 import PrerequisiteCheck from "./PrerequisiteCheck";
 import { systemAPI } from "@/lib/systemAPI";
 import ronbotLogo from "@/assets/ronbot-logo.png";
 
 type Mode = "choose" | "connect" | "install";
-type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 const installSteps = [
   { title: "System Prerequisites", desc: "Detect & install required dependencies" },
+  { title: "Optional Features", desc: "Choose which extras to install" },
   { title: "Install Agent", desc: "Download and install the AI agent framework" },
   { title: "Name Your Agent", desc: "Give your AI agent a name" },
   { title: "API Keys", desc: "Configure your LLM provider credentials" },
   { title: "Choose Model", desc: "Select your preferred AI model" },
   { title: "Verify Installation", desc: "Run diagnostics to confirm everything works" },
   { title: "Launch", desc: "Start your AI agent" },
+];
+
+interface OptionalFeature {
+  id: string;
+  label: string;
+  description: string;
+  pipExtra: string;
+}
+
+const OPTIONAL_FEATURES: OptionalFeature[] = [
+  { id: "voice", label: "Voice / TTS", description: "Enable text-to-speech voice messages (requires ffmpeg)", pipExtra: "voice" },
+  { id: "messaging", label: "Messaging Gateways", description: "Telegram, Discord, and other messaging integrations", pipExtra: "messaging" },
+  { id: "cron", label: "Scheduled Tasks", description: "Cron-based task scheduling and automation", pipExtra: "cron" },
+  { id: "web", label: "Web Interface", description: "Built-in web UI for the agent", pipExtra: "web" },
 ];
 
 // Provider definitions with their env var names and key prefixes
@@ -80,6 +97,9 @@ const Index = () => {
   const [connecting, setConnecting] = useState(false);
   const [installStep, setInstallStep] = useState<InstallStep>(0);
 
+  // Optional features
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>(["voice", "messaging"]);
+
   // Install state
   const [installProgress, setInstallProgress] = useState(0);
   const [installing, setInstalling] = useState(false);
@@ -114,11 +134,19 @@ const Index = () => {
     }, 2000);
   };
 
-  // ─── Step 1: Install Agent ───────────────────────────────
+  // ─── Step 1: Toggle optional feature ─────────────────────
+  const toggleFeature = (featureId: string) => {
+    setSelectedFeatures((prev) =>
+      prev.includes(featureId) ? prev.filter((f) => f !== featureId) : [...prev, featureId]
+    );
+  };
+
+  // ─── Step 2: Install Agent ───────────────────────────────
   const handleInstallAgent = async () => {
     setInstalling(true);
     setInstallProgress(0);
-    setInstallOutput(["Starting agent installation..."]);
+    const extrasLabel = selectedFeatures.length > 0 ? ` with extras: ${selectedFeatures.join(", ")}` : "";
+    setInstallOutput([`Starting agent installation${extrasLabel}...`]);
 
     const progressInterval = setInterval(() => {
       setInstallProgress((prev) => Math.min(prev + 2, 90));
@@ -127,7 +155,7 @@ const Index = () => {
           "Checking Python version...",
           "Creating virtual environment...",
           "Installing agent framework and dependencies...",
-          "Installing tools and ffmpeg...",
+          ...(selectedFeatures.includes("voice") ? ["Installing ffmpeg for voice support..."] : []),
           "Setting up PATH...",
         ];
         const idx = Math.min(Math.floor(prev.length / 2), messages.length - 1);
@@ -136,7 +164,9 @@ const Index = () => {
       });
     }, 800);
 
-    const result = await systemAPI.installHermes();
+    // Build pip extras string from selected features
+    const extras = selectedFeatures.map((f) => OPTIONAL_FEATURES.find((o) => o.id === f)?.pipExtra).filter(Boolean);
+    const result = await systemAPI.installHermes(extras.length > 0 ? extras as string[] : undefined);
 
     clearInterval(progressInterval);
     setInstallProgress(100);
@@ -144,7 +174,7 @@ const Index = () => {
     if (result.success) {
       setInstallOutput((prev) => [...prev, "✓ Agent installed successfully!"]);
       setInstallComplete(true);
-      setTimeout(() => setInstallStep(2), 1000);
+      setTimeout(() => setInstallStep(3), 1000);
     } else {
       setInstallOutput((prev) => [...prev, `✗ Installation failed: ${result.stderr || "Unknown error"}`]);
     }
@@ -163,10 +193,10 @@ const Index = () => {
     setKeySaved(true);
   };
 
-  // ─── Step 4: Save Model ──────────────────────────────────
+  // ─── Step 5: Save Model ──────────────────────────────────
   const handleSaveModel = async () => {
     await systemAPI.writeInitialConfig({ model: selectedModel });
-    setInstallStep(5);
+    setInstallStep(6);
   };
 
   // ─── Step 5: Run Doctor ──────────────────────────────────
@@ -364,16 +394,61 @@ const Index = () => {
                   <PrerequisiteCheck onComplete={() => setInstallStep(1)} />
                 )}
 
-                {/* Step 1: Install Agent */}
+                {/* Step 1: Optional Features */}
                 {installStep === 1 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Settings2 className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium text-foreground">Optional Features</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Select which optional features to include. You can change these later.
+                    </p>
+
+                    <div className="space-y-2">
+                      {OPTIONAL_FEATURES.map((feature) => (
+                        <button
+                          key={feature.id}
+                          onClick={() => toggleFeature(feature.id)}
+                          className={cn(
+                            "w-full text-left glass-subtle rounded-lg p-3 transition-all flex items-start gap-3",
+                            selectedFeatures.includes(feature.id)
+                              ? "border border-primary/20 bg-primary/5"
+                              : "border border-transparent"
+                          )}
+                        >
+                          <Checkbox
+                            checked={selectedFeatures.includes(feature.id)}
+                            onCheckedChange={() => toggleFeature(feature.id)}
+                            className="mt-0.5"
+                          />
+                          <div>
+                            <p className="text-sm font-medium text-foreground">{feature.label}</p>
+                            <p className="text-xs text-muted-foreground">{feature.description}</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+
+                    <Button
+                      onClick={() => setInstallStep(2)}
+                      className="w-full gradient-primary text-primary-foreground"
+                    >
+                      Continue <ArrowRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  </div>
+                )}
+
+                {/* Step 2: Install Agent */}
+                {installStep === 2 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Download className="w-4 h-4 text-primary" />
                       <span className="text-sm font-medium text-foreground">Install Agent</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      This will download and install the AI agent framework.
-                      The installer handles virtual environment creation, dependencies, and ffmpeg automatically.
+                      This will download and install the AI agent framework
+                      {selectedFeatures.length > 0 && ` with ${selectedFeatures.map(f => OPTIONAL_FEATURES.find(o => o.id === f)?.label).filter(Boolean).join(", ")}`}.
                     </p>
 
                     <div className="font-mono text-xs space-y-1 max-h-40 overflow-y-auto">
@@ -404,8 +479,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 2: Name Your Agent */}
-                {installStep === 2 && (
+                {/* Step 3: Name Your Agent */}
+                {installStep === 3 && (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2">
                       <User className="w-4 h-4 text-primary" />
@@ -426,7 +501,7 @@ const Index = () => {
                       </p>
                     </div>
                     <Button
-                      onClick={() => setInstallStep(3)}
+                      onClick={() => setInstallStep(4)}
                       className="w-full gradient-primary text-primary-foreground"
                     >
                       Continue <ArrowRight className="w-4 h-4 ml-1" />
@@ -434,8 +509,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 3: API Keys */}
-                {installStep === 3 && (
+                {/* Step 4: API Keys */}
+                {installStep === 4 && (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2">
                       <KeyRound className="w-4 h-4 text-primary" />
@@ -507,7 +582,7 @@ const Index = () => {
                       )}
                       {keySaved && (
                         <Button
-                          onClick={() => setInstallStep(4)}
+                          onClick={() => setInstallStep(5)}
                           className="flex-1 gradient-primary text-primary-foreground"
                         >
                           Continue <ArrowRight className="w-4 h-4 ml-1" />
@@ -517,8 +592,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 4: Choose Model */}
-                {installStep === 4 && (
+                {/* Step 5: Choose Model */}
+                {installStep === 5 && (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2">
                       <Cpu className="w-4 h-4 text-primary" />
@@ -554,8 +629,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 5: Verify */}
-                {installStep === 5 && (
+                {/* Step 6: Verify */}
+                {installStep === 6 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Stethoscope className="w-4 h-4 text-primary" />
@@ -598,7 +673,7 @@ const Index = () => {
                           </p>
                         </div>
                         <Button
-                          onClick={() => setInstallStep(6)}
+                          onClick={() => setInstallStep(7)}
                           className="w-full gradient-primary text-primary-foreground"
                         >
                           Continue to Launch <ArrowRight className="w-4 h-4 ml-1" />
@@ -608,8 +683,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 6: Launch */}
-                {installStep === 6 && (
+                {/* Step 7: Launch */}
+                {installStep === 7 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Terminal className="w-4 h-4 text-primary" />
@@ -654,7 +729,7 @@ const Index = () => {
                   >
                     Previous
                   </Button>
-                  {installStep === 6 && launchOutput.some((l) => l.includes("All systems operational")) && (
+                  {installStep === 7 && launchOutput.some((l) => l.includes("All systems operational")) && (
                     <Button
                       size="sm"
                       onClick={() => navigate("/dashboard")}
