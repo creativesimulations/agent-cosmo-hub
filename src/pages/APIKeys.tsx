@@ -28,7 +28,6 @@ const KNOWN_KEYS: Record<string, string> = {
   EXA_API_KEY: "Exa Search",
   FIRECRAWL_API_KEY: "Firecrawl",
   ELEVENLABS_API_KEY: "ElevenLabs",
-  HERMES_MODEL: "Default Model",
 };
 
 const maskValue = (val: string): string => {
@@ -45,7 +44,6 @@ const APIKeys = () => {
   const [adding, setAdding] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
 
-  // Load keys from ~/.hermes/.env
   useEffect(() => {
     loadKeys();
   }, []);
@@ -63,7 +61,6 @@ const APIKeys = () => {
       }));
       setKeys(entries);
     } catch {
-      // Not in Electron or file doesn't exist yet
       setKeys([]);
     }
     setLoading(false);
@@ -98,7 +95,7 @@ const APIKeys = () => {
             API Keys & Credentials
           </h1>
           <p className="text-sm text-muted-foreground">
-            Manage provider keys stored in <code className="text-accent">~/.hermes/.env</code>
+            Manage provider keys stored securely on your machine
           </p>
         </div>
         <Button
@@ -113,11 +110,10 @@ const APIKeys = () => {
       <GlassCard variant="subtle" className="p-3">
         <p className="text-xs text-muted-foreground flex items-center gap-2">
           <Shield className="w-3 h-3 text-accent" />
-          Keys are stored locally in ~/.hermes/.env and never transmitted. In Electron, they're read/written via secure IPC.
+          Keys are stored locally and never transmitted. They are read and written via secure IPC.
         </p>
       </GlassCard>
 
-      {/* Add Key Form */}
       {showAddForm && (
         <GlassCard className="space-y-3">
           <h3 className="text-sm font-semibold text-foreground">Add New Key</h3>
@@ -159,7 +155,6 @@ const APIKeys = () => {
         </GlassCard>
       )}
 
-      {/* Keys List */}
       {loading ? (
         <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground">
           <Loader2 className="w-4 h-4 animate-spin" /> Loading keys...
