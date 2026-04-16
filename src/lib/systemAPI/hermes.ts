@@ -8,25 +8,54 @@ const INSTALL_SCRIPT = 'https://raw.githubusercontent.com/NousResearch/hermes-ag
 
 /** Hermes Agent installation, configuration, and lifecycle */
 export const hermesAPI = {
-  /** Install Hermes Agent using the official install script */
+  /** Install the agent using the official install script */
   async install(extras?: string[]): Promise<CommandResult> {
+    const platform = await coreAPI.getPlatform();
+
+    if (platform.isWindows) {
+      // Windows: use pip directly (requires Python already installed)
+      const extrasStr = extras && extras.length > 0 ? `[${extras.join(',')}]` : '';
+      return coreAPI.runCommand(
+        `pip install "hermes-agent${extrasStr}"`,
+        { timeout: 600000 }
+      );
+    }
+
+    if (platform.isWSL) {
+      // WSL: run install script inside WSL
+      if (extras && extras.length > 0) {
+        const baseResult = await coreAPI.runCommand(
+          `wsl bash -c "echo y | curl -fsSL ${INSTALL_SCRIPT} | bash"`,
+          { timeout: 600000 }
+        );
+        if (!baseResult.success) return baseResult;
+        const extrasStr = extras.join(',');
+        return coreAPI.runCommand(
+          `wsl bash -c "pip install 'hermes-agent[${extrasStr}]'"`,
+          { timeout: 300000 }
+        );
+      }
+      return coreAPI.runCommand(
+        `wsl bash -c "echo n | curl -fsSL ${INSTALL_SCRIPT} | bash"`,
+        { timeout: 600000 }
+      );
+    }
+
+    // macOS / Linux: use echo to pipe answers (cross-platform alternative to `yes`)
     if (extras && extras.length > 0) {
-      // Install base first, then install extras via pip
       const baseResult = await coreAPI.runCommand(
-        `yes | curl -fsSL ${INSTALL_SCRIPT} | bash`,
+        `echo y | curl -fsSL ${INSTALL_SCRIPT} | bash`,
         { timeout: 600000 }
       );
       if (!baseResult.success) return baseResult;
-      // Install optional extras
       const extrasStr = extras.join(',');
       return coreAPI.runCommand(
         `pip install "hermes-agent[${extrasStr}]"`,
         { timeout: 300000 }
       );
     }
-    // Base install only — skip ffmpeg and optional deps
     return coreAPI.runCommand(
-      `yes "n" | curl -fsSL ${INSTALL_SCRIPT} | bash`,
+      `echo n | curl -fsSL ${INSTALL_SCRIPT} | bash`,
       { timeout: 600000 }
     );
   },
