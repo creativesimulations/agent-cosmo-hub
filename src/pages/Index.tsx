@@ -16,27 +16,44 @@ import {
   Cpu,
   Terminal,
   Stethoscope,
+  Settings2,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import { Checkbox } from "@/components/ui/checkbox";
 import PrerequisiteCheck from "./PrerequisiteCheck";
 import { systemAPI } from "@/lib/systemAPI";
 import ronbotLogo from "@/assets/ronbot-logo.png";
 
 type Mode = "choose" | "connect" | "install";
-type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 const installSteps = [
   { title: "System Prerequisites", desc: "Detect & install required dependencies" },
+  { title: "Optional Features", desc: "Choose which extras to install" },
   { title: "Install Agent", desc: "Download and install the AI agent framework" },
   { title: "Name Your Agent", desc: "Give your AI agent a name" },
   { title: "API Keys", desc: "Configure your LLM provider credentials" },
   { title: "Choose Model", desc: "Select your preferred AI model" },
   { title: "Verify Installation", desc: "Run diagnostics to confirm everything works" },
   { title: "Launch", desc: "Start your AI agent" },
+];
+
+interface OptionalFeature {
+  id: string;
+  label: string;
+  description: string;
+  pipExtra: string;
+}
+
+const OPTIONAL_FEATURES: OptionalFeature[] = [
+  { id: "voice", label: "Voice / TTS", description: "Enable text-to-speech voice messages (requires ffmpeg)", pipExtra: "voice" },
+  { id: "messaging", label: "Messaging Gateways", description: "Telegram, Discord, and other messaging integrations", pipExtra: "messaging" },
+  { id: "cron", label: "Scheduled Tasks", description: "Cron-based task scheduling and automation", pipExtra: "cron" },
+  { id: "web", label: "Web Interface", description: "Built-in web UI for the agent", pipExtra: "web" },
 ];
 
 // Provider definitions with their env var names and key prefixes
