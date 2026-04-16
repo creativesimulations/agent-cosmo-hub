@@ -1,19 +1,14 @@
 import { useState, useEffect } from "react";
-import { FileCode, Save, RotateCcw, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { FileCode, Save, RotateCcw, CheckCircle2, AlertCircle, Loader2, FileQuestion } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { systemAPI } from "@/lib/systemAPI";
 
-const fallbackConfig = `# Ronbot — Hermes Agent Configuration
-# ~/.hermes/config.yaml
-
-model: openrouter/nous/hermes-3-llama-3.1-70b
-`;
-
 const ConfigEditor = () => {
-  const [config, setConfig] = useState(fallbackConfig);
+  const [config, setConfig] = useState("");
   const [saved, setSaved] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [hasConfig, setHasConfig] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
   useEffect(() => {
@@ -25,6 +20,10 @@ const ConfigEditor = () => {
     const result = await systemAPI.readConfig();
     if (result.success && result.content) {
       setConfig(result.content);
+      setHasConfig(true);
+    } else {
+      setConfig("");
+      setHasConfig(false);
     }
     setLoading(false);
     setSaved(true);
@@ -58,6 +57,20 @@ const ConfigEditor = () => {
     );
   }
 
+  if (!hasConfig) {
+    return (
+      <div className="p-6 flex items-center justify-center h-[calc(100vh-2rem)]">
+        <GlassCard className="p-8 text-center max-w-md">
+          <FileQuestion className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
+          <h2 className="text-lg font-semibold text-foreground mb-1">No Configuration Found</h2>
+          <p className="text-sm text-muted-foreground">
+            Install and configure an agent to edit its configuration file.
+          </p>
+        </GlassCard>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 space-y-4 h-[calc(100vh-2rem)] flex flex-col">
       <div className="flex items-center justify-between">
@@ -66,7 +79,7 @@ const ConfigEditor = () => {
             <FileCode className="w-6 h-6 text-primary" />
             Config Editor
           </h1>
-          <p className="text-sm text-muted-foreground">Edit ~/.hermes/config.yaml</p>
+          <p className="text-sm text-muted-foreground">Agent configuration file</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={handleRevert} className="text-muted-foreground hover:text-foreground">
@@ -118,7 +131,7 @@ const ConfigEditor = () => {
       </GlassCard>
 
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>~/.hermes/config.yaml — {lineCount} lines</span>
+        <span>{lineCount} lines</span>
         <span>{saved ? "Saved" : "Unsaved changes"}</span>
       </div>
     </div>

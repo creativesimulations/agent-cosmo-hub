@@ -1,7 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Bell, X, AlertTriangle, CheckCircle2, Info, XCircle, Clock } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 type NotifType = "info" | "success" | "warning" | "error";
@@ -14,13 +13,6 @@ interface Notification {
   time: string;
   read: boolean;
 }
-
-const initialNotifications: Notification[] = [
-  { id: "1", type: "error", title: "Sub-Agent Failed", message: "data-parser crashed: out of memory", time: "2m ago", read: false },
-  { id: "2", type: "warning", title: "Rate Limit Warning", message: "OpenAI API at 80% quota", time: "15m ago", read: false },
-  { id: "3", type: "success", title: "Update Available", message: "Hermes v0.2.0 is ready to install", time: "1h ago", read: false },
-  { id: "4", type: "info", title: "Backup Complete", message: "Auto-backup saved successfully", time: "3h ago", read: true },
-];
 
 const typeIcons: Record<NotifType, typeof Info> = {
   info: Info,
@@ -38,9 +30,22 @@ const typeColors: Record<NotifType, string> = {
 
 const NotificationCenter = () => {
   const [open, setOpen] = useState(false);
-  const [notifications, setNotifications] = useState(initialNotifications);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
 
   const markAllRead = () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
@@ -51,7 +56,7 @@ const NotificationCenter = () => {
   };
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       <button
         onClick={() => setOpen(!open)}
         className="relative w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/5 transition-colors"
@@ -70,13 +75,15 @@ const NotificationCenter = () => {
             initial={{ opacity: 0, y: -10, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -10, scale: 0.95 }}
-            className="absolute right-0 top-10 w-80 glass-strong rounded-xl border border-white/10 shadow-2xl z-50 overflow-hidden"
+            className="absolute left-0 top-10 w-80 glass-strong rounded-xl border border-white/10 shadow-2xl z-50 overflow-hidden"
           >
             <div className="p-3 border-b border-white/5 flex items-center justify-between">
               <span className="text-sm font-semibold text-foreground">Notifications</span>
-              <button onClick={markAllRead} className="text-xs text-primary hover:underline">
-                Mark all read
-              </button>
+              {notifications.length > 0 && (
+                <button onClick={markAllRead} className="text-xs text-primary hover:underline">
+                  Mark all read
+                </button>
+              )}
             </div>
             <div className="max-h-80 overflow-y-auto">
               {notifications.length === 0 ? (
