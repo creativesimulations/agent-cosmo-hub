@@ -394,16 +394,61 @@ const Index = () => {
                   <PrerequisiteCheck onComplete={() => setInstallStep(1)} />
                 )}
 
-                {/* Step 1: Install Agent */}
+                {/* Step 1: Optional Features */}
                 {installStep === 1 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Settings2 className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium text-foreground">Optional Features</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Select which optional features to include. You can change these later.
+                    </p>
+
+                    <div className="space-y-2">
+                      {OPTIONAL_FEATURES.map((feature) => (
+                        <button
+                          key={feature.id}
+                          onClick={() => toggleFeature(feature.id)}
+                          className={cn(
+                            "w-full text-left glass-subtle rounded-lg p-3 transition-all flex items-start gap-3",
+                            selectedFeatures.includes(feature.id)
+                              ? "border border-primary/20 bg-primary/5"
+                              : "border border-transparent"
+                          )}
+                        >
+                          <Checkbox
+                            checked={selectedFeatures.includes(feature.id)}
+                            onCheckedChange={() => toggleFeature(feature.id)}
+                            className="mt-0.5"
+                          />
+                          <div>
+                            <p className="text-sm font-medium text-foreground">{feature.label}</p>
+                            <p className="text-xs text-muted-foreground">{feature.description}</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+
+                    <Button
+                      onClick={() => setInstallStep(2)}
+                      className="w-full gradient-primary text-primary-foreground"
+                    >
+                      Continue <ArrowRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  </div>
+                )}
+
+                {/* Step 2: Install Agent */}
+                {installStep === 2 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Download className="w-4 h-4 text-primary" />
                       <span className="text-sm font-medium text-foreground">Install Agent</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      This will download and install the AI agent framework.
-                      The installer handles virtual environment creation, dependencies, and ffmpeg automatically.
+                      This will download and install the AI agent framework
+                      {selectedFeatures.length > 0 && ` with ${selectedFeatures.map(f => OPTIONAL_FEATURES.find(o => o.id === f)?.label).filter(Boolean).join(", ")}`}.
                     </p>
 
                     <div className="font-mono text-xs space-y-1 max-h-40 overflow-y-auto">
@@ -434,8 +479,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 2: Name Your Agent */}
-                {installStep === 2 && (
+                {/* Step 3: Name Your Agent */}
+                {installStep === 3 && (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2">
                       <User className="w-4 h-4 text-primary" />
@@ -456,7 +501,7 @@ const Index = () => {
                       </p>
                     </div>
                     <Button
-                      onClick={() => setInstallStep(3)}
+                      onClick={() => setInstallStep(4)}
                       className="w-full gradient-primary text-primary-foreground"
                     >
                       Continue <ArrowRight className="w-4 h-4 ml-1" />
@@ -464,8 +509,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 3: API Keys */}
-                {installStep === 3 && (
+                {/* Step 4: API Keys */}
+                {installStep === 4 && (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2">
                       <KeyRound className="w-4 h-4 text-primary" />
@@ -537,7 +582,7 @@ const Index = () => {
                       )}
                       {keySaved && (
                         <Button
-                          onClick={() => setInstallStep(4)}
+                          onClick={() => setInstallStep(5)}
                           className="flex-1 gradient-primary text-primary-foreground"
                         >
                           Continue <ArrowRight className="w-4 h-4 ml-1" />
@@ -547,8 +592,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 4: Choose Model */}
-                {installStep === 4 && (
+                {/* Step 5: Choose Model */}
+                {installStep === 5 && (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2">
                       <Cpu className="w-4 h-4 text-primary" />
@@ -584,8 +629,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 5: Verify */}
-                {installStep === 5 && (
+                {/* Step 6: Verify */}
+                {installStep === 6 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Stethoscope className="w-4 h-4 text-primary" />
@@ -628,7 +673,7 @@ const Index = () => {
                           </p>
                         </div>
                         <Button
-                          onClick={() => setInstallStep(6)}
+                          onClick={() => setInstallStep(7)}
                           className="w-full gradient-primary text-primary-foreground"
                         >
                           Continue to Launch <ArrowRight className="w-4 h-4 ml-1" />
@@ -638,8 +683,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 6: Launch */}
-                {installStep === 6 && (
+                {/* Step 7: Launch */}
+                {installStep === 7 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Terminal className="w-4 h-4 text-primary" />
@@ -684,7 +729,7 @@ const Index = () => {
                   >
                     Previous
                   </Button>
-                  {installStep === 6 && launchOutput.some((l) => l.includes("All systems operational")) && (
+                  {installStep === 7 && launchOutput.some((l) => l.includes("All systems operational")) && (
                     <Button
                       size="sm"
                       onClick={() => navigate("/dashboard")}
