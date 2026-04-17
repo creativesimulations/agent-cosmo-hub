@@ -18,7 +18,6 @@ import {
   Stethoscope,
   Settings2,
 } from "lucide-react";
-import { useRef } from "react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
