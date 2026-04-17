@@ -27,7 +27,10 @@ function devBackend(): BackendInfo {
 
 export const secretsStore = {
   async getBackend(): Promise<BackendInfo> {
-    if (isElectron()) return window.electronAPI!.secretsBackend();
+    if (isElectron()) {
+      const r = await window.electronAPI!.secretsBackend();
+      return { backend: r.backend as SecretsBackend, label: r.label };
+    }
     return devBackend();
   },
 
