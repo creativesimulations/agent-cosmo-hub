@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import AppLayout from "./components/layout/AppLayout";
+import { InstallProvider } from "./contexts/InstallContext";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import SubAgents from "./pages/SubAgents";
@@ -27,6 +28,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <HashRouter>
+        <InstallProvider>
         <Routes>
           <Route element={<AppLayout />}>
             <Route path="/" element={<Index />} />
@@ -47,6 +49,7 @@ const App = () => (
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </InstallProvider>
       </HashRouter>
     </TooltipProvider>
   </QueryClientProvider>
