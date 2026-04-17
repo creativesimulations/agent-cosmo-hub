@@ -43,7 +43,9 @@ export const hermesAPI = {
     // "No module named pip" error.
     const ensurePip = [
       'echo "[pip-bootstrap] checking for pip..."',
-      'if python3 -m pip --version 2>/dev/null; then echo "[pip-bootstrap] pip already present"; else',
+      'if python3 -m pip --version 2>/dev/null; then',
+      '  echo "[pip-bootstrap] pip already present"',
+      'else',
       '  echo "[pip-bootstrap] pip missing — attempting ensurepip"',
       '  python3 -m ensurepip --upgrade 2>&1 || echo "[pip-bootstrap] ensurepip failed (often disabled on Debian/Ubuntu)"',
       '  if ! python3 -m pip --version 2>/dev/null; then',
@@ -58,7 +60,6 @@ export const hermesAPI = {
       '    export PATH="$HOME/.local/bin:$PATH"',
       '  fi',
       'fi',
-      // Final hard check — abort with a helpful message if still missing.
       'if ! python3 -m pip --version 2>/dev/null; then',
       '  echo "[pip-bootstrap] FATAL: could not install pip automatically." >&2',
       '  echo "[pip-bootstrap] Please open a WSL/Ubuntu terminal and run:" >&2',
@@ -67,13 +68,18 @@ export const hermesAPI = {
       '  exit 42',
       'fi',
       'echo "[pip-bootstrap] pip is ready: $(python3 -m pip --version)"',
-    ].join('; ');
-    const dl = `echo "[install] downloading installer script..." && curl -fsSL ${INSTALL_SCRIPT} -o /tmp/hermes-install.sh && chmod +x /tmp/hermes-install.sh`;
-    // setsid detaches from controlling tty; </dev/null closes stdin.
-    // Don't swallow exit code here — we want failures to propagate.
-    const runScript =
-      `echo "[install] running installer..." && setsid bash /tmp/hermes-install.sh --skip-setup </dev/null 2>&1`;
-    const fullCmd = `${unattendedEnv}; ${ensurePip} && ${dl} && ${runScript}`;
+    ].join('\n');
+    const dl = [
+      'echo "[install] downloading installer script..."',
+      `curl -fsSL ${INSTALL_SCRIPT} -o /tmp/hermes-install.sh`,
+      'chmod +x /tmp/hermes-install.sh',
+    ].join('\n');
+    const runScript = [
+      'echo "[install] running installer..."',
+      'setsid bash /tmp/hermes-install.sh --skip-setup </dev/null 2>&1',
+    ].join('\n');
+    // Use `set -e` so any failed step aborts immediately with a clear exit code.
+    const fullCmd = ['set -e', unattendedEnv, ensurePip, dl, runScript].join('\n');
 
     // Encode the whole payload as base64 to completely bypass shell quoting
     // issues. The base64 string is alphanumeric + `+/=` so it survives any
