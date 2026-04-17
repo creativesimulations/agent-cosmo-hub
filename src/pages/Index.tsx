@@ -200,7 +200,22 @@ const Index = () => {
       setInstallComplete(true);
       setTimeout(() => setInstallStep(3), 1000);
     } else {
-      setInstallOutput((prev) => [...prev, `✗ Installation failed: ${result.stderr || "Unknown error"}`]);
+      // Surface every available signal: stderr, stdout tail, and exit code.
+      const stderr = (result.stderr || "").trim();
+      const stdout = (result.stdout || "").trim();
+      const tail = (text: string, n = 20) => text.split("\n").slice(-n).join("\n");
+      const lines: string[] = [`✗ Installation failed (exit code ${result.code ?? "?"})`];
+      if (stderr) lines.push("--- stderr ---", tail(stderr));
+      if (stdout) lines.push("--- stdout (last 20 lines) ---", tail(stdout));
+      if (!stderr && !stdout) {
+        lines.push(
+          "No output was captured from the installer.",
+          "Likely cause: the install script could not be reached (network/proxy), curl/bash missing, or it exited before printing anything.",
+          "Try running this manually in a terminal to see the real error:",
+          "  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
+        );
+      }
+      setInstallOutput((prev) => [...prev, ...lines]);
     }
     setInstalling(false);
   };
