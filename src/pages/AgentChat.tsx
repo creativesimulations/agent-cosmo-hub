@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { motion } from "framer-motion";
 import { MessageSquare, Send, Bot, User, Loader2, AlertCircle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
@@ -18,7 +19,7 @@ const AgentChat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [agentConnected] = useState(false);
+  const { connected: agentConnected } = useAgentConnection();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

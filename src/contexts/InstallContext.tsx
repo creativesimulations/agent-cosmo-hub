@@ -1,6 +1,8 @@
 import { createContext, useContext, useRef, useState, ReactNode, useCallback } from "react";
 import { systemAPI } from "@/lib/systemAPI";
 import { sudoAPI } from "@/lib/systemAPI/sudo";
+import { useAgentConnection } from "./AgentConnectionContext";
+import { toast } from "sonner";
 
 export type Mode = "choose" | "connect" | "install";
 export type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
@@ -75,6 +77,7 @@ interface InstallContextValue {
 const InstallContext = createContext<InstallContextValue | null>(null);
 
 export const InstallProvider = ({ children }: { children: ReactNode }) => {
+  const { markConnected, refresh: refreshConnection } = useAgentConnection();
   const [mode, setMode] = useState<Mode>("choose");
   const [installStep, setInstallStep] = useState<InstallStep>(0);
 
@@ -288,6 +291,15 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
     if (result.success) {
       setInstallOutput((prev) => [...prev, "✓ Agent installed successfully!"]);
       setInstallComplete(true);
+      // Mark the agent as connected immediately and re-verify in the
+      // background so every screen flips out of the "No Agent Connected"
+      // state without requiring the user to click "Connect".
+      markConnected("~/.hermes");
+      void refreshConnection();
+      toast.success("Agent installed and connected", {
+        description: "You can now chat with your agent in the Agent Chat tab.",
+        duration: 8000,
+      });
       setTimeout(() => {
         if (installIdRef.current === myInstallId) setInstallStep(3);
       }, 1000);
@@ -304,7 +316,7 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       setInstallOutput((prev) => [...prev, ...lines]);
     }
     setInstalling(false);
-  }, [selectedFeatures, requestSudoPassword]);
+  }, [selectedFeatures, requestSudoPassword, markConnected, refreshConnection]);
 
   const cancelInstall = useCallback(() => {
     installIdRef.current++;
