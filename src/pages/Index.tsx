@@ -394,14 +394,25 @@ const Index = () => {
             exit={{ opacity: 0, x: -30 }}
             className="max-w-lg w-full space-y-6"
           >
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => { setMode("choose"); setInstallStep(0); }}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <ArrowLeft className="w-4 h-4 mr-1" /> Back
-            </Button>
+            {installing ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowCancelDialog(true)}
+                className="text-destructive hover:text-destructive"
+              >
+                <XCircle className="w-4 h-4 mr-1" /> Cancel installation
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setMode("choose"); setInstallStep(0); }}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <ArrowLeft className="w-4 h-4 mr-1" /> Back
+              </Button>
+            )}
 
             {/* Step Indicator */}
             <div className="flex items-center gap-1">
