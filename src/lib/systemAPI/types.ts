@@ -23,6 +23,14 @@ interface PlatformInfo {
   freeMemory: number;
 }
 
+interface DiskSpaceInfo {
+  success: boolean;
+  drive?: string;
+  freeBytes?: number;
+  totalBytes?: number;
+  error?: string;
+}
+
 declare global {
   interface Window {
     electronAPI?: {
@@ -34,10 +42,13 @@ declare global {
       readFile: (path: string) => Promise<{ success: boolean; content?: string; error?: string }>;
       writeFile: (path: string, content: string) => Promise<{ success: boolean; error?: string }>;
       mkdir: (path: string) => Promise<{ success: boolean; error?: string }>;
+      getDiskSpace: () => Promise<DiskSpaceInfo>;
       isElectron: boolean;
     };
   }
 }
+
+export type { DiskSpaceInfo };
 
 export const isElectron = (): boolean => {
   return !!window.electronAPI?.isElectron;

@@ -159,6 +159,38 @@ ipcMain.handle('mkdir', async (_event, dirPath) => {
   }
 });
 
+// Get free/total bytes on the drive that holds the home directory.
+// On Windows we query C: (or whatever drive homedir is on). On *nix, df -k /.
+ipcMain.handle('get-disk-space', async () => {
+  return new Promise((resolve) => {
+    try {
+      if (process.platform === 'win32') {
+        // Determine drive letter from homedir, default to C:
+        const drive = (os.homedir().match(/^([A-Za-z]):/) || [, 'C'])[1] + ':';
+        const cmd = `wmic logicaldisk where "DeviceID='${drive}'" get FreeSpace,Size /format:value`;
+        exec(cmd, { timeout: 8000, windowsHide: true }, (err, stdout) => {
+          if (err) return resolve({ success: false, error: err.message });
+          const free = parseInt((stdout.match(/FreeSpace=(\d+)/) || [])[1] || '0', 10);
+          const total = parseInt((stdout.match(/Size=(\d+)/) || [])[1] || '0', 10);
+          resolve({ success: true, drive, freeBytes: free, totalBytes: total });
+        });
+      } else {
+        // df -kP / → portable; second line, columns: Filesystem 1024-blocks Used Available ...
+        exec(`df -kP "${os.homedir()}"`, { timeout: 8000 }, (err, stdout) => {
+          if (err) return resolve({ success: false, error: err.message });
+          const lines = stdout.trim().split('\n');
+          const cols = (lines[1] || '').split(/\s+/);
+          const totalBytes = (parseInt(cols[1], 10) || 0) * 1024;
+          const freeBytes = (parseInt(cols[3], 10) || 0) * 1024;
+          resolve({ success: true, drive: '/', freeBytes, totalBytes });
+        });
+      }
+    } catch (e) {
+      resolve({ success: false, error: e.message });
+    }
+  });
+});
+
 // ─── App Lifecycle ────────────────────────────────────────────
 
 app.whenReady().then(() => {
