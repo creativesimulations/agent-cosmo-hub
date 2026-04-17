@@ -13,14 +13,17 @@ export const hermesAPI = {
    *  to PyPI and requires the install script (which expects a POSIX shell). */
   async install(extras?: string[]): Promise<CommandResult> {
     const platform = await coreAPI.getPlatform();
-    const extrasAnswer = extras && extras.length > 0 ? 'y' : 'n';
-    const extrasFlag = extras && extras.length > 0 ? `[${extras.join(',')}]` : '';
+    const wantsExtras = !!(extras && extras.length > 0);
+    // Use `yes` to answer ALL interactive prompts in the install script
+    // (extras prompt, ffmpeg prompt, etc.) instead of just the first one.
+    const yesCmd = wantsExtras ? 'yes y' : 'yes n';
+    const extrasFlag = wantsExtras ? `[${extras!.join(',')}]` : '';
 
     if (platform.isWindows) {
       // Run install script inside WSL. Use bash -lc so the user's profile
       // (PATH, pyenv, etc.) is loaded.
       const baseResult = await coreAPI.runCommand(
-        `wsl bash -lc "echo ${extrasAnswer} | curl -fsSL ${INSTALL_SCRIPT} | bash"`,
+        `wsl bash -lc "${yesCmd} 2>/dev/null | curl -fsSL ${INSTALL_SCRIPT} | bash"`,
         { timeout: 600000 }
       );
       if (!baseResult.success || !extrasFlag) return baseResult;
@@ -32,7 +35,7 @@ export const hermesAPI = {
 
     if (platform.isWSL) {
       const baseResult = await coreAPI.runCommand(
-        `bash -lc "echo ${extrasAnswer} | curl -fsSL ${INSTALL_SCRIPT} | bash"`,
+        `bash -lc "${yesCmd} 2>/dev/null | curl -fsSL ${INSTALL_SCRIPT} | bash"`,
         { timeout: 600000 }
       );
       if (!baseResult.success || !extrasFlag) return baseResult;
@@ -44,7 +47,7 @@ export const hermesAPI = {
 
     // macOS / Linux
     const baseResult = await coreAPI.runCommand(
-      `echo ${extrasAnswer} | curl -fsSL ${INSTALL_SCRIPT} | bash`,
+      `${yesCmd} 2>/dev/null | curl -fsSL ${INSTALL_SCRIPT} | bash`,
       { timeout: 600000 }
     );
     if (!baseResult.success || !extrasFlag) return baseResult;
