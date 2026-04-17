@@ -76,43 +76,49 @@ export const hermesAPI = {
     const fullCmd = `${unattendedEnv}; ${ensurePip} && ${dl} && ${runScript}`;
 
     // Encode the whole payload as base64 to completely bypass shell quoting
-    // issues when wrapping in `wsl bash -lc "..."` or `bash -lc "..."`.
+    // issues. The base64 string is alphanumeric + `+/=` so it survives any
+    // shell unscathed. We then decode + execute it inside bash.
     // Use btoa (browser-safe) since this code runs in Electron's renderer
     // process where Node's Buffer is not available.
     const toB64 = (s: string) => btoa(unescape(encodeURIComponent(s)));
     const b64 = toB64(fullCmd);
-    const wrapped = (shell: string) =>
-      `${shell} -lc 'echo ${b64} | base64 -d | bash'`;
+
+    // IMPORTANT: on Windows, `exec` with `shell: true` uses cmd.exe, which
+    // does NOT treat single quotes as quoting — it treats them as literal
+    // characters. So `wsl bash -lc '...'` would split on spaces. We must
+    // use double quotes for the outer shell (cmd-friendly) and rely on the
+    // base64 payload being whitespace/quote-free.
+    const decodeCmd = `echo ${b64} | base64 -d | bash`;
 
     if (platform.isWindows) {
       const baseResult = await coreAPI.runCommand(
-        wrapped('wsl bash'),
+        `wsl bash -lc "${decodeCmd}"`,
         { timeout: 600000 }
       );
       if (!baseResult.success || !extrasFlag) return baseResult;
       const extrasB64 = toB64(`python3 -m pip install --upgrade 'hermes-agent${extrasFlag}'`);
       return coreAPI.runCommand(
-        `wsl bash -lc 'echo ${extrasB64} | base64 -d | bash'`,
+        `wsl bash -lc "echo ${extrasB64} | base64 -d | bash"`,
         { timeout: 300000 }
       );
     }
 
     if (platform.isWSL) {
       const baseResult = await coreAPI.runCommand(
-        wrapped('bash'),
+        `bash -lc "${decodeCmd}"`,
         { timeout: 600000 }
       );
       if (!baseResult.success || !extrasFlag) return baseResult;
       const extrasB64 = toB64(`python3 -m pip install --upgrade 'hermes-agent${extrasFlag}'`);
       return coreAPI.runCommand(
-        `bash -lc 'echo ${extrasB64} | base64 -d | bash'`,
+        `bash -lc "echo ${extrasB64} | base64 -d | bash"`,
         { timeout: 300000 }
       );
     }
 
-    // macOS / Linux — run directly via base64 too for consistency.
+    // macOS / Linux
     const baseResult = await coreAPI.runCommand(
-      `bash -c 'echo ${b64} | base64 -d | bash'`,
+      `bash -c "${decodeCmd}"`,
       { timeout: 600000 }
     );
     if (!baseResult.success || !extrasFlag) return baseResult;
