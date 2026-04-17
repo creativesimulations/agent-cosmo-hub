@@ -63,21 +63,39 @@ export const prereqAPI = {
     return { installed: false };
   },
 
-  /** Check pip */
+  /** Check pip — also auto-upgrades to latest if outdated */
   async checkPip(): Promise<{ installed: boolean; version?: string }> {
     const platform = await coreAPI.getPlatform();
     const cmds = platform.isWindows
-      ? ['pip --version', 'pip3 --version', 'py -3 -m pip --version']
-      : ['pip3 --version', 'pip --version'];
+      ? ['py -3 -m pip --version', 'python -m pip --version', 'pip --version', 'pip3 --version']
+      : ['python3 -m pip --version', 'pip3 --version', 'pip --version'];
+
+    let foundCmd: string | null = null;
+    let foundVersion: string | undefined;
 
     for (const cmd of cmds) {
       const result = await coreAPI.runCommand(cmd);
       if (result.success && result.stdout.includes('pip')) {
         const version = result.stdout.match(/(\d+\.\d+[\.\d]*)/);
-        return { installed: true, version: version?.[1] };
+        foundCmd = cmd;
+        foundVersion = version?.[1];
+        break;
       }
     }
-    return { installed: false };
+
+    if (!foundCmd) return { installed: false };
+
+    // Auto-upgrade pip to latest so agent install doesn't fail later.
+    // Use the SAME interpreter that worked above to avoid prefix mismatch.
+    const upgradeCmd = foundCmd.replace(/--version$/, 'install --upgrade pip');
+    const upgrade = await coreAPI.runCommand(upgradeCmd, { timeout: 180000 });
+    if (upgrade.success) {
+      const recheck = await coreAPI.runCommand(foundCmd);
+      const v = recheck.stdout.match(/(\d+\.\d+[\.\d]*)/);
+      if (v) foundVersion = v[1];
+    }
+
+    return { installed: true, version: foundVersion };
   },
 
   /** Check Git */
