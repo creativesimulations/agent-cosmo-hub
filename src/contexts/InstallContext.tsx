@@ -316,7 +316,7 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       setInstallOutput((prev) => [...prev, ...lines]);
     }
     setInstalling(false);
-  }, [selectedFeatures, requestSudoPassword]);
+  }, [selectedFeatures, requestSudoPassword, markConnected, refreshConnection]);
 
   const cancelInstall = useCallback(() => {
     installIdRef.current++;

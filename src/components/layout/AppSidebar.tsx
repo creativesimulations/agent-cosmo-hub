@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
 import ronbotLogo from "@/assets/ronbot-logo.png";
+import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 
 const navGroups = [
   {
@@ -50,6 +51,7 @@ const navGroups = [
 
 const AppSidebar = () => {
   const location = useLocation();
+  const { connected, status } = useAgentConnection();
 
   return (
     <aside className="w-[220px] min-h-screen glass-strong flex flex-col border-r border-white/10">
@@ -97,8 +99,15 @@ const AppSidebar = () => {
       {/* Status */}
       <div className="p-4 border-t border-white/5">
         <div className="flex items-center gap-2 text-xs">
-          <div className="w-2 h-2 rounded-full bg-muted-foreground animate-pulse-glow" />
-          <span className="text-muted-foreground">Not connected</span>
+          <div
+            className={cn(
+              "w-2 h-2 rounded-full animate-pulse-glow",
+              connected ? "bg-success" : status === "checking" ? "bg-warning" : "bg-muted-foreground"
+            )}
+          />
+          <span className={cn(connected ? "text-success" : "text-muted-foreground")}>
+            {connected ? "Connected" : status === "checking" ? "Checking…" : "Not connected"}
+          </span>
         </div>
       </div>
     </aside>

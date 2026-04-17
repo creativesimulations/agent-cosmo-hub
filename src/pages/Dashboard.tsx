@@ -7,10 +7,10 @@ import GlassCard from "@/components/ui/GlassCard";
 import StatusBadge from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 
 const Dashboard = () => {
-  // TODO: Replace with real agent status from systemAPI
-  const agentConnected = false;
+  const { connected: agentConnected } = useAgentConnection();
 
   if (!agentConnected) {
     return (
