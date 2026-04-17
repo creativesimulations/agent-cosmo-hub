@@ -155,12 +155,18 @@ const Index = () => {
 
   // ─── Step 2: Install Agent ───────────────────────────────
   const handleInstallAgent = async () => {
+    const myInstallId = ++installIdRef.current;
     setInstalling(true);
+    setInstallComplete(false);
     setInstallProgress(0);
     const extrasLabel = selectedFeatures.length > 0 ? ` with extras: ${selectedFeatures.join(", ")}` : "";
     setInstallOutput([`Starting agent installation${extrasLabel}...`]);
 
     const progressInterval = setInterval(() => {
+      if (installIdRef.current !== myInstallId) {
+        clearInterval(progressInterval);
+        return;
+      }
       setInstallProgress((prev) => Math.min(prev + 2, 90));
       setInstallOutput((prev) => {
         const messages = [
@@ -176,11 +182,14 @@ const Index = () => {
       });
     }, 800);
 
-    // Build pip extras string from selected features
     const extras = selectedFeatures.map((f) => OPTIONAL_FEATURES.find((o) => o.id === f)?.pipExtra).filter(Boolean);
     const result = await systemAPI.installHermes(extras.length > 0 ? extras as string[] : undefined);
 
     clearInterval(progressInterval);
+
+    // If user cancelled while we were awaiting, ignore the result
+    if (installIdRef.current !== myInstallId) return;
+
     setInstallProgress(100);
 
     if (result.success) {
@@ -191,6 +200,16 @@ const Index = () => {
       setInstallOutput((prev) => [...prev, `✗ Installation failed: ${result.stderr || "Unknown error"}`]);
     }
     setInstalling(false);
+  };
+
+  // ─── Cancel an in-flight install ─────────────────────────
+  const cancelInstall = () => {
+    installIdRef.current++;
+    setInstalling(false);
+    setInstallComplete(false);
+    setInstallProgress(0);
+    setInstallOutput((prev) => [...prev, "✗ Installation cancelled by user."]);
+    setShowCancelDialog(false);
   };
 
   // ─── Step 3: Save API Key ────────────────────────────────
