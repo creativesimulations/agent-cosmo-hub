@@ -36,6 +36,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import PrerequisiteCheck from "./PrerequisiteCheck";
+import InstallPreflight from "@/components/install/InstallPreflight";
 import { systemAPI } from "@/lib/systemAPI";
 import ronbotLogo from "@/assets/ronbot-logo.png";
 
@@ -117,6 +118,7 @@ const Index = () => {
   const [installOutput, setInstallOutput] = useState<string[]>([]);
   const [installComplete, setInstallComplete] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [preflightReady, setPreflightReady] = useState(false);
   const installIdRef = useRef(0);
 
   // Agent name
@@ -494,6 +496,10 @@ const Index = () => {
                       {selectedFeatures.length > 0 && ` with ${selectedFeatures.map(f => OPTIONAL_FEATURES.find(o => o.id === f)?.label).filter(Boolean).join(", ")}`}.
                     </p>
 
+                    {!installing && !installComplete && (
+                      <InstallPreflight onReadyChange={setPreflightReady} />
+                    )}
+
                     <div className="font-mono text-xs space-y-1 max-h-40 overflow-y-auto">
                       {installOutput.map((line, i) => (
                         <p key={i} className={
@@ -515,8 +521,17 @@ const Index = () => {
                     )}
 
                     {!installing && !installComplete && (
-                      <Button onClick={handleInstallAgent} className="w-full gradient-primary text-primary-foreground">
-                        {installOutput.length > 0 ? "Retry Installation" : "Install Agent"} <ArrowRight className="w-4 h-4 ml-1" />
+                      <Button
+                        onClick={handleInstallAgent}
+                        disabled={!preflightReady}
+                        className="w-full gradient-primary text-primary-foreground disabled:opacity-50"
+                      >
+                        {!preflightReady
+                          ? "Insufficient resources"
+                          : installOutput.length > 0
+                          ? "Retry Installation"
+                          : "Install Agent"}
+                        {preflightReady && <ArrowRight className="w-4 h-4 ml-1" />}
                       </Button>
                     )}
                   </div>
