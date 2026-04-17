@@ -75,8 +75,9 @@ export const secretsStore = {
   async materializeEnv(): Promise<{ success: boolean; count?: number; path?: string }> {
     if (isElectron()) {
       const platform = await coreAPI.getPlatform();
-      const envPath = `${platform.homeDir}/.hermes/.env`;
-      return window.electronAPI!.secretsMaterializeEnv(envPath);
+      return window.electronAPI!.secretsMaterializeEnv(
+        platform.isWindows ? undefined : `${platform.homeDir}/.hermes/.env`
+      );
     }
     return { success: true, count: memoryStore.size };
   },
@@ -88,8 +89,9 @@ export const secretsStore = {
   async migrateFromEnv(): Promise<{ success: boolean; migrated?: number }> {
     if (isElectron()) {
       const platform = await coreAPI.getPlatform();
-      const envPath = `${platform.homeDir}/.hermes/.env`;
-      return window.electronAPI!.secretsMigrateFromEnv(envPath);
+      return window.electronAPI!.secretsMigrateFromEnv(
+        platform.isWindows ? undefined : `${platform.homeDir}/.hermes/.env`
+      );
     }
     return { success: true, migrated: 0 };
   },
