@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import AppLayout from "./components/layout/AppLayout";
 import { InstallProvider } from "./contexts/InstallContext";
+import { AgentConnectionProvider } from "./contexts/AgentConnectionContext";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import SubAgents from "./pages/SubAgents";
@@ -28,6 +29,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <HashRouter>
+        <AgentConnectionProvider>
         <InstallProvider>
         <Routes>
           <Route element={<AppLayout />}>
@@ -50,6 +52,7 @@ const App = () => (
           <Route path="*" element={<NotFound />} />
         </Routes>
         </InstallProvider>
+        </AgentConnectionProvider>
       </HashRouter>
     </TooltipProvider>
   </QueryClientProvider>

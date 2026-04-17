@@ -1,6 +1,8 @@
 import { createContext, useContext, useRef, useState, ReactNode, useCallback } from "react";
 import { systemAPI } from "@/lib/systemAPI";
 import { sudoAPI } from "@/lib/systemAPI/sudo";
+import { useAgentConnection } from "./AgentConnectionContext";
+import { toast } from "sonner";
 
 export type Mode = "choose" | "connect" | "install";
 export type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
@@ -75,6 +77,7 @@ interface InstallContextValue {
 const InstallContext = createContext<InstallContextValue | null>(null);
 
 export const InstallProvider = ({ children }: { children: ReactNode }) => {
+  const { markConnected, refresh: refreshConnection } = useAgentConnection();
   const [mode, setMode] = useState<Mode>("choose");
   const [installStep, setInstallStep] = useState<InstallStep>(0);
 
