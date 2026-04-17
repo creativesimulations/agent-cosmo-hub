@@ -198,17 +198,19 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.05 }}
           >
-            <div className="glass-subtle rounded-lg p-3 flex items-center justify-between">
-              <div className="flex items-center gap-3 flex-1">
-                <StatusIcon status={prereq.status} />
+            <div className="glass-subtle rounded-lg p-3 flex items-start justify-between gap-2">
+              <div className="flex items-start gap-3 flex-1 min-w-0">
+                <div className="mt-0.5">
+                  <StatusIcon status={prereq.status} />
+                </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-sm font-medium text-foreground">{prereq.name}</p>
                     {prereq.version && (
                       <span className="text-xs font-mono text-accent">{prereq.version}</span>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground truncate">{prereq.description}</p>
+                  <p className="text-xs text-muted-foreground break-words">{prereq.description}</p>
                   {prereq.status === "installing" && prereq.installProgress !== undefined && (
                     <Progress value={prereq.installProgress} className="h-1 mt-2" />
                   )}
