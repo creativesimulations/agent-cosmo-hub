@@ -291,6 +291,15 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
     if (result.success) {
       setInstallOutput((prev) => [...prev, "✓ Agent installed successfully!"]);
       setInstallComplete(true);
+      // Mark the agent as connected immediately and re-verify in the
+      // background so every screen flips out of the "No Agent Connected"
+      // state without requiring the user to click "Connect".
+      markConnected("~/.hermes");
+      void refreshConnection();
+      toast.success("Agent installed and connected", {
+        description: "You can now chat with your agent in the Agent Chat tab.",
+        duration: 8000,
+      });
       setTimeout(() => {
         if (installIdRef.current === myInstallId) setInstallStep(3);
       }, 1000);
