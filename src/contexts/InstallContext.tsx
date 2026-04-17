@@ -42,6 +42,12 @@ interface InstallContextValue {
   handleInstallAgent: () => Promise<void>;
   cancelInstall: () => void;
 
+  // Sudo prompt (shown when we need to install apt packages inside WSL/Linux)
+  sudoPrompt: { open: boolean; reason: string };
+  closeSudoPrompt: () => void;
+  submitSudoPassword: (password: string) => void;
+  sudoPasswordless: () => void;
+
   // Identity & config
   agentName: string;
   setAgentName: (n: string) => void;
