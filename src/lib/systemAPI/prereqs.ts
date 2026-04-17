@@ -222,14 +222,20 @@ export const prereqAPI = {
    *   Returns success=false with a clear message so the UI can tell the user
    *   to install it manually.
    */
-  /** Check if python3-venv is installed (matters on Debian/Ubuntu/WSL). */
-  async checkPythonVenv(): Promise<{ installed: boolean }> {
+  /** Check if Python can actually create venvs with pip/ensurepip available. */
+  async checkPythonVenv(): Promise<{ installed: boolean; packageName?: string }> {
     const platform = await coreAPI.getPlatform();
+    const inner = "python3 -c 'import sys; pkg=f\"python{sys.version_info.major}.{sys.version_info.minor}-venv\"; import venv, ensurepip; print(\"OK:\" + pkg)' 2>/dev/null || python3 -c 'import sys; print(\"NO:\" + f\"python{sys.version_info.major}.{sys.version_info.minor}-venv\")'";
     const cmd = platform.isWindows
-      ? 'wsl bash -lc "python3 -c \\"import venv\\" 2>/dev/null && echo OK || echo NO"'
-      : 'bash -lc "python3 -c \\"import venv\\" 2>/dev/null && echo OK || echo NO"';
+      ? `wsl bash -lc "${inner}"`
+      : `bash -lc "${inner}"`;
     const result = await coreAPI.runCommand(cmd, { timeout: 10000 });
-    return { installed: (result.stdout || '').includes('OK') };
+    const output = (result.stdout || '').trim();
+    const match = output.match(/^(OK|NO):(.+)$/);
+    return {
+      installed: match?.[1] === 'OK',
+      packageName: match?.[2]?.trim() || 'python3-venv',
+    };
   },
 
   async installFfmpeg(): Promise<CommandResult> {

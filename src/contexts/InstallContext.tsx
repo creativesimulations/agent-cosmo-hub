@@ -160,13 +160,14 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       }
     }
 
-    setInstallOutput((prev) => [...prev, "Checking for python3-venv..."]);
+    setInstallOutput((prev) => [...prev, "Checking for Python venv support..."]);
     const venvCheck = await systemAPI.checkPythonVenv();
     if (installIdRef.current !== myInstallId) return;
+    const pythonVenvPackage = venvCheck.packageName ?? "python3-venv";
     if (venvCheck.installed) {
-      setInstallOutput((prev) => [...prev, "✓ python3-venv already installed"]);
+      setInstallOutput((prev) => [...prev, `✓ ${pythonVenvPackage} is ready`]);
     } else {
-      aptPackages.push("python3-venv", "python3-full");
+      aptPackages.push(pythonVenvPackage);
     }
 
     // ─── Step 2: install via sudo if needed ─────────────────────
@@ -186,12 +187,13 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
         password = null;
       } else {
         setInstallOutput((prev) => [...prev, "Requesting administrator password..."]);
+        const needsPythonVenv = aptPackages.some((pkg) => pkg.endsWith("-venv"));
         const reason =
-          aptPackages.includes("ffmpeg") && aptPackages.includes("python3-venv")
-            ? "install ffmpeg and python3-venv (needed to set up the agent)"
+          aptPackages.includes("ffmpeg") && needsPythonVenv
+            ? `install ffmpeg and ${pythonVenvPackage} (needed to set up the agent)`
             : aptPackages.includes("ffmpeg")
             ? "install ffmpeg (needed for Voice / TTS)"
-            : "install python3-venv (needed to set up the agent)";
+            : `install ${pythonVenvPackage} (needed to set up the agent)`;
         password = await requestSudoPassword(reason);
         if (installIdRef.current !== myInstallId) return;
         if (password === null) {
