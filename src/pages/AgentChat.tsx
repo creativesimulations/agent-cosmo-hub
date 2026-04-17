@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
+const CHAT_STORAGE_KEY = "ainoval-agent-chat-history";
+
 interface Message {
   id: string;
   role: "user" | "assistant";
@@ -15,8 +17,27 @@ interface Message {
   streaming?: boolean;
 }
 
+const loadStoredMessages = (): Message[] => {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = window.sessionStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw) as Array<Omit<Message, "timestamp"> & { timestamp: string }>;
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.map((message) => ({
+      ...message,
+      timestamp: new Date(message.timestamp),
+    }));
+  } catch {
+    return [];
+  }
+};
+
 const AgentChat = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => loadStoredMessages());
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const { connected: agentConnected } = useAgentConnection();
@@ -24,6 +45,20 @@ const AgentChat = () => {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    window.sessionStorage.setItem(
+      CHAT_STORAGE_KEY,
+      JSON.stringify(
+        messages.map((message) => ({
+          ...message,
+          timestamp: message.timestamp.toISOString(),
+        }))
+      )
+    );
   }, [messages]);
 
   const sendMessage = async () => {

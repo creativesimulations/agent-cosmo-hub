@@ -3,6 +3,7 @@ import { Terminal as TerminalIcon, Send } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 
 interface TerminalLine {
   type: "input" | "output" | "error" | "system";
@@ -18,6 +19,7 @@ const initialLines: TerminalLine[] = [
 const TerminalPage = () => {
   const [lines, setLines] = useState<TerminalLine[]>(initialLines);
   const [input, setInput] = useState("");
+  const { connected: agentConnected } = useAgentConnection();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,9 +44,9 @@ const TerminalPage = () => {
       setInput("");
       return;
     } else if (cmd === "agent status") {
-      newLines.push({ type: "output", content: "No agent connected" });
+      newLines.push({ type: "output", content: agentConnected ? "Local agent install detected in ~/.hermes" : "No agent connected" });
     } else if (cmd === "agent restart") {
-      newLines.push({ type: "output", content: "No agent connected" });
+      newLines.push({ type: "output", content: agentConnected ? "Restart is not wired up yet in Terminal." : "No agent connected" });
     } else {
       newLines.push({ type: "output", content: `Unknown command: ${input}` });
     }

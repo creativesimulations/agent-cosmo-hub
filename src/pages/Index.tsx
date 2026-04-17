@@ -130,12 +130,13 @@ const Index = () => {
       setKeySaved(true);
       return;
     }
-    await systemAPI.setEnvVar(provider.envVar, apiKey);
-    setKeySaved(true);
+    const saved = await systemAPI.secrets.set(provider.envVar, apiKey);
+    setKeySaved(saved);
   };
 
   const handleSaveModel = async () => {
     await systemAPI.writeInitialConfig({ model: selectedModel });
+    await refreshConnection();
     setInstallStep(6);
   };
 
@@ -266,7 +267,7 @@ const Index = () => {
                 <div className="glass-subtle rounded-lg p-3 flex items-start gap-2">
                   <Globe className="w-4 h-4 text-accent mt-0.5 shrink-0" />
                   <p className="text-xs text-muted-foreground">
-                    We'll check for an existing install at <code className="text-foreground">~/.hermes/.env</code>. If nothing is found, head back and choose <strong>Install &amp; Setup</strong>.
+                    We&apos;ll look for a local Hermes install in <code className="text-foreground">~/.hermes</code> and verify that the CLI is available. If nothing is found, head back and choose <strong>Install &amp; Setup</strong>.
                   </p>
                 </div>
                 <Button onClick={handleConnect} disabled={connecting} className="w-full gradient-primary text-primary-foreground hover:opacity-90">

@@ -92,6 +92,120 @@ const hermesFileExists = async (targetPath: string): Promise<boolean> => {
   return result.success;
 };
 
+type HermesInstallState = {
+  hasDir: boolean;
+  hasEnv: boolean;
+  hasConfig: boolean;
+  hasVenvCli: boolean;
+  hasPathCli: boolean;
+};
+
+const parseProbeOutput = (stdout: string): Record<string, string> => {
+  return stdout.split('\n').reduce<Record<string, string>>((acc, line) => {
+    const trimmed = line.trim();
+    const eqIndex = trimmed.indexOf('=');
+    if (eqIndex <= 0) return acc;
+    acc[trimmed.slice(0, eqIndex)] = trimmed.slice(eqIndex + 1);
+    return acc;
+  }, {});
+};
+
+const inspectHermesInstall = async (): Promise<HermesInstallState> => {
+  const result = await runHermesShell([
+    'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
+    `if [ -d "${HERMES_DIR}" ]; then echo "HAS_DIR=1"; else echo "HAS_DIR=0"; fi`,
+    `if [ -f "${HERMES_ENV}" ]; then echo "HAS_ENV=1"; else echo "HAS_ENV=0"; fi`,
+    `if [ -f "${HERMES_CONFIG}" ]; then echo "HAS_CONFIG=1"; else echo "HAS_CONFIG=0"; fi`,
+    'if [ -x "$HOME/.hermes/venv/bin/hermes" ]; then echo "HAS_VENV_CLI=1"; else echo "HAS_VENV_CLI=0"; fi',
+    'if command -v hermes >/dev/null 2>&1; then echo "HAS_PATH_CLI=1"; else echo "HAS_PATH_CLI=0"; fi',
+  ].join('\n'));
+
+  const parsed = parseProbeOutput(result.stdout);
+
+  return {
+    hasDir: parsed.HAS_DIR === '1',
+    hasEnv: parsed.HAS_ENV === '1',
+    hasConfig: parsed.HAS_CONFIG === '1',
+    hasVenvCli: parsed.HAS_VENV_CLI === '1',
+    hasPathCli: parsed.HAS_PATH_CLI === '1',
+  };
+};
+
+const hasUsableHermesInstall = (state: HermesInstallState) => {
+  return state.hasDir && (state.hasVenvCli || state.hasPathCli);
+};
+
+const finalizeInstallVerification = async (result: CommandResult, onOutput?: CommandOutputHandler): Promise<CommandResult> => {
+  const state = await inspectHermesInstall();
+  const verificationLines = [
+    `[verify] ~/.hermes directory: ${state.hasDir ? 'found' : 'missing'}`,
+    `[verify] config.yaml: ${state.hasConfig ? 'found' : 'missing'}`,
+    `[verify] .env: ${state.hasEnv ? 'found' : 'missing'}`,
+    `[verify] venv hermes CLI: ${state.hasVenvCli ? 'found' : 'missing'}`,
+    `[verify] hermes on PATH: ${state.hasPathCli ? 'found' : 'missing'}`,
+  ];
+
+  onOutput?.({ type: 'stdout', data: `${verificationLines.join('\n')}\n` });
+
+  if (hasUsableHermesInstall(state)) {
+    return {
+      ...result,
+      stdout: `${result.stdout}${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${verificationLines.join('\n')}\n`,
+    };
+  }
+
+  const failure = [
+    '[verify] Install finished, but no usable Hermes CLI was found.',
+    '[verify] Expected either ~/.hermes/venv/bin/hermes or a hermes binary on PATH.',
+  ].join('\n');
+
+  onOutput?.({ type: 'stderr', data: `${failure}\n` });
+
+  return {
+    success: false,
+    code: result.code || 52,
+    stdout: `${result.stdout}${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${verificationLines.join('\n')}\n`,
+    stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${failure}\n`,
+  };
+};
+
+const quoteEnvValue = (value: string) => `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+
+const materializeHermesEnv = async (): Promise<{ success: boolean; count?: number; error?: string }> => {
+  const { keys } = await secretsStore.list();
+  const secretEntries = (await Promise.all(
+    keys.map(async (key) => [key, await secretsStore.get(key)] as const),
+  )).filter(([, value]) => value !== '');
+
+  const managedKeys = new Set(secretEntries.map(([key]) => key));
+  const existing = await readHermesFile(HERMES_ENV);
+  const preserved = existing.success && existing.content
+    ? existing.content
+        .split('\n')
+        .filter((line) => {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#')) return true;
+          const eqIndex = trimmed.indexOf('=');
+          if (eqIndex < 1) return true;
+          return !managedKeys.has(trimmed.slice(0, eqIndex).trim());
+        })
+        .join('\n')
+        .replace(/\n+$/, '')
+    : '';
+
+  const managed = secretEntries.map(([key, value]) => `${key}=${quoteEnvValue(value)}`).join('\n');
+  const sections = [
+    preserved,
+    managed ? '# ─── Managed by Ainoval (do not edit by hand) ───' : '',
+    managed,
+  ].filter(Boolean);
+
+  if (sections.length === 0) return { success: true, count: 0 };
+
+  const result = await writeHermesFile(HERMES_ENV, `${sections.join('\n')}\n`, '600');
+  return { success: result.success, count: secretEntries.length, error: result.error };
+};
+
 /** Hermes Agent installation, configuration, and lifecycle */
 export const hermesAPI = {
   /** Install the agent using the official install script.
@@ -253,13 +367,15 @@ export const hermesAPI = {
         { timeout: 600000 },
         onOutput,
       );
-      if (!baseResult.success || !extrasFlag) return baseResult;
+      if (!baseResult.success) return baseResult;
+      if (!extrasFlag) return finalizeInstallVerification(baseResult, onOutput);
       const extrasB64 = toB64(extrasCmd(extrasFlag));
-      return coreAPI.runCommandStream(
+      const extrasResult = await coreAPI.runCommandStream(
         `wsl bash -lc "echo ${extrasB64} | base64 -d | bash"`,
         { timeout: 300000 },
         onOutput,
       );
+      return extrasResult.success ? finalizeInstallVerification(extrasResult, onOutput) : extrasResult;
     }
 
     if (platform.isWSL) {
@@ -268,13 +384,15 @@ export const hermesAPI = {
         { timeout: 600000 },
         onOutput,
       );
-      if (!baseResult.success || !extrasFlag) return baseResult;
+      if (!baseResult.success) return baseResult;
+      if (!extrasFlag) return finalizeInstallVerification(baseResult, onOutput);
       const extrasB64 = toB64(extrasCmd(extrasFlag));
-      return coreAPI.runCommandStream(
+      const extrasResult = await coreAPI.runCommandStream(
         `bash -lc "echo ${extrasB64} | base64 -d | bash"`,
         { timeout: 300000 },
         onOutput,
       );
+      return extrasResult.success ? finalizeInstallVerification(extrasResult, onOutput) : extrasResult;
     }
 
     // macOS / Linux
@@ -283,13 +401,15 @@ export const hermesAPI = {
       { timeout: 600000 },
       onOutput,
     );
-    if (!baseResult.success || !extrasFlag) return baseResult;
+    if (!baseResult.success) return baseResult;
+    if (!extrasFlag) return finalizeInstallVerification(baseResult, onOutput);
     const extrasB64 = toB64(extrasCmd(extrasFlag));
-    return coreAPI.runCommandStream(
+    const extrasResult = await coreAPI.runCommandStream(
       `bash -c "echo ${extrasB64} | base64 -d | bash"`,
       { timeout: 300000 },
       onOutput,
     );
+    return extrasResult.success ? finalizeInstallVerification(extrasResult, onOutput) : extrasResult;
   },
 
   /** Alternative: install via git clone + editable pip into the dedicated venv.
@@ -319,6 +439,7 @@ export const hermesAPI = {
 
   /** Run hermes doctor to verify installation */
   async doctor(onOutput?: CommandOutputHandler): Promise<CommandResult> {
+    await materializeHermesEnv();
     return runHermesCli(
       [
         'echo "[doctor] starting diagnostics..."',
@@ -422,15 +543,13 @@ export const hermesAPI = {
    *  Decrypts secrets and materializes ~/.hermes/.env (chmod 600) right
    *  before launch, so plaintext secrets only exist on disk while running. */
   async start(): Promise<CommandResult> {
-    const platform = await coreAPI.getPlatform();
-    if (!platform.isWindows) await secretsStore.materializeEnv();
+    await materializeHermesEnv();
     return runHermesCli('hermes', { timeout: 10000 });
   },
 
   /** Start the messaging gateway */
   async startGateway(): Promise<CommandResult> {
-    const platform = await coreAPI.getPlatform();
-    if (!platform.isWindows) await secretsStore.materializeEnv();
+    await materializeHermesEnv();
     return runHermesCli('hermes gateway start', { timeout: 30000 });
   },
 
@@ -448,6 +567,6 @@ model: ${options.model || 'openrouter/nous/hermes-3-llama-3.1-70b'}
 
   /** Check if hermes config directory exists */
   async isConfigured(): Promise<boolean> {
-    return hermesFileExists(HERMES_ENV);
+    return hasUsableHermesInstall(await inspectHermesInstall());
   },
 };
