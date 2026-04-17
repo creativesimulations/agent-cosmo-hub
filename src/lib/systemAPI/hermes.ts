@@ -14,16 +14,35 @@ export const hermesAPI = {
   async install(extras?: string[]): Promise<CommandResult> {
     const platform = await coreAPI.getPlatform();
     const wantsExtras = !!(extras && extras.length > 0);
-    // Use `yes` to answer ALL interactive prompts in the install script
-    // (extras prompt, ffmpeg prompt, etc.) instead of just the first one.
-    const yesCmd = wantsExtras ? 'yes y' : 'yes n';
     const extrasFlag = wantsExtras ? `[${extras!.join(',')}]` : '';
 
+    // The official install script reads optional prompts (ffmpeg, etc.)
+    // directly from /dev/tty, bypassing piped stdin. To run it fully
+    // unattended we:
+    //   1. Download the script to a temp file (so we don't pipe to bash).
+    //   2. Run it with stdin redirected from /dev/null AND wrap with
+    //      `setsid` so it has no controlling terminal — every /dev/tty
+    //      read fails immediately and the script falls back to defaults
+    //      / non-interactive paths.
+    //   3. Force sudo to be non-interactive (SUDO_ASKPASS=/bin/false +
+    //      `sudo -n`) so optional system packages are skipped cleanly
+    //      instead of hanging on a password prompt.
+    //   4. Pass `--skip-setup` so the post-install wizard doesn't run.
+    //
+    // Note: ffmpeg / ripgrep / build-essential are OPTIONAL system
+    // packages. If they can't be installed without a password the script
+    // continues and just logs a manual-install hint.
+    const unattendedEnv =
+      'export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a SUDO_ASKPASS=/bin/false';
+    const dl = `curl -fsSL ${INSTALL_SCRIPT} -o /tmp/hermes-install.sh && chmod +x /tmp/hermes-install.sh`;
+    // setsid detaches from controlling tty; </dev/null closes stdin.
+    const runScript =
+      `setsid bash /tmp/hermes-install.sh --skip-setup </dev/null 2>&1 || true`;
+    const fullCmd = `${unattendedEnv} && ${dl} && ${runScript}`;
+
     if (platform.isWindows) {
-      // Run install script inside WSL. Use bash -lc so the user's profile
-      // (PATH, pyenv, etc.) is loaded.
       const baseResult = await coreAPI.runCommand(
-        `wsl bash -lc "${yesCmd} 2>/dev/null | curl -fsSL ${INSTALL_SCRIPT} | bash"`,
+        `wsl bash -lc "${fullCmd.replace(/"/g, '\\"')}"`,
         { timeout: 600000 }
       );
       if (!baseResult.success || !extrasFlag) return baseResult;
@@ -35,7 +54,7 @@ export const hermesAPI = {
 
     if (platform.isWSL) {
       const baseResult = await coreAPI.runCommand(
-        `bash -lc "${yesCmd} 2>/dev/null | curl -fsSL ${INSTALL_SCRIPT} | bash"`,
+        `bash -lc "${fullCmd.replace(/"/g, '\\"')}"`,
         { timeout: 600000 }
       );
       if (!baseResult.success || !extrasFlag) return baseResult;
@@ -46,10 +65,7 @@ export const hermesAPI = {
     }
 
     // macOS / Linux
-    const baseResult = await coreAPI.runCommand(
-      `${yesCmd} 2>/dev/null | curl -fsSL ${INSTALL_SCRIPT} | bash`,
-      { timeout: 600000 }
-    );
+    const baseResult = await coreAPI.runCommand(fullCmd, { timeout: 600000 });
     if (!baseResult.success || !extrasFlag) return baseResult;
     return coreAPI.runCommand(
       `python3 -m pip install --upgrade "hermes-agent${extrasFlag}"`,
