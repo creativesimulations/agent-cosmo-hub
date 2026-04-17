@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeFile: (filePath, content) => ipcRenderer.invoke('write-file', filePath, content),
   mkdir: (dirPath) => ipcRenderer.invoke('mkdir', dirPath),
 
+  // Disk space on the drive holding the user's home directory
+  getDiskSpace: () => ipcRenderer.invoke('get-disk-space'),
+
   // Check if running in Electron
   isElectron: true,
 });

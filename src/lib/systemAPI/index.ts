@@ -18,6 +18,7 @@ export const systemAPI = {
   readFile: coreAPI.readFile.bind(coreAPI),
   writeFile: coreAPI.writeFile.bind(coreAPI),
   mkdir: coreAPI.mkdir.bind(coreAPI),
+  getDiskSpace: coreAPI.getDiskSpace.bind(coreAPI),
 
   // Prerequisites
   detectOS: prereqAPI.detectOS.bind(prereqAPI),
