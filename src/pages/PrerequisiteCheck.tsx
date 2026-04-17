@@ -82,10 +82,10 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
       updatePrereq("python", { status: "missing", description: "Python 3.11+ not found" });
     }
 
-    updatePrereq("pip", { status: "checking", description: "Checking pip..." });
+    updatePrereq("pip", { status: "checking", description: "Checking pip and upgrading to latest..." });
     const pip = await systemAPI.checkPip();
     if (pip.installed) {
-      updatePrereq("pip", { status: "found", version: pip.version, description: `pip ${pip.version} available` });
+      updatePrereq("pip", { status: "found", version: pip.version, description: `pip ${pip.version} (upgraded to latest)` });
     } else {
       updatePrereq("pip", { status: "missing", description: "pip not found" });
     }
