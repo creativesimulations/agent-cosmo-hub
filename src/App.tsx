@@ -8,7 +8,7 @@ import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import SubAgents from "./pages/SubAgents";
 import LLMConfig from "./pages/LLMConfig";
-import APIKeys from "./pages/APIKeys";
+import Secrets from "./pages/Secrets";
 import Skills from "./pages/Skills";
 import SettingsPage from "./pages/SettingsPage";
 import TerminalPage from "./pages/TerminalPage";
@@ -33,7 +33,9 @@ const App = () => (
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/agents" element={<SubAgents />} />
             <Route path="/models" element={<LLMConfig />} />
-            <Route path="/keys" element={<APIKeys />} />
+            <Route path="/secrets" element={<Secrets />} />
+            {/* Legacy redirect */}
+            <Route path="/keys" element={<Secrets />} />
             <Route path="/skills" element={<Skills />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/terminal" element={<TerminalPage />} />

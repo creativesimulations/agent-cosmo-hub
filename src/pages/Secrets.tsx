@@ -35,7 +35,7 @@ const maskValue = (val: string): string => {
   return val.substring(0, 4) + "****" + val.substring(val.length - 4);
 };
 
-const APIKeys = () => {
+const Secrets = () => {
   const [keys, setKeys] = useState<ApiKeyEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
@@ -92,10 +92,10 @@ const APIKeys = () => {
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <KeyRound className="w-6 h-6 text-primary" />
-            API Keys & Credentials
+            Secrets
           </h1>
           <p className="text-sm text-muted-foreground">
-            Manage provider keys stored securely on your machine
+            API keys, tokens, and credentials your agents use — stored locally on your machine
           </p>
         </div>
         <Button
@@ -103,7 +103,7 @@ const APIKeys = () => {
           className="gradient-primary text-primary-foreground"
           onClick={() => setShowAddForm(!showAddForm)}
         >
-          <Plus className="w-4 h-4 mr-1" /> Add Key
+          <Plus className="w-4 h-4 mr-1" /> Add Secret
         </Button>
       </div>
 
@@ -116,7 +116,7 @@ const APIKeys = () => {
 
       {showAddForm && (
         <GlassCard className="space-y-3">
-          <h3 className="text-sm font-semibold text-foreground">Add New Key</h3>
+          <h3 className="text-sm font-semibold text-foreground">Add New Secret</h3>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">Variable Name</label>
@@ -162,7 +162,7 @@ const APIKeys = () => {
       ) : keys.length === 0 ? (
         <GlassCard className="text-center py-8">
           <p className="text-sm text-muted-foreground">
-            No API keys configured yet. Click "Add Key" or run the install wizard to get started.
+            No secrets configured yet. Click "Add Secret" or run the install wizard to get started.
           </p>
         </GlassCard>
       ) : (
@@ -207,4 +207,4 @@ const APIKeys = () => {
   );
 };
 
-export default APIKeys;
+export default Secrets;
