@@ -192,4 +192,55 @@ export const prereqAPI = {
     }
     return coreAPI.runCommand('sudo apt-get install -y python3-pip', { timeout: 300000 });
   },
+
+  // ─── Optional system packages used by Hermes extras ───────
+
+  /** Check if ffmpeg is on PATH (host or, on Windows, inside WSL via /mnt/c). */
+  async checkFfmpeg(): Promise<{ found: boolean; version?: string }> {
+    const platform = await coreAPI.getPlatform();
+    // On Windows we care whether ffmpeg is visible to WSL (where Hermes runs).
+    // ffmpeg.exe installed via winget on the host appears at /mnt/c/... and is
+    // automatically on the WSL PATH thanks to WSL interop, so checking from
+    // inside WSL is the most accurate test.
+    const cmd = platform.isWindows
+      ? 'wsl bash -lc "command -v ffmpeg && ffmpeg -version 2>/dev/null | head -1"'
+      : 'command -v ffmpeg && ffmpeg -version 2>/dev/null | head -1';
+    const result = await coreAPI.runCommand(cmd, { timeout: 10000 });
+    if (!result.success || !result.stdout?.trim()) return { found: false };
+    const lines = result.stdout.trim().split('\n');
+    return { found: true, version: lines[lines.length - 1] };
+  },
+
+  /**
+   * Install ffmpeg on the host so the Hermes installer's optional ffmpeg check
+   * passes and we never hit the sudo-prompt code path.
+   *
+   * - Windows: `winget install ffmpeg` runs as the user with their own UAC
+   *   consent (no stored passwords). WSL sees it via interop.
+   * - macOS: `brew install ffmpeg` (no sudo needed).
+   * - Linux/WSL: requires sudo, which we cannot provide non-interactively.
+   *   Returns success=false with a clear message so the UI can tell the user
+   *   to install it manually.
+   */
+  async installFfmpeg(): Promise<CommandResult> {
+    const platform = await coreAPI.getPlatform();
+    if (platform.isWindows) {
+      return coreAPI.runCommand(
+        'winget install --id=Gyan.FFmpeg -e --accept-package-agreements --accept-source-agreements',
+        { timeout: 600000 }
+      );
+    }
+    if (platform.isMac) {
+      return coreAPI.runCommand('brew install ffmpeg', { timeout: 600000 });
+    }
+    // Linux / WSL — sudo required, can't do unattended.
+    return {
+      success: false,
+      stdout: '',
+      stderr:
+        'ffmpeg cannot be installed automatically on Linux/WSL because it requires sudo. ' +
+        'Please run `sudo apt install ffmpeg` (or your distro equivalent) in a terminal, then retry.',
+      code: 1,
+    };
+  },
 };

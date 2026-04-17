@@ -32,7 +32,7 @@ const navGroups = [
     label: "Configure",
     items: [
       { path: "/models", icon: Cpu, label: "LLM Config" },
-      { path: "/keys", icon: KeyRound, label: "API Keys" },
+      { path: "/secrets", icon: KeyRound, label: "Secrets" },
       { path: "/skills", icon: Puzzle, label: "Skills" },
       { path: "/config", icon: FileCode, label: "Config Editor" },
     ],

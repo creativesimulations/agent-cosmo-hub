@@ -165,24 +165,46 @@ const Index = () => {
     const extrasLabel = selectedFeatures.length > 0 ? ` with extras: ${selectedFeatures.join(", ")}` : "";
     setInstallOutput([`Starting agent installation${extrasLabel}...`]);
 
+    // ── Pre-install ffmpeg on the host if Voice/TTS was chosen ──
+    // This avoids the Hermes installer's sudo prompt for ffmpeg, which
+    // hangs because we can't answer it from inside Electron.
+    if (selectedFeatures.includes("voice")) {
+      setInstallOutput((prev) => [...prev, "Checking for ffmpeg (required for Voice / TTS)..."]);
+      const ffCheck = await systemAPI.checkFfmpeg();
+      if (installIdRef.current !== myInstallId) return;
+      if (ffCheck.found) {
+        setInstallOutput((prev) => [...prev, `✓ ffmpeg already installed (${ffCheck.version ?? "ok"})`]);
+      } else {
+        setInstallOutput((prev) => [
+          ...prev,
+          "ffmpeg not found — installing via your OS package manager...",
+          "(Windows: winget · macOS: brew · you may see a UAC prompt)",
+        ]);
+        const ffInstall = await systemAPI.installFfmpeg();
+        if (installIdRef.current !== myInstallId) return;
+        if (ffInstall.success) {
+          setInstallOutput((prev) => [...prev, "✓ ffmpeg installed successfully"]);
+        } else {
+          // Non-fatal: continue with install, but warn the user. The Hermes
+          // installer will still skip the optional ffmpeg step cleanly.
+          setInstallOutput((prev) => [
+            ...prev,
+            "⚠ Could not install ffmpeg automatically — Voice / TTS will be limited.",
+            (ffInstall.stderr || "").trim() || "(no error message)",
+            "You can install it manually later and restart the agent.",
+          ]);
+        }
+      }
+    }
+
+    setInstallOutput((prev) => [...prev, "Verifying Python and pip...", "Downloading installer script..."]);
+
     const progressInterval = setInterval(() => {
       if (installIdRef.current !== myInstallId) {
         clearInterval(progressInterval);
         return;
       }
       setInstallProgress((prev) => Math.min(prev + 2, 90));
-      setInstallOutput((prev) => {
-        const messages = [
-          "Verifying Python and pip...",
-          "Downloading installer script...",
-          "Installing agent framework and dependencies...",
-          ...(selectedFeatures.includes("voice") ? ["Installing ffmpeg for voice support..."] : []),
-          "Setting up PATH...",
-        ];
-        const idx = Math.min(Math.floor(prev.length / 2), messages.length - 1);
-        if (!prev.includes(messages[idx])) return [...prev, messages[idx]];
-        return prev;
-      });
     }, 800);
 
     const extras = selectedFeatures.map((f) => OPTIONAL_FEATURES.find((o) => o.id === f)?.pipExtra).filter(Boolean);
