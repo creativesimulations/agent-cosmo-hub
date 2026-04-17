@@ -154,9 +154,6 @@ export default function InstallPreflight({ onReadyChange }: Props) {
                 />
               </>
             )}
-            <p className="text-muted-foreground/80 italic pt-1">
-              Install locations are determined by each tool's installer and aren't user-configurable.
-            </p>
           </div>
         )}
       </div>
