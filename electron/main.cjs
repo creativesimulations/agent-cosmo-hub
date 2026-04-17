@@ -17,6 +17,29 @@ const KEYCHAIN_SERVICE = 'Ainoval';
 // Encrypted secrets store (used when keytar is unavailable)
 const SAFESTORAGE_FILE = path.join(os.homedir(), '.ainoval', 'secrets.enc');
 
+function buildCommandEnv(extraEnv = {}) {
+  const env = { ...process.env, ...extraEnv };
+
+  if (process.platform !== 'win32') return env;
+
+  try {
+    const { execSync } = require('child_process');
+    const freshPath = execSync(
+      'powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable(\'Path\', \'Machine\') + \';\' + [Environment]::GetEnvironmentVariable(\'Path\', \'User\')"',
+      { timeout: 5000 }
+    ).toString().trim();
+
+    if (freshPath) {
+      env.PATH = freshPath;
+      env.Path = freshPath;
+    }
+  } catch (e) {
+    // Fallback: keep the existing PATH
+  }
+
+  return env;
+}
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1400,
@@ -40,20 +63,7 @@ function createWindow() {
 // Run a command and return stdout/stderr when complete
 ipcMain.handle('run-command', async (_event, cmd, options = {}) => {
   return new Promise((resolve) => {
-    // Refresh PATH on Windows so newly installed programs are found
-    let env = { ...process.env, ...options.env };
-    if (process.platform === 'win32') {
-      try {
-        const { execSync } = require('child_process');
-        const freshPath = execSync('powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable(\'Path\', \'Machine\') + \';\' + [Environment]::GetEnvironmentVariable(\'Path\', \'User\')"', { timeout: 5000 }).toString().trim();
-        if (freshPath) {
-          env.PATH = freshPath;
-          env.Path = freshPath;
-        }
-      } catch (e) {
-        // Fallback: use existing PATH
-      }
-    }
+    const env = buildCommandEnv(options.env || {});
     const opts = {
       timeout: options.timeout || 60000,
       cwd: options.cwd || os.homedir(),
@@ -74,13 +84,51 @@ ipcMain.handle('run-command', async (_event, cmd, options = {}) => {
 // Run a command with streaming output
 ipcMain.handle('run-command-stream', async (event, cmd, options = {}) => {
   return new Promise((resolve) => {
+    const streamId = options.streamId;
+    const timeoutMs = options.timeout || 60000;
     const opts = {
       cwd: options.cwd || os.homedir(),
       shell: true,
-      env: { ...process.env, ...options.env },
+      env: buildCommandEnv(options.env || {}),
+      windowsHide: true,
     };
     const child = spawn(cmd, [], opts);
-    const streamId = options.streamId;
+    let settled = false;
+    let timedOut = false;
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
+
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          event.sender.send('command-output', {
+            streamId,
+            type: 'stderr',
+            data: `[process] Command timed out after ${timeoutMs}ms\n`,
+          });
+
+          try {
+            child.kill('SIGTERM');
+          } catch (e) {
+            // Best effort
+          }
+
+          setTimeout(() => {
+            if (!child.killed) {
+              try {
+                child.kill('SIGKILL');
+              } catch (e) {
+                // Best effort
+              }
+            }
+          }, 2000);
+        }, timeoutMs)
+      : null;
 
     child.stdout.on('data', (data) => {
       event.sender.send('command-output', {
@@ -102,13 +150,18 @@ ipcMain.handle('run-command-stream', async (event, cmd, options = {}) => {
       event.sender.send('command-output', {
         streamId,
         type: 'exit',
-        code,
+        code: timedOut ? 124 : (code ?? 0),
       });
-      resolve({ success: code === 0, code });
+      finish({ success: !timedOut && code === 0, code: timedOut ? 124 : (code ?? 0) });
     });
 
     child.on('error', (err) => {
-      resolve({ success: false, error: err.message });
+      event.sender.send('command-output', {
+        streamId,
+        type: 'stderr',
+        data: `[process] ${err.message}\n`,
+      });
+      finish({ success: false, code: 1 });
     });
   });
 });

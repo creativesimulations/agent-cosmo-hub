@@ -63,6 +63,7 @@ interface InstallContextValue {
   // Doctor / launch
   doctorRunning: boolean;
   doctorOutput: string[];
+  doctorProgress: number;
   doctorPassed: boolean;
   runDoctor: () => Promise<void>;
 
@@ -93,6 +94,7 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
 
   const [doctorRunning, setDoctorRunning] = useState(false);
   const [doctorOutput, setDoctorOutput] = useState<string[]>([]);
+  const [doctorProgress, setDoctorProgress] = useState(0);
   const [doctorPassed, setDoctorPassed] = useState(false);
 
   const [launching, setLaunching] = useState(false);
@@ -270,14 +272,74 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const runDoctor = useCallback(async () => {
+    if (doctorRunning) return;
+
     setDoctorRunning(true);
-    setDoctorOutput(["Running diagnostics..."]);
-    const result = await systemAPI.hermesDoctor();
-    const lines = result.stdout.split("\n").filter(Boolean);
-    setDoctorOutput((prev) => [...prev, ...lines]);
-    setDoctorPassed(result.success);
-    setDoctorRunning(false);
-  }, []);
+    setDoctorPassed(false);
+    setDoctorProgress(8);
+    setDoctorOutput(["Running diagnostics...", "Collecting live output..."]);
+
+    let bufferedLine = "";
+
+    const appendLines = (lines: string[]) => {
+      if (lines.length === 0) return;
+      setDoctorOutput((prev) => [...prev, ...lines]);
+      setDoctorProgress((prev) => Math.min(prev + Math.max(lines.length * 4, 4), 92));
+    };
+
+    const appendChunk = (chunk: string) => {
+      bufferedLine += chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const parts = bufferedLine.split("\n");
+      bufferedLine = parts.pop() ?? "";
+      appendLines(parts.map((line) => line.trimEnd()).filter(Boolean));
+    };
+
+    const flushBufferedLine = () => {
+      const finalLine = bufferedLine.trimEnd();
+      bufferedLine = "";
+      if (finalLine) appendLines([finalLine]);
+    };
+
+    const progressTimer = window.setInterval(() => {
+      setDoctorProgress((prev) => {
+        if (prev >= 88) return prev;
+        if (prev < 32) return prev + 8;
+        if (prev < 60) return prev + 5;
+        return prev + 2;
+      });
+    }, 1200);
+
+    try {
+      const result = await systemAPI.hermesDoctor((event: { type: string; data?: string; code?: number }) => {
+        if ((event.type === "stdout" || event.type === "stderr") && event.data) {
+          appendChunk(event.data);
+        }
+      });
+
+      flushBufferedLine();
+      setDoctorProgress(100);
+
+      if (result.success) {
+        setDoctorPassed(true);
+        setDoctorOutput((prev) => [...prev, "✓ Diagnostics completed successfully."]);
+      } else {
+        setDoctorOutput((prev) => {
+          const next = [...prev, `✗ Diagnostics failed${typeof result.code === "number" ? ` (exit code ${result.code})` : ""}.`];
+          if (!result.stdout.trim() && !result.stderr.trim()) {
+            next.push("No diagnostics output was returned.");
+          }
+          return next;
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown diagnostics error";
+      setDoctorProgress(100);
+      setDoctorOutput((prev) => [...prev, `✗ Diagnostics crashed: ${message}`]);
+    } finally {
+      window.clearInterval(progressTimer);
+      setDoctorRunning(false);
+    }
+  }, [doctorRunning]);
 
   const runLaunch = useCallback(async () => {
     setLaunching(true);
@@ -327,6 +389,7 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
         setSelectedModel,
         doctorRunning,
         doctorOutput,
+        doctorProgress,
         doctorPassed,
         runDoctor,
         launching,

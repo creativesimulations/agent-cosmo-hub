@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -101,7 +101,7 @@ const Index = () => {
     apiKey, setApiKey,
     keySaved, setKeySaved,
     selectedModel, setSelectedModel,
-    doctorRunning, doctorOutput, doctorPassed, runDoctor,
+    doctorRunning, doctorOutput, doctorProgress, doctorPassed, runDoctor,
     launching, launchOutput, runLaunch,
   } = useInstall();
 
@@ -143,6 +143,27 @@ const Index = () => {
 
   const currentProvider = LLM_PROVIDERS.find((p) => p.id === selectedProvider);
   const needsApiKey = currentProvider?.envVar !== "";
+  const installLogRef = useRef<HTMLDivElement>(null);
+  const doctorLogRef = useRef<HTMLDivElement>(null);
+  const launchLogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (installLogRef.current) {
+      installLogRef.current.scrollTop = installLogRef.current.scrollHeight;
+    }
+  }, [installOutput]);
+
+  useEffect(() => {
+    if (doctorLogRef.current) {
+      doctorLogRef.current.scrollTop = doctorLogRef.current.scrollHeight;
+    }
+  }, [doctorOutput]);
+
+  useEffect(() => {
+    if (launchLogRef.current) {
+      launchLogRef.current.scrollTop = launchLogRef.current.scrollHeight;
+    }
+  }, [launchOutput]);
 
   return (
     <div className="flex-1 flex items-center justify-center min-h-screen p-8">
@@ -281,6 +302,10 @@ const Index = () => {
               >
                 <XCircle className="w-4 h-4 mr-1" /> Cancel installation
               </Button>
+            ) : doctorRunning ? (
+              <div className="h-9 flex items-center text-xs text-muted-foreground">
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Diagnostics in progress...
+              </div>
             ) : (
               <Button
                 variant="ghost"
@@ -375,7 +400,7 @@ const Index = () => {
                       <InstallPreflight onReadyChange={setPreflightReady} />
                     )}
 
-                    <div className="font-mono text-xs space-y-1 max-h-40 overflow-y-auto">
+                    <div ref={installLogRef} className="font-mono text-xs space-y-1 max-h-40 overflow-y-auto pr-1">
                       {installOutput.map((line, i) => (
                         <p key={i} className={
                           line.startsWith("✓") ? "text-success" :
@@ -573,7 +598,7 @@ const Index = () => {
                       Run diagnostics to verify everything is configured correctly.
                     </p>
 
-                    <div className="font-mono text-xs space-y-1 max-h-40 overflow-y-auto">
+                    <div ref={doctorLogRef} className="font-mono text-xs space-y-1 max-h-40 overflow-y-auto pr-1">
                       {doctorOutput.map((line, i) => (
                         <p key={i} className={
                           line.startsWith("✓") ? "text-success" :
@@ -587,14 +612,24 @@ const Index = () => {
                     </div>
 
                     {doctorRunning && (
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Loader2 className="w-4 h-4 animate-spin" /> Running diagnostics...
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Loader2 className="w-4 h-4 animate-spin" /> Running diagnostics...
+                        </div>
+                        <div className="space-y-1">
+                          <Progress value={doctorProgress} className="h-1" />
+                          <p className="text-xs text-muted-foreground text-right">{doctorProgress}%</p>
+                        </div>
                       </div>
                     )}
 
-                    {!doctorRunning && !doctorPassed && (
-                      <Button onClick={runDoctor} className="w-full gradient-primary text-primary-foreground">
-                        Run Diagnostics <Stethoscope className="w-4 h-4 ml-1" />
+                    {!doctorPassed && (
+                      <Button onClick={runDoctor} disabled={doctorRunning} className="w-full gradient-primary text-primary-foreground disabled:opacity-50">
+                        {doctorRunning ? (
+                          <><Loader2 className="w-4 h-4 animate-spin" /> Diagnostics Running...</>
+                        ) : (
+                          <>Run Diagnostics <Stethoscope className="w-4 h-4 ml-1" /></>
+                        )}
                       </Button>
                     )}
 
@@ -624,7 +659,7 @@ const Index = () => {
                       <span className="text-sm font-medium text-foreground">Launch {agentName}</span>
                     </div>
 
-                    <div className="font-mono text-xs space-y-1">
+                    <div ref={launchLogRef} className="font-mono text-xs space-y-1 max-h-40 overflow-y-auto pr-1">
                       {launchOutput.map((line, i) => (
                         <p key={i} className={
                           line.startsWith("✓") ? "text-success" :
@@ -654,7 +689,7 @@ const Index = () => {
               {/* Nav buttons */}
               {installStep > 0 && (
                 <div className="flex justify-between">
-                  {!installing ? (
+                  {!installing && !doctorRunning ? (
                     <Button
                       variant="ghost"
                       size="sm"
