@@ -120,6 +120,7 @@ export const hermesAPI = {
       `python3 -m pip install --upgrade "hermes-agent${extrasFlag}"`,
       { timeout: 300000 }
     );
+  },
 
   /** Alternative: install via pip (uses WSL on Windows) */
   async installViaPip(): Promise<CommandResult> {
