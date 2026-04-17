@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -17,6 +17,7 @@ import {
   Terminal,
   Stethoscope,
   Settings2,
+  XCircle,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,16 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import PrerequisiteCheck from "./PrerequisiteCheck";
 import { systemAPI } from "@/lib/systemAPI";
 import ronbotLogo from "@/assets/ronbot-logo.png";
@@ -105,6 +116,8 @@ const Index = () => {
   const [installing, setInstalling] = useState(false);
   const [installOutput, setInstallOutput] = useState<string[]>([]);
   const [installComplete, setInstallComplete] = useState(false);
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const installIdRef = useRef(0);
 
   // Agent name
   const [agentName, setAgentName] = useState("Ron");
@@ -143,12 +156,18 @@ const Index = () => {
 
   // ─── Step 2: Install Agent ───────────────────────────────
   const handleInstallAgent = async () => {
+    const myInstallId = ++installIdRef.current;
     setInstalling(true);
+    setInstallComplete(false);
     setInstallProgress(0);
     const extrasLabel = selectedFeatures.length > 0 ? ` with extras: ${selectedFeatures.join(", ")}` : "";
     setInstallOutput([`Starting agent installation${extrasLabel}...`]);
 
     const progressInterval = setInterval(() => {
+      if (installIdRef.current !== myInstallId) {
+        clearInterval(progressInterval);
+        return;
+      }
       setInstallProgress((prev) => Math.min(prev + 2, 90));
       setInstallOutput((prev) => {
         const messages = [
@@ -164,11 +183,14 @@ const Index = () => {
       });
     }, 800);
 
-    // Build pip extras string from selected features
     const extras = selectedFeatures.map((f) => OPTIONAL_FEATURES.find((o) => o.id === f)?.pipExtra).filter(Boolean);
     const result = await systemAPI.installHermes(extras.length > 0 ? extras as string[] : undefined);
 
     clearInterval(progressInterval);
+
+    // If user cancelled while we were awaiting, ignore the result
+    if (installIdRef.current !== myInstallId) return;
+
     setInstallProgress(100);
 
     if (result.success) {
@@ -179,6 +201,16 @@ const Index = () => {
       setInstallOutput((prev) => [...prev, `✗ Installation failed: ${result.stderr || "Unknown error"}`]);
     }
     setInstalling(false);
+  };
+
+  // ─── Cancel an in-flight install ─────────────────────────
+  const cancelInstall = () => {
+    installIdRef.current++;
+    setInstalling(false);
+    setInstallComplete(false);
+    setInstallProgress(0);
+    setInstallOutput((prev) => [...prev, "✗ Installation cancelled by user."]);
+    setShowCancelDialog(false);
   };
 
   // ─── Step 3: Save API Key ────────────────────────────────
@@ -363,14 +395,25 @@ const Index = () => {
             exit={{ opacity: 0, x: -30 }}
             className="max-w-lg w-full space-y-6"
           >
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => { setMode("choose"); setInstallStep(0); }}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <ArrowLeft className="w-4 h-4 mr-1" /> Back
-            </Button>
+            {installing ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowCancelDialog(true)}
+                className="text-destructive hover:text-destructive"
+              >
+                <XCircle className="w-4 h-4 mr-1" /> Cancel installation
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setMode("choose"); setInstallStep(0); }}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <ArrowLeft className="w-4 h-4 mr-1" /> Back
+              </Button>
+            )}
 
             {/* Step Indicator */}
             <div className="flex items-center gap-1">
@@ -744,6 +787,28 @@ const Index = () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AlertDialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel agent installation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The installation is currently in progress. Cancelling will stop tracking
+              the install and let you start over. Any files already downloaded by the
+              installer may remain on your system.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep installing</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={cancelInstall}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Yes, cancel
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
