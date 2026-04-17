@@ -35,11 +35,21 @@ export const hermesAPI = {
     // continues and just logs a manual-install hint.
     const unattendedEnv =
       'export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a SUDO_ASKPASS=/bin/false';
+    // Ensure pip + venv are present inside the POSIX env (WSL Ubuntu ships
+    // python3 without pip by default, which breaks the Hermes installer).
+    // Try ensurepip first (no sudo needed); fall back to apt-get if available
+    // non-interactively; finally bootstrap via get-pip.py over curl.
+    const ensurePip =
+      'python3 -m pip --version >/dev/null 2>&1 || ' +
+      'python3 -m ensurepip --upgrade >/dev/null 2>&1 || ' +
+      'sudo -n apt-get install -y python3-pip python3-venv >/dev/null 2>&1 || ' +
+      '(curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py && python3 /tmp/get-pip.py --user >/dev/null 2>&1) || ' +
+      'echo \'WARN: could not bootstrap pip automatically\' >&2';
     const dl = `curl -fsSL ${INSTALL_SCRIPT} -o /tmp/hermes-install.sh && chmod +x /tmp/hermes-install.sh`;
     // setsid detaches from controlling tty; </dev/null closes stdin.
     const runScript =
       `setsid bash /tmp/hermes-install.sh --skip-setup </dev/null 2>&1 || true`;
-    const fullCmd = `${unattendedEnv} && ${dl} && ${runScript}`;
+    const fullCmd = `${unattendedEnv} && ${ensurePip} && ${dl} && ${runScript}`;
 
     if (platform.isWindows) {
       const baseResult = await coreAPI.runCommand(
