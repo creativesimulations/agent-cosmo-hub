@@ -4,6 +4,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 
 interface Backup {
   id: string;
@@ -18,7 +19,7 @@ const BackupRestore = () => {
   const [creating, setCreating] = useState(false);
   const [createProgress, setCreateProgress] = useState(0);
   const [selectedItems, setSelectedItems] = useState(["config", "keys", "skills", "schedules"]);
-  const [agentConnected] = useState(false);
+  const { connected: agentConnected } = useAgentConnection();
 
   const toggleItem = (item: string) => {
     setSelectedItems((prev) =>

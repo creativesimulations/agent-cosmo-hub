@@ -1,8 +1,9 @@
 import { Puzzle, AlertCircle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
+import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 
 const Skills = () => {
-  const agentConnected = false;
+  const { connected: agentConnected } = useAgentConnection();
 
   return (
     <div className="p-6 space-y-6">

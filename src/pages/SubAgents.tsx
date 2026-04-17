@@ -1,9 +1,9 @@
 import { Network, AlertCircle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
+import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 
 const SubAgents = () => {
-  // TODO: Replace with real sub-agent data from systemAPI
-  const agentConnected = false;
+  const { connected: agentConnected } = useAgentConnection();
 
   return (
     <div className="p-6 space-y-6">
