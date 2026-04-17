@@ -3,9 +3,15 @@ import { secretsStore } from './secretsStore';
 import { isElectron } from './types';
 import type { CommandResult } from './types';
 
-const HERMES_DIR = '$HOME/.hermes';
-const HERMES_ENV = '$HOME/.hermes/.env';
-const HERMES_CONFIG = '$HOME/.hermes/config.yaml';
+// User-facing agent root. Renamed from ~/.hermes to ~/.ronbot so users never
+// see the upstream framework name. The actual CLI binary is still called
+// `hermes` (it's the upstream package), but everything that lives under the
+// user's home dir is branded Ronbot.
+const AGENT_DIR = '$HOME/.ronbot';
+const AGENT_ENV = '$HOME/.ronbot/.env';
+const AGENT_CONFIG = '$HOME/.ronbot/config.yaml';
+const AGENT_VENV_BIN = '$HOME/.ronbot/venv/bin';
+const AGENT_SRC = '$HOME/.ronbot/hermes-agent'; // upstream repo dir name — unavoidable
 const INSTALL_SCRIPT = 'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh';
 
 // Anything beyond ~4 KB on the argv risks ENAMETOOLONG once Windows PATH +
