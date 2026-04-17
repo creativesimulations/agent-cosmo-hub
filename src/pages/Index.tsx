@@ -17,6 +17,7 @@ import {
   Terminal,
   Stethoscope,
   Settings2,
+  XCircle,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
