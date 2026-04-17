@@ -266,7 +266,6 @@ export const hermesAPI = {
    *  On Windows we always run inside WSL because hermes-agent is not published
    *  to PyPI and requires the install script (which expects a POSIX shell). */
   async install(extras?: string[], onOutput?: CommandOutputHandler): Promise<CommandResult> {
-    const platform = await coreAPI.getPlatform();
     const wantsExtras = !!(extras && extras.length > 0);
     const extrasFlag = wantsExtras ? `[${extras!.join(',')}]` : '';
 
