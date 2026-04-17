@@ -331,7 +331,7 @@ const Index = () => {
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">Install & Setup</h3>
                   <p className="text-sm text-muted-foreground">
-                    Full automated agent installation — no terminal needed
+                    Full automated agent installation
                   </p>
                 </div>
               </GlassCard>
