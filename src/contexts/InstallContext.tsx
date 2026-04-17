@@ -1,5 +1,6 @@
 import { createContext, useContext, useRef, useState, ReactNode, useCallback } from "react";
 import { systemAPI } from "@/lib/systemAPI";
+import { sudoAPI } from "@/lib/systemAPI/sudo";
 
 export type Mode = "choose" | "connect" | "install";
 export type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
