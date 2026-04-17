@@ -33,6 +33,8 @@ export const systemAPI = {
   installPip: prereqAPI.installPip.bind(prereqAPI),
   installGit: prereqAPI.installGit.bind(prereqAPI),
   installCurl: prereqAPI.installCurl.bind(prereqAPI),
+  checkFfmpeg: prereqAPI.checkFfmpeg.bind(prereqAPI),
+  installFfmpeg: prereqAPI.installFfmpeg.bind(prereqAPI),
 
   // Hermes Agent
   installHermes: hermesAPI.install.bind(hermesAPI),
