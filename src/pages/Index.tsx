@@ -39,6 +39,7 @@ import PrerequisiteCheck from "./PrerequisiteCheck";
 import InstallPreflight from "@/components/install/InstallPreflight";
 import { systemAPI } from "@/lib/systemAPI";
 import { useInstall, OPTIONAL_FEATURES, InstallStep } from "@/contexts/InstallContext";
+import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import ronbotLogo from "@/assets/ronbot-logo.png";
 
 const installSteps = [
@@ -112,13 +113,16 @@ const Index = () => {
   const [preflightReady, setPreflightReady] = useState(false);
 
   const navigate = useNavigate();
+  const { refresh: refreshConnection, markConnected } = useAgentConnection();
 
-  const handleConnect = () => {
+  const handleConnect = async () => {
     setConnecting(true);
-    setTimeout(() => {
-      setConnecting(false);
+    const ok = await refreshConnection();
+    setConnecting(false);
+    if (ok) {
+      markConnected("~/.hermes");
       navigate("/dashboard");
-    }, 2000);
+    }
   };
 
   const handleSaveApiKey = async () => {
