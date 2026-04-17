@@ -115,6 +115,8 @@ const Index = () => {
   const [installing, setInstalling] = useState(false);
   const [installOutput, setInstallOutput] = useState<string[]>([]);
   const [installComplete, setInstallComplete] = useState(false);
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const installIdRef = useRef(0);
 
   // Agent name
   const [agentName, setAgentName] = useState("Ron");
