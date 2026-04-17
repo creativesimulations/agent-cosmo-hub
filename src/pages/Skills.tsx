@@ -1,4 +1,4 @@
-import { Puzzle, AlertCircle } from "lucide-react";
+import { Puzzle, AlertCircle, CheckCircle2 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 
@@ -16,10 +16,20 @@ const Skills = () => {
       </div>
 
       <GlassCard className="flex items-center justify-center py-16">
-        <div className="text-center space-y-3">
-          <AlertCircle className="w-10 h-10 text-muted-foreground/40 mx-auto" />
-          <p className="text-sm text-muted-foreground">No agent connected</p>
-          <p className="text-xs text-muted-foreground/60">Install and start an agent to manage skills</p>
+        <div className="text-center space-y-3 max-w-md">
+          {agentConnected ? (
+            <>
+              <CheckCircle2 className="w-10 h-10 text-success mx-auto" />
+              <p className="text-sm text-foreground">Agent detected</p>
+              <p className="text-xs text-muted-foreground/60">Custom skills will appear here after they&apos;re added to the local agent&apos;s <code className="text-foreground">~/.hermes/skills</code> folder.</p>
+            </>
+          ) : (
+            <>
+              <AlertCircle className="w-10 h-10 text-muted-foreground/40 mx-auto" />
+              <p className="text-sm text-muted-foreground">No agent connected</p>
+              <p className="text-xs text-muted-foreground/60">Install and start an agent to manage skills</p>
+            </>
+          )}
         </div>
       </GlassCard>
     </div>
