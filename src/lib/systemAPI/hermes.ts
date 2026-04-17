@@ -201,7 +201,8 @@ export const hermesAPI = {
     );
   },
 
-  /** Alternative: install via pip into the dedicated venv (uses WSL on Windows) */
+  /** Alternative: install via git clone + editable pip into the dedicated venv.
+   *  hermes-agent is NOT on PyPI, so we clone from GitHub and install editable. */
   async installViaPip(): Promise<CommandResult> {
     const platform = await coreAPI.getPlatform();
     const script =
@@ -209,7 +210,14 @@ export const hermesAPI = {
       'if [ -d "$HOME/.hermes/venv" ] && [ ! -x "$HOME/.hermes/venv/bin/pip" ]; then rm -rf "$HOME/.hermes/venv"; fi; ' +
       '[ -x "$HOME/.hermes/venv/bin/pip" ] || python3 -m venv "$HOME/.hermes/venv"; ' +
       '"$HOME/.hermes/venv/bin/pip" install --upgrade pip wheel setuptools; ' +
-      '"$HOME/.hermes/venv/bin/pip" install --upgrade hermes-agent; ' +
+      'HERMES_SRC="$HOME/.hermes/hermes-agent"; ' +
+      'if [ ! -d "$HERMES_SRC/.git" ]; then ' +
+      '  rm -rf "$HERMES_SRC"; ' +
+      '  git clone --depth 1 https://github.com/NousResearch/hermes-agent.git "$HERMES_SRC"; ' +
+      'else ' +
+      '  git -C "$HERMES_SRC" pull --ff-only || true; ' +
+      'fi; ' +
+      '"$HOME/.hermes/venv/bin/pip" install --upgrade -e "$HERMES_SRC"; ' +
       'mkdir -p "$HOME/.local/bin"; ' +
       'ln -sf "$HOME/.hermes/venv/bin/hermes" "$HOME/.local/bin/hermes"';
     const b64 = btoa(unescape(encodeURIComponent(script)));
