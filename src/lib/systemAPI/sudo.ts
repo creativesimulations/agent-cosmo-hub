@@ -32,17 +32,23 @@ async function runScript(script: string, timeout = 60000): Promise<CommandResult
  * DEBIAN_FRONTEND=noninteractive prevent interactive prompts.
  */
 async function runAptWithPassword(
-  aptArgs: string,
+  aptArgs: string[],
   password: string,
   timeout = 600000
 ): Promise<CommandResult> {
   const pwB64 = toB64(password + '\n');
-  // Use sudo -S -p '' so it consumes our stdin password silently.
-  // We export DEBIAN_FRONTEND in the same line so it survives sudo via -E.
+  // Avoid nested `bash -c` quoting issues by passing the password to sudo's
+  // stdin and invoking apt-get directly. We pre-feed the password via a here-doc
+  // style pipe so it's consumed by `sudo -S` once and discarded.
+  // Args are passed positionally (no shell interpolation) — safer for package lists.
+  const argsQuoted = aptArgs.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(' ');
   const script = [
     'set -o pipefail',
-    'export DEBIAN_FRONTEND=noninteractive',
-    `printf '%s' "$(echo ${pwB64} | base64 -d)" | sudo -S -p '' -E bash -c "DEBIAN_FRONTEND=noninteractive apt-get ${aptArgs}" 2>&1`,
+    'export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_MODE=a',
+    `printf '%s\\n' "$(echo ${pwB64} | base64 -d)" | sudo -S -p '' -E apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" ${argsQuoted} 2>&1`,
+    'rc=$?',
+    'echo "[apt] exit code: $rc"',
+    'exit $rc',
   ].join('\n');
   return runScript(script, timeout);
 }
@@ -94,10 +100,10 @@ export const sudoAPI = {
   /** Install one or more apt packages with the given password. */
   async aptInstall(packages: string[], password: string): Promise<CommandResult> {
     if (packages.length === 0) return { success: true, stdout: '', stderr: '', code: 0 };
-    const pkgList = packages.map((p) => p.replace(/[^a-zA-Z0-9._+-]/g, '')).join(' ');
+    const safe = packages.map((p) => p.replace(/[^a-zA-Z0-9._+-]/g, ''));
     // apt-get update first (best-effort — failures are okay if cache is recent).
-    await runAptWithPassword('update', password, 180000);
-    return runAptWithPassword(`install -y ${pkgList}`, password, 600000);
+    await runAptWithPassword(['update'], password, 180000);
+    return runAptWithPassword(['install', ...safe], password, 600000);
   },
 
   /**
