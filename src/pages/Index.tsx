@@ -787,6 +787,28 @@ const Index = () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AlertDialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel agent installation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The installation is currently in progress. Cancelling will stop tracking
+              the install and let you start over. Any files already downloaded by the
+              installer may remain on your system.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep installing</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={cancelInstall}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Yes, cancel
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
