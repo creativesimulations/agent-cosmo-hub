@@ -516,7 +516,7 @@ const Index = () => {
 
                     {!installing && !installComplete && (
                       <Button onClick={handleInstallAgent} className="w-full gradient-primary text-primary-foreground">
-                        Install Agent <ArrowRight className="w-4 h-4 ml-1" />
+                        {installOutput.length > 0 ? "Retry Installation" : "Install Agent"} <ArrowRight className="w-4 h-4 ml-1" />
                       </Button>
                     )}
                   </div>
