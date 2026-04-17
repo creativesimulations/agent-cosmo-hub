@@ -17,6 +17,13 @@ type CommandOutputHandler = (chunk: { type: string; data?: string; code?: number
 
 const encodeScript = (value: string) => btoa(unescape(encodeURIComponent(value)));
 
+const toWslMountedPath = (windowsPath: string): string | null => {
+  const normalized = windowsPath.replace(/\\/g, '/');
+  const match = normalized.match(/^([A-Za-z]):\/(.*)$/);
+  if (!match) return null;
+  return `/mnt/${match[1].toLowerCase()}/${match[2]}`;
+};
+
 // Stage a shell script to a temp file. Returns the path bash should execute,
 // plus a cleanup snippet to remove it. In browser/sim mode returns empty path
 // so callers fall back to inline execution.
@@ -146,6 +153,33 @@ const hermesFileExists = async (targetPath: string): Promise<boolean> => {
   return result.success;
 };
 
+const repairLegacyWindowsInstall = async (): Promise<void> => {
+  const platform = await coreAPI.getPlatform();
+  if (!platform.isWindows) return;
+
+  const mountedHome = toWslMountedPath(platform.homeDir);
+  if (!mountedHome) return;
+
+  const legacyDirs = [`${mountedHome}/~/.hermes`, `${mountedHome}/.hermes`];
+  await runHermesShell(
+    [
+      'TARGET="$HOME/.hermes"',
+      'mkdir -p "$TARGET"',
+      ...legacyDirs.flatMap((legacyDir, index) => [
+        `LEGACY_${index}="${legacyDir}"`,
+        `if [ -d "$LEGACY_${index}" ]; then`,
+        '  for item in venv hermes-agent config.yaml .env skills state.db; do',
+        `    if [ -e "$LEGACY_${index}/$item" ] && [ ! -e "$TARGET/$item" ]; then`,
+        `      cp -R "$LEGACY_${index}/$item" "$TARGET/$item"`,
+        '    fi',
+        '  done',
+        'fi',
+      ]),
+    ].join('\n'),
+    { timeout: 30000 },
+  );
+};
+
 type HermesInstallState = {
   hasDir: boolean;
   hasEnv: boolean;
@@ -165,6 +199,7 @@ const parseProbeOutput = (stdout: string): Record<string, string> => {
 };
 
 const inspectHermesInstall = async (): Promise<HermesInstallState> => {
+  await repairLegacyWindowsInstall();
   const result = await runHermesShell([
     'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
     `if [ -d "${HERMES_DIR}" ]; then echo "HAS_DIR=1"; else echo "HAS_DIR=0"; fi`,
