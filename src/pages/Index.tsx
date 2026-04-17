@@ -704,7 +704,7 @@ const Index = () => {
               {/* Nav buttons */}
               {installStep > 0 && (
                 <div className="flex justify-between">
-                  {!installing && !doctorRunning && installStep !== 3 ? (
+                  {!installing && !doctorRunning && installStep !== 3 && installStep !== 6 && installStep !== 7 ? (
                     <Button
                       variant="ghost"
                       size="sm"
