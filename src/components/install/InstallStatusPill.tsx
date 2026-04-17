@@ -30,11 +30,15 @@ const InstallStatusPill = () => {
     navigate("/");
   };
 
+  // Once the install is complete we don't want a "return to wizard" CTA —
+  // just a static confirmation pill. Failed/in-progress states stay clickable.
+  const isStaticComplete = installComplete && !installing && !failed;
+
   const Icon = installing ? Loader2 : installComplete ? CheckCircle2 : failed ? XCircle : Loader2;
   const label = installing
     ? `Installing… ${installProgress}%`
     : installComplete
-    ? "Install complete"
+    ? "Installation is complete"
     : failed
     ? "Install failed"
     : "Install paused";
@@ -50,22 +54,38 @@ const InstallStatusPill = () => {
   return (
     <AnimatePresence>
       {visible && (
-        <motion.button
-          initial={{ opacity: 0, y: 20, scale: 0.95 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 20, scale: 0.95 }}
-          onClick={handleReturn}
-          className={cn(
-            "fixed bottom-6 right-6 z-50 glass-strong rounded-full pl-3 pr-4 py-2",
-            "flex items-center gap-2 border shadow-2xl hover:scale-105 transition-transform",
-            colorClass
-          )}
-        >
-          <Icon className={cn("w-4 h-4 shrink-0", installing && "animate-spin")} />
-          <span className="text-xs font-medium whitespace-nowrap">{label}</span>
-          <span className="text-xs text-muted-foreground hidden sm:inline">· Return to wizard</span>
-          <ArrowRight className="w-3 h-3" />
-        </motion.button>
+        isStaticComplete ? (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            className={cn(
+              "fixed bottom-6 right-6 z-50 glass-strong rounded-full pl-3 pr-4 py-2",
+              "flex items-center gap-2 border shadow-2xl",
+              colorClass
+            )}
+          >
+            <Icon className="w-4 h-4 shrink-0" />
+            <span className="text-xs font-medium whitespace-nowrap">{label}</span>
+          </motion.div>
+        ) : (
+          <motion.button
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            onClick={handleReturn}
+            className={cn(
+              "fixed bottom-6 right-6 z-50 glass-strong rounded-full pl-3 pr-4 py-2",
+              "flex items-center gap-2 border shadow-2xl hover:scale-105 transition-transform",
+              colorClass
+            )}
+          >
+            <Icon className={cn("w-4 h-4 shrink-0", installing && "animate-spin")} />
+            <span className="text-xs font-medium whitespace-nowrap">{label}</span>
+            <span className="text-xs text-muted-foreground hidden sm:inline">· Return to wizard</span>
+            <ArrowRight className="w-3 h-3" />
+          </motion.button>
+        )
       )}
     </AnimatePresence>
   );
