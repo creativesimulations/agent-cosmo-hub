@@ -7,6 +7,91 @@ const HERMES_ENV = '~/.hermes/.env';
 const HERMES_CONFIG = '~/.hermes/config.yaml';
 const INSTALL_SCRIPT = 'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh';
 
+type CommandOutputHandler = (chunk: { type: string; data?: string; code?: number }) => void;
+
+const encodeScript = (value: string) => btoa(unescape(encodeURIComponent(value)));
+
+const buildHermesShellCommand = async (script: string): Promise<string> => {
+  const platform = await coreAPI.getPlatform();
+  const b64 = encodeScript(script);
+  const decodeCmd = `echo ${b64} | base64 -d | bash`;
+  return platform.isWindows ? `wsl bash -lc "${decodeCmd}"` : `bash -lc "${decodeCmd}"`;
+};
+
+const runHermesShell = async (
+  script: string,
+  options?: Record<string, unknown>,
+  onOutput?: CommandOutputHandler,
+): Promise<CommandResult> => {
+  const cmd = await buildHermesShellCommand(script);
+  return onOutput ? coreAPI.runCommandStream(cmd, options, onOutput) : coreAPI.runCommand(cmd, options);
+};
+
+const runHermesCli = async (
+  command: string,
+  options?: Record<string, unknown>,
+  onOutput?: CommandOutputHandler,
+): Promise<CommandResult> => {
+  return runHermesShell(
+    [
+      'set -e',
+      'export PATH="$HOME/.local/bin:$PATH"',
+      'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
+      'echo "[hermes] using $(command -v hermes)"',
+      command,
+    ].join('\n'),
+    options,
+    onOutput,
+  );
+};
+
+const readHermesFile = async (targetPath: string): Promise<{ success: boolean; content?: string; error?: string }> => {
+  const result = await runHermesShell([
+    `TARGET="${targetPath}"`,
+    'if [ -f "$TARGET" ]; then',
+    '  cat "$TARGET"',
+    'else',
+    '  exit 3',
+    'fi',
+  ].join('\n'));
+
+  if (result.success) return { success: true, content: result.stdout };
+  if (result.code === 3) return { success: false, error: 'File not found' };
+
+  return { success: false, error: result.stderr || result.stdout || 'Failed to read Hermes file' };
+};
+
+const writeHermesFile = async (
+  targetPath: string,
+  content: string,
+  mode?: string,
+): Promise<{ success: boolean; error?: string }> => {
+  const b64 = encodeScript(content);
+  const result = await runHermesShell(
+    [
+      `TARGET="${targetPath}"`,
+      'mkdir -p "$(dirname "$TARGET")"',
+      `echo ${b64} | base64 -d > "$TARGET"`,
+      ...(mode ? [`chmod ${mode} "$TARGET" || true`] : []),
+    ].join('\n'),
+    { timeout: 30000 },
+  );
+
+  return {
+    success: result.success,
+    error: result.success ? undefined : (result.stderr || result.stdout || 'Failed to write Hermes file'),
+  };
+};
+
+const hermesFileExists = async (targetPath: string): Promise<boolean> => {
+  const result = await runHermesShell([
+    `TARGET="${targetPath}"`,
+    '[ -f "$TARGET" ]',
+  ].join('\n'));
+
+  return result.success;
+};
+
 /** Hermes Agent installation, configuration, and lifecycle */
 export const hermesAPI = {
   /** Install the agent using the official install script.
@@ -227,27 +312,32 @@ export const hermesAPI = {
   },
 
   /** Run hermes doctor to verify installation */
-  async doctor(): Promise<CommandResult> {
-    return coreAPI.runCommand('hermes doctor');
+  async doctor(onOutput?: CommandOutputHandler): Promise<CommandResult> {
+    return runHermesCli(
+      [
+        'echo "[doctor] starting diagnostics..."',
+        'hermes doctor',
+      ].join('\n'),
+      { timeout: 90000 },
+      onOutput,
+    );
   },
 
   /** Get agent status */
   async status(): Promise<CommandResult> {
-    return coreAPI.runCommand('hermes status');
+    return runHermesCli('hermes status');
   },
 
   /** Run hermes update */
   async update(): Promise<CommandResult> {
-    return coreAPI.runCommand('hermes update', { timeout: 300000 });
+    return runHermesCli('hermes update', { timeout: 300000 });
   },
 
   // ─── API Key / .env management ────────────────────────────
 
   /** Read the current ~/.hermes/.env file */
   async readEnvFile(): Promise<Record<string, string>> {
-    const homeDir = (await coreAPI.getPlatform()).homeDir;
-    const envPath = `${homeDir}/.hermes/.env`;
-    const result = await coreAPI.readFile(envPath);
+    const result = await readHermesFile(HERMES_ENV);
     if (!result.success || !result.content) return {};
 
     const env: Record<string, string> = {};
@@ -271,14 +361,7 @@ export const hermesAPI = {
 
   /** Write a key-value pair to ~/.hermes/.env (append or update) */
   async setEnvVar(key: string, value: string): Promise<{ success: boolean }> {
-    const homeDir = (await coreAPI.getPlatform()).homeDir;
-    const envPath = `${homeDir}/.hermes/.env`;
-
-    // Ensure .hermes dir exists
-    await coreAPI.mkdir(`${homeDir}/.hermes`);
-
-    // Read existing
-    const result = await coreAPI.readFile(envPath);
+    const result = await readHermesFile(HERMES_ENV);
     const lines = result.success && result.content ? result.content.split('\n') : [];
 
     // Update or append
@@ -294,39 +377,37 @@ export const hermesAPI = {
     });
     if (!found) updated.push(newLine);
 
-    return coreAPI.writeFile(envPath, updated.join('\n'));
+    return writeHermesFile(HERMES_ENV, updated.join('\n'), '600');
   },
 
   /** Remove a key from ~/.hermes/.env */
   async removeEnvVar(key: string): Promise<{ success: boolean }> {
-    const homeDir = (await coreAPI.getPlatform()).homeDir;
-    const envPath = `${homeDir}/.hermes/.env`;
-    const result = await coreAPI.readFile(envPath);
+    const result = await readHermesFile(HERMES_ENV);
     if (!result.success || !result.content) return { success: true };
 
     const lines = result.content.split('\n').filter((line) => !line.trim().startsWith(`${key}=`));
-    return coreAPI.writeFile(envPath, lines.join('\n'));
+    return writeHermesFile(HERMES_ENV, lines.join('\n'), '600');
   },
 
   // ─── Config management (~/.hermes/config.yaml) ────────────
 
   /** Read the current config.yaml */
   async readConfig(): Promise<{ success: boolean; content?: string }> {
-    const homeDir = (await coreAPI.getPlatform()).homeDir;
-    return coreAPI.readFile(`${homeDir}/.hermes/config.yaml`);
+    return readHermesFile(HERMES_CONFIG);
   },
 
   /** Write config.yaml */
   async writeConfig(content: string): Promise<{ success: boolean }> {
-    const homeDir = (await coreAPI.getPlatform()).homeDir;
-    await coreAPI.mkdir(`${homeDir}/.hermes`);
-    return coreAPI.writeFile(`${homeDir}/.hermes/config.yaml`, content);
+    return writeHermesFile(HERMES_CONFIG, content, '600');
   },
 
   /** Set the model in config */
   async setModel(modelString: string): Promise<CommandResult> {
-    // Use hermes CLI to set model
-    return coreAPI.runCommand(`hermes config set model "${modelString}"`);
+    const modelB64 = encodeScript(modelString);
+    return runHermesCli([
+      `MODEL="$(echo ${modelB64} | base64 -d)"`,
+      'hermes config set model "$MODEL"',
+    ].join('\n'));
   },
 
   // ─── Agent lifecycle ──────────────────────────────────────
@@ -335,14 +416,16 @@ export const hermesAPI = {
    *  Decrypts secrets and materializes ~/.hermes/.env (chmod 600) right
    *  before launch, so plaintext secrets only exist on disk while running. */
   async start(): Promise<CommandResult> {
-    await secretsStore.materializeEnv();
-    return coreAPI.runCommand('hermes', { timeout: 10000 });
+    const platform = await coreAPI.getPlatform();
+    if (!platform.isWindows) await secretsStore.materializeEnv();
+    return runHermesCli('hermes', { timeout: 10000 });
   },
 
   /** Start the messaging gateway */
   async startGateway(): Promise<CommandResult> {
-    await secretsStore.materializeEnv();
-    return coreAPI.runCommand('hermes gateway start', { timeout: 30000 });
+    const platform = await coreAPI.getPlatform();
+    if (!platform.isWindows) await secretsStore.materializeEnv();
+    return runHermesCli('hermes gateway start', { timeout: 30000 });
   },
 
   /** Write initial config for first-time setup */
@@ -359,7 +442,6 @@ model: ${options.model || 'openrouter/nous/hermes-3-llama-3.1-70b'}
 
   /** Check if hermes config directory exists */
   async isConfigured(): Promise<boolean> {
-    const homeDir = (await coreAPI.getPlatform()).homeDir;
-    return coreAPI.fileExists(`${homeDir}/.hermes/.env`);
+    return hermesFileExists(HERMES_ENV);
   },
 };
