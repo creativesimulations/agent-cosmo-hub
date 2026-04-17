@@ -257,31 +257,24 @@ const Index = () => {
               <div className="space-y-2">
                 <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
                   <Server className="w-5 h-5 text-primary" />
-                  Connect to Agent
+                  Connect to Local Agent
                 </h2>
-                <p className="text-sm text-muted-foreground">Enter the URL of your running agent</p>
+                <p className="text-sm text-muted-foreground">
+                  Detect an agent already installed on this machine. Your agent runs locally as a CLI in <code className="text-foreground">~/.hermes</code> — no URL is needed.
+                </p>
               </div>
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Agent URL</label>
-                  <Input
-                    value={connectUrl}
-                    onChange={(e) => setConnectUrl(e.target.value)}
-                    placeholder="http://localhost:8000"
-                    className="bg-background/50 border-white/10 focus:border-primary/50"
-                  />
-                </div>
                 <div className="glass-subtle rounded-lg p-3 flex items-start gap-2">
                   <Globe className="w-4 h-4 text-accent mt-0.5 shrink-0" />
                   <p className="text-xs text-muted-foreground">
-                    We'll scan for running agent instances on localhost automatically.
+                    We'll check for an existing install at <code className="text-foreground">~/.hermes/.env</code>. If nothing is found, head back and choose <strong>Install &amp; Setup</strong>.
                   </p>
                 </div>
                 <Button onClick={handleConnect} disabled={connecting} className="w-full gradient-primary text-primary-foreground hover:opacity-90">
                   {connecting ? (
-                    <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Connecting...</>
+                    <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Detecting...</>
                   ) : (
-                    <><ArrowRight className="w-4 h-4 mr-2" /> Connect</>
+                    <><ArrowRight className="w-4 h-4 mr-2" /> Detect &amp; Connect</>
                   )}
                 </Button>
               </div>
