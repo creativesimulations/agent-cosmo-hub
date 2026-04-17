@@ -107,7 +107,6 @@ const Index = () => {
   } = useInstall();
 
   // Purely local UI state — fine to reset on remount
-  const [connectUrl, setConnectUrl] = useState("http://localhost:8000");
   const [connecting, setConnecting] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [preflightReady, setPreflightReady] = useState(false);
