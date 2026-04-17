@@ -97,7 +97,7 @@ export const hermesAPI = {
   /** Install the agent using the official install script.
    *  On Windows we always run inside WSL because hermes-agent is not published
    *  to PyPI and requires the install script (which expects a POSIX shell). */
-  async install(extras?: string[]): Promise<CommandResult> {
+  async install(extras?: string[], onOutput?: CommandOutputHandler): Promise<CommandResult> {
     const platform = await coreAPI.getPlatform();
     const wantsExtras = !!(extras && extras.length > 0);
     const extrasFlag = wantsExtras ? `[${extras!.join(',')}]` : '';
@@ -248,41 +248,47 @@ export const hermesAPI = {
     ].join('\n');
 
     if (platform.isWindows) {
-      const baseResult = await coreAPI.runCommand(
+      const baseResult = await coreAPI.runCommandStream(
         `wsl bash -lc "${decodeCmd}"`,
-        { timeout: 600000 }
+        { timeout: 600000 },
+        onOutput,
       );
       if (!baseResult.success || !extrasFlag) return baseResult;
       const extrasB64 = toB64(extrasCmd(extrasFlag));
-      return coreAPI.runCommand(
+      return coreAPI.runCommandStream(
         `wsl bash -lc "echo ${extrasB64} | base64 -d | bash"`,
-        { timeout: 300000 }
+        { timeout: 300000 },
+        onOutput,
       );
     }
 
     if (platform.isWSL) {
-      const baseResult = await coreAPI.runCommand(
+      const baseResult = await coreAPI.runCommandStream(
         `bash -lc "${decodeCmd}"`,
-        { timeout: 600000 }
+        { timeout: 600000 },
+        onOutput,
       );
       if (!baseResult.success || !extrasFlag) return baseResult;
       const extrasB64 = toB64(extrasCmd(extrasFlag));
-      return coreAPI.runCommand(
+      return coreAPI.runCommandStream(
         `bash -lc "echo ${extrasB64} | base64 -d | bash"`,
-        { timeout: 300000 }
+        { timeout: 300000 },
+        onOutput,
       );
     }
 
     // macOS / Linux
-    const baseResult = await coreAPI.runCommand(
+    const baseResult = await coreAPI.runCommandStream(
       `bash -c "${decodeCmd}"`,
-      { timeout: 600000 }
+      { timeout: 600000 },
+      onOutput,
     );
     if (!baseResult.success || !extrasFlag) return baseResult;
     const extrasB64 = toB64(extrasCmd(extrasFlag));
-    return coreAPI.runCommand(
+    return coreAPI.runCommandStream(
       `bash -c "echo ${extrasB64} | base64 -d | bash"`,
-      { timeout: 300000 }
+      { timeout: 300000 },
+      onOutput,
     );
   },
 

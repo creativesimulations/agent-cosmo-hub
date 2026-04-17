@@ -220,8 +220,15 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
     }
 
     // ─── Step 3: run the Hermes installer ───────────────────────
-    setInstallOutput((prev) => [...prev, "Verifying Python and pip...", "Downloading installer script..."]);
+    setInstallOutput((prev) => [
+      ...prev,
+      "Verifying Python and pip...",
+      "Downloading installer script...",
+      "ℹ This can take several minutes — pip is fetching dependencies. Live output will appear below.",
+    ]);
 
+    // Slowly creep the bar up to 90% so the user sees movement even before
+    // the first streamed line arrives.
     const progressInterval = setInterval(() => {
       if (installIdRef.current !== myInstallId) {
         clearInterval(progressInterval);
@@ -230,10 +237,49 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       setInstallProgress((prev) => Math.min(prev + 2, 90));
     }, 800);
 
+    // Heartbeat: every 15s, append an elapsed-time line so the user knows
+    // the process is alive even when pip is silent for long stretches.
+    const startedAt = Date.now();
+    const heartbeatInterval = setInterval(() => {
+      if (installIdRef.current !== myInstallId) {
+        clearInterval(heartbeatInterval);
+        return;
+      }
+      const secs = Math.round((Date.now() - startedAt) / 1000);
+      const mm = String(Math.floor(secs / 60)).padStart(2, "0");
+      const ss = String(secs % 60).padStart(2, "0");
+      setInstallOutput((prev) => [...prev, `… still working (elapsed ${mm}:${ss})`]);
+    }, 15000);
+
+    // Stream installer output line-by-line so the log keeps moving.
+    let buffered = "";
+    const handleOutput = (event: { type: string; data?: string; code?: number }) => {
+      if ((event.type !== "stdout" && event.type !== "stderr") || !event.data) return;
+      buffered += event.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const parts = buffered.split("\n");
+      buffered = parts.pop() ?? "";
+      const lines = parts.map((l) => l.trimEnd()).filter(Boolean);
+      if (lines.length === 0) return;
+      if (installIdRef.current !== myInstallId) return;
+      setInstallOutput((prev) => [...prev, ...lines]);
+      // Once real output is flowing, nudge the bar past 90% to show progress.
+      setInstallProgress((prev) => Math.min(Math.max(prev, 92), 97));
+    };
+
     const extras = selectedFeatures.map((f) => OPTIONAL_FEATURES.find((o) => o.id === f)?.pipExtra).filter(Boolean);
-    const result = await systemAPI.installHermes(extras.length > 0 ? extras as string[] : undefined);
+    const result = await systemAPI.installHermes(
+      extras.length > 0 ? (extras as string[]) : undefined,
+      handleOutput,
+    );
+
+    // Flush any trailing partial line.
+    if (buffered.trim() && installIdRef.current === myInstallId) {
+      setInstallOutput((prev) => [...prev, buffered.trim()]);
+    }
+    buffered = "";
 
     clearInterval(progressInterval);
+    clearInterval(heartbeatInterval);
 
     if (installIdRef.current !== myInstallId) return;
 
