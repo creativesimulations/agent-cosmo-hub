@@ -3,15 +3,9 @@ import { secretsStore } from './secretsStore';
 import { isElectron } from './types';
 import type { CommandResult } from './types';
 
-// User-facing agent root. Renamed from ~/.hermes to ~/.ronbot so users never
-// see the upstream framework name. The actual CLI binary is still called
-// `hermes` (it's the upstream package), but everything that lives under the
-// user's home dir is branded Ronbot.
-const AGENT_DIR = '$HOME/.ronbot';
-const AGENT_ENV = '$HOME/.ronbot/.env';
-const AGENT_CONFIG = '$HOME/.ronbot/config.yaml';
-const AGENT_VENV_BIN = '$HOME/.ronbot/venv/bin';
-const AGENT_SRC = '$HOME/.ronbot/hermes-agent'; // upstream repo dir name — unavoidable
+const HERMES_DIR = '$HOME/.hermes';
+const HERMES_ENV = '$HOME/.hermes/.env';
+const HERMES_CONFIG = '$HOME/.hermes/config.yaml';
 const INSTALL_SCRIPT = 'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh';
 
 // Anything beyond ~4 KB on the argv risks ENAMETOOLONG once Windows PATH +
@@ -102,9 +96,9 @@ const runHermesCli = async (
   return runHermesShell(
     [
       'set -e',
-      `export PATH="${AGENT_VENV_BIN}:$HOME/.local/bin:$PATH"`,
-      'command -v hermes >/dev/null 2>&1 || { echo "[agent] FATAL: agent CLI not found on PATH" >&2; exit 127; }',
-      'echo "[agent] using $(command -v hermes)"',
+      'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
+      'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
+      'echo "[hermes] using $(command -v hermes)"',
       command,
     ].join('\n'),
     options,
