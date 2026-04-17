@@ -142,9 +142,25 @@ export const hermesAPI = {
     // base64 payload being whitespace/quote-free.
     const decodeCmd = `echo ${b64} | base64 -d | bash`;
 
-    // Extras must install into the same venv we just created.
-    const extrasCmd = (extrasFlagInner: string) =>
-      `"$HOME/.hermes/venv/bin/pip" install --upgrade 'hermes-agent${extrasFlagInner}'`;
+    // Extras must install into the same venv, from the LOCAL CHECKOUT that
+    // the official install script clones to ~/.hermes/hermes-agent.
+    // hermes-agent is NOT published to PyPI, so we install editable from disk
+    // and pass the extras list as `.[extra1,extra2]`.
+    const extrasCmd = (extrasFlagInner: string) => [
+      'set -e',
+      'HERMES_SRC="$HOME/.hermes/hermes-agent"',
+      'if [ ! -d "$HERMES_SRC" ]; then',
+      '  echo "[extras] FATAL: $HERMES_SRC not found — base install did not clone the repo" >&2',
+      '  exit 50',
+      'fi',
+      'PIP="$HOME/.hermes/venv/bin/pip"',
+      'if [ ! -x "$PIP" ]; then',
+      '  echo "[extras] FATAL: venv pip not found at $PIP" >&2',
+      '  exit 51',
+      'fi',
+      `echo "[extras] installing extras ${extrasFlagInner} from $HERMES_SRC"`,
+      `"$PIP" install --upgrade -e "$HERMES_SRC${extrasFlagInner}"`,
+    ].join('\n');
 
     if (platform.isWindows) {
       const baseResult = await coreAPI.runCommand(
@@ -185,7 +201,8 @@ export const hermesAPI = {
     );
   },
 
-  /** Alternative: install via pip into the dedicated venv (uses WSL on Windows) */
+  /** Alternative: install via git clone + editable pip into the dedicated venv.
+   *  hermes-agent is NOT on PyPI, so we clone from GitHub and install editable. */
   async installViaPip(): Promise<CommandResult> {
     const platform = await coreAPI.getPlatform();
     const script =
@@ -193,7 +210,14 @@ export const hermesAPI = {
       'if [ -d "$HOME/.hermes/venv" ] && [ ! -x "$HOME/.hermes/venv/bin/pip" ]; then rm -rf "$HOME/.hermes/venv"; fi; ' +
       '[ -x "$HOME/.hermes/venv/bin/pip" ] || python3 -m venv "$HOME/.hermes/venv"; ' +
       '"$HOME/.hermes/venv/bin/pip" install --upgrade pip wheel setuptools; ' +
-      '"$HOME/.hermes/venv/bin/pip" install --upgrade hermes-agent; ' +
+      'HERMES_SRC="$HOME/.hermes/hermes-agent"; ' +
+      'if [ ! -d "$HERMES_SRC/.git" ]; then ' +
+      '  rm -rf "$HERMES_SRC"; ' +
+      '  git clone --depth 1 https://github.com/NousResearch/hermes-agent.git "$HERMES_SRC"; ' +
+      'else ' +
+      '  git -C "$HERMES_SRC" pull --ff-only || true; ' +
+      'fi; ' +
+      '"$HOME/.hermes/venv/bin/pip" install --upgrade -e "$HERMES_SRC"; ' +
       'mkdir -p "$HOME/.local/bin"; ' +
       'ln -sf "$HOME/.hermes/venv/bin/hermes" "$HOME/.local/bin/hermes"';
     const b64 = btoa(unescape(encodeURIComponent(script)));
