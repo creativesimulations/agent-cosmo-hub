@@ -37,19 +37,43 @@ export const hermesAPI = {
       'export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a SUDO_ASKPASS=/bin/false';
     // Ensure pip + venv are present inside the POSIX env (WSL Ubuntu ships
     // python3 without pip by default, which breaks the Hermes installer).
-    // Try ensurepip first (no sudo needed); fall back to apt-get if available
-    // non-interactively; finally bootstrap via get-pip.py over curl.
-    const ensurePip =
-      'python3 -m pip --version >/dev/null 2>&1 || ' +
-      'python3 -m ensurepip --upgrade >/dev/null 2>&1 || ' +
-      'sudo -n apt-get install -y python3-pip python3-venv >/dev/null 2>&1 || ' +
-      '(curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py && python3 /tmp/get-pip.py --user >/dev/null 2>&1) || ' +
-      'echo \'WARN: could not bootstrap pip automatically\' >&2';
-    const dl = `curl -fsSL ${INSTALL_SCRIPT} -o /tmp/hermes-install.sh && chmod +x /tmp/hermes-install.sh`;
+    // Strategy: try every known method, log what we tried, and FAIL HARD
+    // with a clear message if pip is still missing at the end. We can't let
+    // the install script run without pip — it just produces a confusing
+    // "No module named pip" error.
+    const ensurePip = [
+      'echo "[pip-bootstrap] checking for pip..."',
+      'if python3 -m pip --version 2>/dev/null; then echo "[pip-bootstrap] pip already present"; else',
+      '  echo "[pip-bootstrap] pip missing — attempting ensurepip"',
+      '  python3 -m ensurepip --upgrade 2>&1 || echo "[pip-bootstrap] ensurepip failed (often disabled on Debian/Ubuntu)"',
+      '  if ! python3 -m pip --version 2>/dev/null; then',
+      '    echo "[pip-bootstrap] trying apt-get (sudo -n, no password)"',
+      '    sudo -n apt-get update 2>&1 | tail -3 || true',
+      '    sudo -n apt-get install -y python3-pip python3-venv python3-full 2>&1 | tail -5 || echo "[pip-bootstrap] apt-get failed (likely no passwordless sudo)"',
+      '  fi',
+      '  if ! python3 -m pip --version 2>/dev/null; then',
+      '    echo "[pip-bootstrap] trying get-pip.py via curl --user"',
+      '    curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py 2>&1 || echo "[pip-bootstrap] curl get-pip.py failed"',
+      '    python3 /tmp/get-pip.py --user --break-system-packages 2>&1 | tail -10 || python3 /tmp/get-pip.py --user 2>&1 | tail -10 || echo "[pip-bootstrap] get-pip.py execution failed"',
+      '    export PATH="$HOME/.local/bin:$PATH"',
+      '  fi',
+      'fi',
+      // Final hard check — abort with a helpful message if still missing.
+      'if ! python3 -m pip --version 2>/dev/null; then',
+      '  echo "[pip-bootstrap] FATAL: could not install pip automatically." >&2',
+      '  echo "[pip-bootstrap] Please open a WSL/Ubuntu terminal and run:" >&2',
+      '  echo "[pip-bootstrap]   sudo apt update && sudo apt install -y python3-pip python3-venv" >&2',
+      '  echo "[pip-bootstrap] then retry the install from this app." >&2',
+      '  exit 42',
+      'fi',
+      'echo "[pip-bootstrap] pip is ready: $(python3 -m pip --version)"',
+    ].join('; ');
+    const dl = `echo "[install] downloading installer script..." && curl -fsSL ${INSTALL_SCRIPT} -o /tmp/hermes-install.sh && chmod +x /tmp/hermes-install.sh`;
     // setsid detaches from controlling tty; </dev/null closes stdin.
+    // Don't swallow exit code here — we want failures to propagate.
     const runScript =
-      `setsid bash /tmp/hermes-install.sh --skip-setup </dev/null 2>&1 || true`;
-    const fullCmd = `${unattendedEnv} && ${ensurePip} && ${dl} && ${runScript}`;
+      `echo "[install] running installer..." && setsid bash /tmp/hermes-install.sh --skip-setup </dev/null 2>&1`;
+    const fullCmd = `${unattendedEnv}; ${ensurePip} && ${dl} && ${runScript}`;
 
     if (platform.isWindows) {
       const baseResult = await coreAPI.runCommand(
