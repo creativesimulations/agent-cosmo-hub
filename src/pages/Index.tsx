@@ -764,14 +764,18 @@ const Index = () => {
               {/* Nav buttons */}
               {installStep > 0 && (
                 <div className="flex justify-between">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setInstallStep((s) => (s - 1) as InstallStep)}
-                    className="text-muted-foreground"
-                  >
-                    Previous
-                  </Button>
+                  {!installing ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setInstallStep((s) => (s - 1) as InstallStep)}
+                      className="text-muted-foreground"
+                    >
+                      Previous
+                    </Button>
+                  ) : (
+                    <span />
+                  )}
                   {installStep === 7 && launchOutput.some((l) => l.includes("All systems operational")) && (
                     <Button
                       size="sm"
