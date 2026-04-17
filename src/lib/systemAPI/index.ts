@@ -10,8 +10,11 @@ import { coreAPI } from './core';
 import { prereqAPI } from './prereqs';
 import { hermesAPI } from './hermes';
 import { secretsStore } from './secretsStore';
+import { sudoAPI } from './sudo';
 
 export { secretsStore } from './secretsStore';
+export { sudoAPI } from './sudo';
+export type { SudoState } from './sudo';
 export type { SecretsBackend, BackendInfo } from './secretsStore';
 
 export const systemAPI = {
@@ -42,6 +45,10 @@ export const systemAPI = {
   installCurl: prereqAPI.installCurl.bind(prereqAPI),
   checkFfmpeg: prereqAPI.checkFfmpeg.bind(prereqAPI),
   installFfmpeg: prereqAPI.installFfmpeg.bind(prereqAPI),
+  checkPythonVenv: prereqAPI.checkPythonVenv.bind(prereqAPI),
+
+  // Sudo (in-app password collection for apt installs)
+  sudo: sudoAPI,
 
   // Hermes Agent
   installHermes: hermesAPI.install.bind(hermesAPI),

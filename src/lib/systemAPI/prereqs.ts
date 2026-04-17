@@ -222,6 +222,16 @@ export const prereqAPI = {
    *   Returns success=false with a clear message so the UI can tell the user
    *   to install it manually.
    */
+  /** Check if python3-venv is installed (matters on Debian/Ubuntu/WSL). */
+  async checkPythonVenv(): Promise<{ installed: boolean }> {
+    const platform = await coreAPI.getPlatform();
+    const cmd = platform.isWindows
+      ? 'wsl bash -lc "python3 -c \\"import venv\\" 2>/dev/null && echo OK || echo NO"'
+      : 'bash -lc "python3 -c \\"import venv\\" 2>/dev/null && echo OK || echo NO"';
+    const result = await coreAPI.runCommand(cmd, { timeout: 10000 });
+    return { installed: (result.stdout || '').includes('OK') };
+  },
+
   async installFfmpeg(): Promise<CommandResult> {
     const platform = await coreAPI.getPlatform();
 

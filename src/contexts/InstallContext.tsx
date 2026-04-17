@@ -1,5 +1,6 @@
 import { createContext, useContext, useRef, useState, ReactNode, useCallback } from "react";
 import { systemAPI } from "@/lib/systemAPI";
+import { sudoAPI } from "@/lib/systemAPI/sudo";
 
 export type Mode = "choose" | "connect" | "install";
 export type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
@@ -40,6 +41,12 @@ interface InstallContextValue {
   // Actions
   handleInstallAgent: () => Promise<void>;
   cancelInstall: () => void;
+
+  // Sudo prompt (shown when we need to install apt packages inside WSL/Linux)
+  sudoPrompt: { open: boolean; reason: string };
+  closeSudoPrompt: () => void;
+  submitSudoPassword: (password: string) => void;
+  sudoPasswordless: () => void;
 
   // Identity & config
   agentName: string;
@@ -91,6 +98,39 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
   const [launching, setLaunching] = useState(false);
   const [launchOutput, setLaunchOutput] = useState<string[]>([]);
 
+  // Sudo dialog state — when set, the dialog is rendered by AppLayout.
+  const [sudoPrompt, setSudoPrompt] = useState<{ open: boolean; reason: string }>({
+    open: false,
+    reason: "",
+  });
+  const sudoResolverRef = useRef<((password: string | null) => void) | null>(null);
+
+  const closeSudoPrompt = useCallback(() => {
+    sudoResolverRef.current?.(null);
+    sudoResolverRef.current = null;
+    setSudoPrompt({ open: false, reason: "" });
+  }, []);
+
+  const submitSudoPassword = useCallback((password: string) => {
+    sudoResolverRef.current?.(password);
+    sudoResolverRef.current = null;
+    setSudoPrompt({ open: false, reason: "" });
+  }, []);
+
+  const sudoPasswordless = useCallback(() => {
+    sudoResolverRef.current?.("");
+    sudoResolverRef.current = null;
+    setSudoPrompt({ open: false, reason: "" });
+  }, []);
+
+  /** Opens the sudo dialog and awaits a password (or "" passwordless / null cancel). */
+  const requestSudoPassword = useCallback((reason: string): Promise<string | null> => {
+    return new Promise((resolve) => {
+      sudoResolverRef.current = resolve;
+      setSudoPrompt({ open: true, reason });
+    });
+  }, []);
+
   const toggleFeature = useCallback((featureId: string) => {
     setSelectedFeatures((prev) =>
       prev.includes(featureId) ? prev.filter((f) => f !== featureId) : [...prev, featureId]
@@ -105,33 +145,77 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
     const extrasLabel = selectedFeatures.length > 0 ? ` with extras: ${selectedFeatures.join(", ")}` : "";
     setInstallOutput([`Starting agent installation${extrasLabel}...`]);
 
-    if (selectedFeatures.includes("voice")) {
+    // ─── Step 1: detect needed apt packages ─────────────────────
+    const needFfmpeg = selectedFeatures.includes("voice");
+    const aptPackages: string[] = [];
+
+    if (needFfmpeg) {
       setInstallOutput((prev) => [...prev, "Checking for ffmpeg (required for Voice / TTS)..."]);
       const ffCheck = await systemAPI.checkFfmpeg();
       if (installIdRef.current !== myInstallId) return;
       if (ffCheck.found) {
         setInstallOutput((prev) => [...prev, `✓ ffmpeg already installed (${ffCheck.version ?? "ok"})`]);
       } else {
+        aptPackages.push("ffmpeg");
+      }
+    }
+
+    setInstallOutput((prev) => [...prev, "Checking for python3-venv..."]);
+    const venvCheck = await systemAPI.checkPythonVenv();
+    if (installIdRef.current !== myInstallId) return;
+    if (venvCheck.installed) {
+      setInstallOutput((prev) => [...prev, "✓ python3-venv already installed"]);
+    } else {
+      aptPackages.push("python3-venv", "python3-full");
+    }
+
+    // ─── Step 2: install via sudo if needed ─────────────────────
+    if (aptPackages.length > 0) {
+      setInstallOutput((prev) => [...prev, `Need to install system packages: ${aptPackages.join(", ")}`]);
+      const probe = await sudoAPI.probe();
+      if (installIdRef.current !== myInstallId) return;
+
+      let password: string | null = "";
+      if (probe.kind === "passwordless") {
+        setInstallOutput((prev) => [...prev, "✓ Passwordless sudo detected — installing automatically"]);
+      } else if (probe.kind === "no-sudo") {
         setInstallOutput((prev) => [
           ...prev,
-          "ffmpeg not found — installing via your OS package manager...",
-          "(Windows: winget · macOS: brew · you may see a UAC prompt)",
+          "⚠ sudo is not available — cannot install system packages.",
         ]);
-        const ffInstall = await systemAPI.installFfmpeg();
+        password = null;
+      } else {
+        setInstallOutput((prev) => [...prev, "Requesting administrator password..."]);
+        const reason =
+          aptPackages.includes("ffmpeg") && aptPackages.includes("python3-venv")
+            ? "install ffmpeg and python3-venv (needed to set up the agent)"
+            : aptPackages.includes("ffmpeg")
+            ? "install ffmpeg (needed for Voice / TTS)"
+            : "install python3-venv (needed to set up the agent)";
+        password = await requestSudoPassword(reason);
         if (installIdRef.current !== myInstallId) return;
-        if (ffInstall.success) {
-          setInstallOutput((prev) => [...prev, "✓ ffmpeg installed successfully"]);
+        if (password === null) {
+          setInstallOutput((prev) => [...prev, "✗ Cancelled — system packages not installed."]);
+          setInstalling(false);
+          return;
+        }
+      }
+
+      if (password !== null) {
+        setInstallOutput((prev) => [...prev, `Installing ${aptPackages.join(", ")} via apt...`]);
+        const aptResult = await sudoAPI.aptInstall(aptPackages, password);
+        if (installIdRef.current !== myInstallId) return;
+        if (aptResult.success) {
+          setInstallOutput((prev) => [...prev, `✓ Installed: ${aptPackages.join(", ")}`]);
         } else {
-          setInstallOutput((prev) => [
-            ...prev,
-            "⚠ Could not install ffmpeg automatically — Voice / TTS will be limited.",
-            (ffInstall.stderr || "").trim() || "(no error message)",
-            "You can install it manually later and restart the agent.",
-          ]);
+          const tail = (aptResult.stderr || aptResult.stdout || "unknown error")
+            .trim().split("\n").slice(-5).join("\n");
+          setInstallOutput((prev) => [...prev, `⚠ apt install failed: ${tail}`]);
         }
       }
     }
 
+    // ─── Step 3: run the Hermes installer ───────────────────────
     setInstallOutput((prev) => [...prev, "Verifying Python and pip...", "Downloading installer script..."]);
 
     const progressInterval = setInterval(() => {
@@ -165,20 +249,18 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       if (stderr) lines.push("--- stderr ---", tail(stderr));
       if (stdout) lines.push("--- stdout (last 20 lines) ---", tail(stdout));
       if (!stderr && !stdout) {
-        lines.push(
-          "No output was captured from the installer.",
-          "Likely cause: the install script could not be reached (network/proxy), curl/bash missing, or it exited before printing anything.",
-          "Try running this manually in a terminal to see the real error:",
-          "  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
-        );
+        lines.push("No output was captured from the installer.");
       }
       setInstallOutput((prev) => [...prev, ...lines]);
     }
     setInstalling(false);
-  }, [selectedFeatures]);
+  }, [selectedFeatures, requestSudoPassword]);
 
   const cancelInstall = useCallback(() => {
     installIdRef.current++;
+    sudoResolverRef.current?.(null);
+    sudoResolverRef.current = null;
+    setSudoPrompt({ open: false, reason: "" });
     setInstalling(false);
     setInstallComplete(false);
     setInstallProgress(0);
@@ -227,6 +309,10 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
         installOutput,
         handleInstallAgent,
         cancelInstall,
+        sudoPrompt,
+        closeSudoPrompt,
+        submitSudoPassword,
+        sudoPasswordless,
         agentName,
         setAgentName,
         selectedProvider,
