@@ -102,9 +102,9 @@ const runHermesCli = async (
   return runHermesShell(
     [
       'set -e',
-      'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
-      'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
-      'echo "[hermes] using $(command -v hermes)"',
+      `export PATH="${AGENT_VENV_BIN}:$HOME/.local/bin:$PATH"`,
+      'command -v hermes >/dev/null 2>&1 || { echo "[agent] FATAL: agent CLI not found on PATH" >&2; exit 127; }',
+      'echo "[agent] using $(command -v hermes)"',
       command,
     ].join('\n'),
     options,
