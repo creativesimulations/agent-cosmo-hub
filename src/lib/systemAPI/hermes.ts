@@ -75,32 +75,46 @@ export const hermesAPI = {
       `echo "[install] running installer..." && setsid bash /tmp/hermes-install.sh --skip-setup </dev/null 2>&1`;
     const fullCmd = `${unattendedEnv}; ${ensurePip} && ${dl} && ${runScript}`;
 
+    // Encode the whole payload as base64 to completely bypass shell quoting
+    // issues when wrapping in `wsl bash -lc "..."` or `bash -lc "..."`.
+    // Use btoa (browser-safe) since this code runs in Electron's renderer
+    // process where Node's Buffer is not available.
+    const toB64 = (s: string) => btoa(unescape(encodeURIComponent(s)));
+    const b64 = toB64(fullCmd);
+    const wrapped = (shell: string) =>
+      `${shell} -lc 'echo ${b64} | base64 -d | bash'`;
+
     if (platform.isWindows) {
       const baseResult = await coreAPI.runCommand(
-        `wsl bash -lc "${fullCmd.replace(/"/g, '\\"')}"`,
+        wrapped('wsl bash'),
         { timeout: 600000 }
       );
       if (!baseResult.success || !extrasFlag) return baseResult;
+      const extrasB64 = toB64(`python3 -m pip install --upgrade 'hermes-agent${extrasFlag}'`);
       return coreAPI.runCommand(
-        `wsl bash -lc "python3 -m pip install --upgrade 'hermes-agent${extrasFlag}'"`,
+        `wsl bash -lc 'echo ${extrasB64} | base64 -d | bash'`,
         { timeout: 300000 }
       );
     }
 
     if (platform.isWSL) {
       const baseResult = await coreAPI.runCommand(
-        `bash -lc "${fullCmd.replace(/"/g, '\\"')}"`,
+        wrapped('bash'),
         { timeout: 600000 }
       );
       if (!baseResult.success || !extrasFlag) return baseResult;
+      const extrasB64 = toB64(`python3 -m pip install --upgrade 'hermes-agent${extrasFlag}'`);
       return coreAPI.runCommand(
-        `bash -lc "python3 -m pip install --upgrade 'hermes-agent${extrasFlag}'"`,
+        `bash -lc 'echo ${extrasB64} | base64 -d | bash'`,
         { timeout: 300000 }
       );
     }
 
-    // macOS / Linux
-    const baseResult = await coreAPI.runCommand(fullCmd, { timeout: 600000 });
+    // macOS / Linux — run directly via base64 too for consistency.
+    const baseResult = await coreAPI.runCommand(
+      `bash -c 'echo ${b64} | base64 -d | bash'`,
+      { timeout: 600000 }
+    );
     if (!baseResult.success || !extrasFlag) return baseResult;
     return coreAPI.runCommand(
       `python3 -m pip install --upgrade "hermes-agent${extrasFlag}"`,
