@@ -188,7 +188,8 @@ export const hermesAPI = {
     const platform = await coreAPI.getPlatform();
     const script =
       'set -e; mkdir -p "$HOME/.hermes"; ' +
-      '[ -x "$HOME/.hermes/venv/bin/python" ] || python3 -m venv "$HOME/.hermes/venv"; ' +
+      'if [ -d "$HOME/.hermes/venv" ] && [ ! -x "$HOME/.hermes/venv/bin/pip" ]; then rm -rf "$HOME/.hermes/venv"; fi; ' +
+      '[ -x "$HOME/.hermes/venv/bin/pip" ] || python3 -m venv "$HOME/.hermes/venv"; ' +
       '"$HOME/.hermes/venv/bin/pip" install --upgrade pip wheel setuptools; ' +
       '"$HOME/.hermes/venv/bin/pip" install --upgrade hermes-agent; ' +
       'mkdir -p "$HOME/.local/bin"; ' +
