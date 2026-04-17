@@ -1,5 +1,5 @@
 import { isElectron } from './types';
-import type { CommandResult, PlatformInfo } from './types';
+import type { CommandResult, PlatformInfo, DiskSpaceInfo } from './types';
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -47,6 +47,13 @@ export const coreAPI = {
   async mkdir(path: string): Promise<{ success: boolean; error?: string }> {
     if (isElectron()) return window.electronAPI!.mkdir(path);
     return { success: true };
+  },
+
+  async getDiskSpace(): Promise<DiskSpaceInfo> {
+    if (isElectron()) return window.electronAPI!.getDiskSpace();
+    // Simulated: 25 GB free of 250 GB on C:
+    await delay(200);
+    return { success: true, drive: 'C:', freeBytes: 25 * 1024 ** 3, totalBytes: 250 * 1024 ** 3 };
   },
 };
 
