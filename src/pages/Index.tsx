@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -38,10 +38,8 @@ import {
 import PrerequisiteCheck from "./PrerequisiteCheck";
 import InstallPreflight from "@/components/install/InstallPreflight";
 import { systemAPI } from "@/lib/systemAPI";
+import { useInstall, OPTIONAL_FEATURES, InstallStep } from "@/contexts/InstallContext";
 import ronbotLogo from "@/assets/ronbot-logo.png";
-
-type Mode = "choose" | "connect" | "install";
-type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 const installSteps = [
   { title: "System Prerequisites", desc: "Detect & install required dependencies" },
@@ -52,20 +50,6 @@ const installSteps = [
   { title: "Choose Model", desc: "Select your preferred AI model" },
   { title: "Verify Installation", desc: "Run diagnostics to confirm everything works" },
   { title: "Launch", desc: "Start your AI agent" },
-];
-
-interface OptionalFeature {
-  id: string;
-  label: string;
-  description: string;
-  pipExtra: string;
-}
-
-const OPTIONAL_FEATURES: OptionalFeature[] = [
-  { id: "voice", label: "Voice / TTS", description: "Enable text-to-speech voice messages (requires ffmpeg)", pipExtra: "voice" },
-  { id: "messaging", label: "Messaging Gateways", description: "Telegram, Discord, and other messaging integrations", pipExtra: "messaging" },
-  { id: "cron", label: "Scheduled Tasks", description: "Cron-based task scheduling and automation", pipExtra: "cron" },
-  { id: "web", label: "Web Interface", description: "Built-in web UI for the agent", pipExtra: "web" },
 ];
 
 // Provider definitions with their env var names and key prefixes
@@ -104,40 +88,28 @@ const MODEL_OPTIONS: Record<string, { id: string; label: string }[]> = {
 };
 
 const Index = () => {
-  const [mode, setMode] = useState<Mode>("choose");
+  // Persistent install/wizard state lives in context so navigating
+  // away and back never loses progress.
+  const {
+    mode, setMode,
+    installStep, setInstallStep,
+    selectedFeatures, toggleFeature,
+    installing, installComplete, installProgress, installOutput,
+    handleInstallAgent, cancelInstall,
+    agentName, setAgentName,
+    selectedProvider, setSelectedProvider,
+    apiKey, setApiKey,
+    keySaved, setKeySaved,
+    selectedModel, setSelectedModel,
+    doctorRunning, doctorOutput, doctorPassed, runDoctor,
+    launching, launchOutput, runLaunch,
+  } = useInstall();
+
+  // Purely local UI state — fine to reset on remount
   const [connectUrl, setConnectUrl] = useState("http://localhost:8000");
   const [connecting, setConnecting] = useState(false);
-  const [installStep, setInstallStep] = useState<InstallStep>(0);
-
-  // Optional features
-  const [selectedFeatures, setSelectedFeatures] = useState<string[]>(["voice", "messaging"]);
-
-  // Install state
-  const [installProgress, setInstallProgress] = useState(0);
-  const [installing, setInstalling] = useState(false);
-  const [installOutput, setInstallOutput] = useState<string[]>([]);
-  const [installComplete, setInstallComplete] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [preflightReady, setPreflightReady] = useState(false);
-  const installIdRef = useRef(0);
-
-  // Agent name
-  const [agentName, setAgentName] = useState("Ron");
-
-  // API keys
-  const [selectedProvider, setSelectedProvider] = useState("openrouter");
-  const [apiKey, setApiKey] = useState("");
-  const [keySaved, setKeySaved] = useState(false);
-
-  // Model
-  const [selectedModel, setSelectedModel] = useState("openrouter/nous/hermes-3-llama-3.1-70b");
-
-  // Doctor / launch
-  const [doctorRunning, setDoctorRunning] = useState(false);
-  const [doctorOutput, setDoctorOutput] = useState<string[]>([]);
-  const [doctorPassed, setDoctorPassed] = useState(false);
-  const [launching, setLaunching] = useState(false);
-  const [launchOutput, setLaunchOutput] = useState<string[]>([]);
 
   const navigate = useNavigate();
 
@@ -149,114 +121,9 @@ const Index = () => {
     }, 2000);
   };
 
-  // ─── Step 1: Toggle optional feature ─────────────────────
-  const toggleFeature = (featureId: string) => {
-    setSelectedFeatures((prev) =>
-      prev.includes(featureId) ? prev.filter((f) => f !== featureId) : [...prev, featureId]
-    );
-  };
-
-  // ─── Step 2: Install Agent ───────────────────────────────
-  const handleInstallAgent = async () => {
-    const myInstallId = ++installIdRef.current;
-    setInstalling(true);
-    setInstallComplete(false);
-    setInstallProgress(0);
-    const extrasLabel = selectedFeatures.length > 0 ? ` with extras: ${selectedFeatures.join(", ")}` : "";
-    setInstallOutput([`Starting agent installation${extrasLabel}...`]);
-
-    // ── Pre-install ffmpeg on the host if Voice/TTS was chosen ──
-    // This avoids the Hermes installer's sudo prompt for ffmpeg, which
-    // hangs because we can't answer it from inside Electron.
-    if (selectedFeatures.includes("voice")) {
-      setInstallOutput((prev) => [...prev, "Checking for ffmpeg (required for Voice / TTS)..."]);
-      const ffCheck = await systemAPI.checkFfmpeg();
-      if (installIdRef.current !== myInstallId) return;
-      if (ffCheck.found) {
-        setInstallOutput((prev) => [...prev, `✓ ffmpeg already installed (${ffCheck.version ?? "ok"})`]);
-      } else {
-        setInstallOutput((prev) => [
-          ...prev,
-          "ffmpeg not found — installing via your OS package manager...",
-          "(Windows: winget · macOS: brew · you may see a UAC prompt)",
-        ]);
-        const ffInstall = await systemAPI.installFfmpeg();
-        if (installIdRef.current !== myInstallId) return;
-        if (ffInstall.success) {
-          setInstallOutput((prev) => [...prev, "✓ ffmpeg installed successfully"]);
-        } else {
-          // Non-fatal: continue with install, but warn the user. The Hermes
-          // installer will still skip the optional ffmpeg step cleanly.
-          setInstallOutput((prev) => [
-            ...prev,
-            "⚠ Could not install ffmpeg automatically — Voice / TTS will be limited.",
-            (ffInstall.stderr || "").trim() || "(no error message)",
-            "You can install it manually later and restart the agent.",
-          ]);
-        }
-      }
-    }
-
-    setInstallOutput((prev) => [...prev, "Verifying Python and pip...", "Downloading installer script..."]);
-
-    const progressInterval = setInterval(() => {
-      if (installIdRef.current !== myInstallId) {
-        clearInterval(progressInterval);
-        return;
-      }
-      setInstallProgress((prev) => Math.min(prev + 2, 90));
-    }, 800);
-
-    const extras = selectedFeatures.map((f) => OPTIONAL_FEATURES.find((o) => o.id === f)?.pipExtra).filter(Boolean);
-    const result = await systemAPI.installHermes(extras.length > 0 ? extras as string[] : undefined);
-
-    clearInterval(progressInterval);
-
-    // If user cancelled while we were awaiting, ignore the result
-    if (installIdRef.current !== myInstallId) return;
-
-    setInstallProgress(100);
-
-    if (result.success) {
-      setInstallOutput((prev) => [...prev, "✓ Agent installed successfully!"]);
-      setInstallComplete(true);
-      setTimeout(() => setInstallStep(3), 1000);
-    } else {
-      // Surface every available signal: stderr, stdout tail, and exit code.
-      const stderr = (result.stderr || "").trim();
-      const stdout = (result.stdout || "").trim();
-      const tail = (text: string, n = 20) => text.split("\n").slice(-n).join("\n");
-      const lines: string[] = [`✗ Installation failed (exit code ${result.code ?? "?"})`];
-      if (stderr) lines.push("--- stderr ---", tail(stderr));
-      if (stdout) lines.push("--- stdout (last 20 lines) ---", tail(stdout));
-      if (!stderr && !stdout) {
-        lines.push(
-          "No output was captured from the installer.",
-          "Likely cause: the install script could not be reached (network/proxy), curl/bash missing, or it exited before printing anything.",
-          "Try running this manually in a terminal to see the real error:",
-          "  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
-        );
-      }
-      setInstallOutput((prev) => [...prev, ...lines]);
-    }
-    setInstalling(false);
-  };
-
-  // ─── Cancel an in-flight install ─────────────────────────
-  const cancelInstall = () => {
-    installIdRef.current++;
-    setInstalling(false);
-    setInstallComplete(false);
-    setInstallProgress(0);
-    setInstallOutput((prev) => [...prev, "✗ Installation cancelled by user."]);
-    setShowCancelDialog(false);
-  };
-
-  // ─── Step 3: Save API Key ────────────────────────────────
   const handleSaveApiKey = async () => {
     const provider = LLM_PROVIDERS.find((p) => p.id === selectedProvider);
     if (!provider || !provider.envVar) {
-      // Ollama — no key needed
       setKeySaved(true);
       return;
     }
@@ -264,43 +131,14 @@ const Index = () => {
     setKeySaved(true);
   };
 
-  // ─── Step 5: Save Model ──────────────────────────────────
   const handleSaveModel = async () => {
     await systemAPI.writeInitialConfig({ model: selectedModel });
     setInstallStep(6);
   };
 
-  // ─── Step 5: Run Doctor ──────────────────────────────────
-  const handleDoctor = async () => {
-    setDoctorRunning(true);
-    setDoctorOutput(["Running diagnostics..."]);
-
-    const result = await systemAPI.hermesDoctor();
-
-    const lines = result.stdout.split("\n").filter(Boolean);
-    setDoctorOutput((prev) => [...prev, ...lines]);
-    setDoctorPassed(result.success);
-    setDoctorRunning(false);
-  };
-
-  // ─── Step 6: Launch ──────────────────────────────────────
-  const handleLaunch = async () => {
-    setLaunching(true);
-    setLaunchOutput(["Starting agent..."]);
-
-    const result = await systemAPI.startAgent();
-
-    if (result.success) {
-      setLaunchOutput((prev) => [
-        ...prev,
-        `✓ ${agentName} is ready!`,
-        "✓ Agent is running",
-        "✓ All systems operational",
-      ]);
-    } else {
-      setLaunchOutput((prev) => [...prev, `✗ Failed to start: ${result.stderr || "Unknown error"}`]);
-    }
-    setLaunching(false);
+  const handleConfirmCancel = () => {
+    cancelInstall();
+    setShowCancelDialog(false);
   };
 
   const currentProvider = LLM_PROVIDERS.find((p) => p.id === selectedProvider);
@@ -755,7 +593,7 @@ const Index = () => {
                     )}
 
                     {!doctorRunning && !doctorPassed && (
-                      <Button onClick={handleDoctor} className="w-full gradient-primary text-primary-foreground">
+                      <Button onClick={runDoctor} className="w-full gradient-primary text-primary-foreground">
                         Run Diagnostics <Stethoscope className="w-4 h-4 ml-1" />
                       </Button>
                     )}
@@ -805,7 +643,7 @@ const Index = () => {
                     )}
 
                     {launchOutput.length === 0 && !launching && (
-                      <Button onClick={handleLaunch} className="w-full gradient-primary text-primary-foreground">
+                      <Button onClick={runLaunch} className="w-full gradient-primary text-primary-foreground">
                         Launch {agentName} <Zap className="w-4 h-4 ml-1" />
                       </Button>
                     )}
@@ -820,7 +658,7 @@ const Index = () => {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setInstallStep((s) => (s - 1) as InstallStep)}
+                      onClick={() => setInstallStep((installStep - 1) as InstallStep)}
                       className="text-muted-foreground"
                     >
                       Previous
@@ -857,7 +695,7 @@ const Index = () => {
           <AlertDialogFooter>
             <AlertDialogCancel>Keep installing</AlertDialogCancel>
             <AlertDialogAction
-              onClick={cancelInstall}
+              onClick={handleConfirmCancel}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Yes, cancel
