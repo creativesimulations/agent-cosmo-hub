@@ -1,5 +1,6 @@
 import { coreAPI } from './core';
 import { secretsStore } from './secretsStore';
+import { isElectron } from './types';
 import type { CommandResult } from './types';
 
 const HERMES_DIR = '$HOME/.hermes';
@@ -7,15 +8,68 @@ const HERMES_ENV = '$HOME/.hermes/.env';
 const HERMES_CONFIG = '$HOME/.hermes/config.yaml';
 const INSTALL_SCRIPT = 'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh';
 
+// Anything beyond ~4 KB on the argv risks ENAMETOOLONG once Windows PATH +
+// cmd.exe quoting is added. Larger scripts are written to a temp file and
+// executed via `bash <file>` instead of being inlined as base64.
+const INLINE_SCRIPT_LIMIT = 4096;
+
 type CommandOutputHandler = (chunk: { type: string; data?: string; code?: number }) => void;
 
 const encodeScript = (value: string) => btoa(unescape(encodeURIComponent(value)));
 
+// Stage a shell script to a temp file. Returns the path bash should execute,
+// plus a cleanup snippet to remove it. In browser/sim mode returns empty path
+// so callers fall back to inline execution.
+const stageScript = async (
+  script: string,
+  tag: string,
+): Promise<{ path: string; cleanup: string } | null> => {
+  if (!isElectron()) return null;
+  const platform = await coreAPI.getPlatform();
+  const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const fileName = `ainoval-${tag}-${stamp}.sh`;
+
+  if (platform.isWindows) {
+    // Write under %USERPROFILE%\.ainoval\tmp, then translate to /mnt/<drive>/...
+    const dir = `${platform.homeDir}\\.ainoval\\tmp`;
+    const writePath = `${dir}\\${fileName}`;
+    await coreAPI.mkdir(dir);
+    const wrote = await coreAPI.writeFile(writePath, script);
+    if (!wrote.success) return null;
+    const drive = writePath[0].toLowerCase();
+    const rest = writePath.slice(2).replace(/\\/g, '/');
+    const execPath = `/mnt/${drive}${rest}`;
+    return { path: execPath, cleanup: `rm -f "${execPath}" 2>/dev/null || true` };
+  }
+
+  const writePath = `/tmp/${fileName}`;
+  const wrote = await coreAPI.writeFile(writePath, script);
+  if (!wrote.success) return null;
+  return { path: writePath, cleanup: `rm -f "${writePath}" 2>/dev/null || true` };
+};
+
 const buildHermesShellCommand = async (script: string): Promise<string> => {
   const platform = await coreAPI.getPlatform();
-  const b64 = encodeScript(script);
-  const decodeCmd = `echo ${b64} | base64 -d | bash`;
-  return platform.isWindows ? `wsl bash -lc "${decodeCmd}"` : `bash -lc "${decodeCmd}"`;
+
+  // Small scripts: inline via base64 (fast, no disk I/O).
+  if (script.length <= INLINE_SCRIPT_LIMIT) {
+    const b64 = encodeScript(script);
+    const decodeCmd = `echo ${b64} | base64 -d | bash`;
+    return platform.isWindows ? `wsl bash -lc "${decodeCmd}"` : `bash -lc "${decodeCmd}"`;
+  }
+
+  // Large scripts: stage to disk to avoid ENAMETOOLONG on the spawn argv.
+  const staged = await stageScript(script, 'hermes');
+  if (!staged) {
+    // Staging failed (browser mode or fs error) — fall back to inline and hope.
+    const b64 = encodeScript(script);
+    const decodeCmd = `echo ${b64} | base64 -d | bash`;
+    return platform.isWindows ? `wsl bash -lc "${decodeCmd}"` : `bash -lc "${decodeCmd}"`;
+  }
+
+  const exec = `bash ${staged.path}; __rc=$?; ${staged.cleanup}; exit $__rc`;
+  // Use single-quoted -lc payload; staged.path contains no quotes/spaces.
+  return platform.isWindows ? `wsl bash -lc '${exec}'` : `bash -lc '${exec}'`;
 };
 
 const runHermesShell = async (
@@ -35,7 +89,7 @@ const runHermesCli = async (
   return runHermesShell(
     [
       'set -e',
-      'export PATH="$HOME/.local/bin:$PATH"',
+      'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
       'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
       'echo "[hermes] using $(command -v hermes)"',
       command,
@@ -212,7 +266,6 @@ export const hermesAPI = {
    *  On Windows we always run inside WSL because hermes-agent is not published
    *  to PyPI and requires the install script (which expects a POSIX shell). */
   async install(extras?: string[], onOutput?: CommandOutputHandler): Promise<CommandResult> {
-    const platform = await coreAPI.getPlatform();
     const wantsExtras = !!(extras && extras.length > 0);
     const extrasFlag = wantsExtras ? `[${extras!.join(',')}]` : '';
 
@@ -326,25 +379,8 @@ export const hermesAPI = {
     // Use `set -e` so any failed step aborts immediately with a clear exit code.
     const fullCmd = ['set -e', unattendedEnv, ensurePip, dl, runScript].join('\n');
 
-    // Encode the whole payload as base64 to completely bypass shell quoting
-    // issues. The base64 string is alphanumeric + `+/=` so it survives any
-    // shell unscathed. We then decode + execute it inside bash.
-    // Use btoa (browser-safe) since this code runs in Electron's renderer
-    // process where Node's Buffer is not available.
-    const toB64 = (s: string) => btoa(unescape(encodeURIComponent(s)));
-    const b64 = toB64(fullCmd);
-
-    // IMPORTANT: on Windows, `exec` with `shell: true` uses cmd.exe, which
-    // does NOT treat single quotes as quoting — it treats them as literal
-    // characters. So `wsl bash -lc '...'` would split on spaces. We must
-    // use double quotes for the outer shell (cmd-friendly) and rely on the
-    // base64 payload being whitespace/quote-free.
-    const decodeCmd = `echo ${b64} | base64 -d | bash`;
-
     // Extras must install into the same venv, from the LOCAL CHECKOUT that
     // the official install script clones to ~/.hermes/hermes-agent.
-    // hermes-agent is NOT published to PyPI, so we install editable from disk
-    // and pass the extras list as `.[extra1,extra2]`.
     const extrasCmd = (extrasFlagInner: string) => [
       'set -e',
       'HERMES_SRC="$HOME/.hermes/hermes-agent"',
@@ -361,54 +397,14 @@ export const hermesAPI = {
       `"$PIP" install --upgrade -e "$HERMES_SRC${extrasFlagInner}"`,
     ].join('\n');
 
-    if (platform.isWindows) {
-      const baseResult = await coreAPI.runCommandStream(
-        `wsl bash -lc "${decodeCmd}"`,
-        { timeout: 600000 },
-        onOutput,
-      );
-      if (!baseResult.success) return baseResult;
-      if (!extrasFlag) return finalizeInstallVerification(baseResult, onOutput);
-      const extrasB64 = toB64(extrasCmd(extrasFlag));
-      const extrasResult = await coreAPI.runCommandStream(
-        `wsl bash -lc "echo ${extrasB64} | base64 -d | bash"`,
-        { timeout: 300000 },
-        onOutput,
-      );
-      return extrasResult.success ? finalizeInstallVerification(extrasResult, onOutput) : extrasResult;
-    }
-
-    if (platform.isWSL) {
-      const baseResult = await coreAPI.runCommandStream(
-        `bash -lc "${decodeCmd}"`,
-        { timeout: 600000 },
-        onOutput,
-      );
-      if (!baseResult.success) return baseResult;
-      if (!extrasFlag) return finalizeInstallVerification(baseResult, onOutput);
-      const extrasB64 = toB64(extrasCmd(extrasFlag));
-      const extrasResult = await coreAPI.runCommandStream(
-        `bash -lc "echo ${extrasB64} | base64 -d | bash"`,
-        { timeout: 300000 },
-        onOutput,
-      );
-      return extrasResult.success ? finalizeInstallVerification(extrasResult, onOutput) : extrasResult;
-    }
-
-    // macOS / Linux
-    const baseResult = await coreAPI.runCommandStream(
-      `bash -c "${decodeCmd}"`,
-      { timeout: 600000 },
-      onOutput,
-    );
+    // runHermesShell auto-stages large scripts to a temp file, preventing
+    // ENAMETOOLONG on the spawn argv (the install payload is multi-KB and
+    // combined with the Windows PATH it overflows OS limits when inlined).
+    const baseResult = await runHermesShell(fullCmd, { timeout: 600000 }, onOutput);
     if (!baseResult.success) return baseResult;
     if (!extrasFlag) return finalizeInstallVerification(baseResult, onOutput);
-    const extrasB64 = toB64(extrasCmd(extrasFlag));
-    const extrasResult = await coreAPI.runCommandStream(
-      `bash -c "echo ${extrasB64} | base64 -d | bash"`,
-      { timeout: 300000 },
-      onOutput,
-    );
+
+    const extrasResult = await runHermesShell(extrasCmd(extrasFlag), { timeout: 300000 }, onOutput);
     return extrasResult.success ? finalizeInstallVerification(extrasResult, onOutput) : extrasResult;
   },
 

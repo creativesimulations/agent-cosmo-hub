@@ -17,24 +17,66 @@ const KEYCHAIN_SERVICE = 'Ainoval';
 // Encrypted secrets store (used when keytar is unavailable)
 const SAFESTORAGE_FILE = path.join(os.homedir(), '.ainoval', 'secrets.enc');
 
+// Dedupe a PATH-style string while preserving order. Windows PATHs grow
+// huge over time (especially when this app is restarted), and Node's spawn
+// fails with ENAMETOOLONG once the combined env block + argv exceeds the
+// OS limit (~32 KB on Windows, 128 KB per-string on Linux).
+function dedupePath(value, sep) {
+  if (!value) return value;
+  const seen = new Set();
+  const out = [];
+  for (const raw of value.split(sep)) {
+    const part = raw.trim();
+    if (!part) continue;
+    const key = process.platform === 'win32' ? part.toLowerCase() : part;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(part);
+  }
+  return out.join(sep);
+}
+
 function buildCommandEnv(extraEnv = {}) {
   const env = { ...process.env, ...extraEnv };
+  const sep = process.platform === 'win32' ? ';' : ':';
 
-  if (process.platform !== 'win32') return env;
+  if (process.platform === 'win32') {
+    try {
+      const { execSync } = require('child_process');
+      const freshPath = execSync(
+        'powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable(\'Path\', \'Machine\') + \';\' + [Environment]::GetEnvironmentVariable(\'Path\', \'User\')"',
+        { timeout: 5000 }
+      ).toString().trim();
 
-  try {
-    const { execSync } = require('child_process');
-    const freshPath = execSync(
-      'powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable(\'Path\', \'Machine\') + \';\' + [Environment]::GetEnvironmentVariable(\'Path\', \'User\')"',
-      { timeout: 5000 }
-    ).toString().trim();
-
-    if (freshPath) {
-      env.PATH = freshPath;
-      env.Path = freshPath;
+      if (freshPath) {
+        env.PATH = freshPath;
+        env.Path = freshPath;
+      }
+    } catch (e) {
+      // Fallback: keep the existing PATH
     }
-  } catch (e) {
-    // Fallback: keep the existing PATH
+  }
+
+  // Dedupe PATH on every platform — protects against ENAMETOOLONG when the
+  // env block balloons (duplicate entries, repeated app launches, etc.)
+  if (env.PATH) env.PATH = dedupePath(env.PATH, sep);
+  if (env.Path) env.Path = dedupePath(env.Path, sep);
+
+  // Hard cap: if PATH is still pathologically large, truncate to the first
+  // 8 KB worth of entries. Better to lose obscure tools than crash the spawn.
+  const MAX_PATH_BYTES = 8192;
+  if (env.PATH && Buffer.byteLength(env.PATH, 'utf8') > MAX_PATH_BYTES) {
+    const parts = env.PATH.split(sep);
+    const kept = [];
+    let bytes = 0;
+    for (const p of parts) {
+      const add = Buffer.byteLength(p, 'utf8') + 1;
+      if (bytes + add > MAX_PATH_BYTES) break;
+      kept.push(p);
+      bytes += add;
+    }
+    env.PATH = kept.join(sep);
+    if (env.Path) env.Path = env.PATH;
   }
 
   return env;
