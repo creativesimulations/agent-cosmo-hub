@@ -1,4 +1,5 @@
 import { coreAPI } from './core';
+import { secretsStore } from './secretsStore';
 import type { CommandResult } from './types';
 
 const HERMES_DIR = '~/.hermes';
@@ -187,13 +188,17 @@ export const hermesAPI = {
 
   // ─── Agent lifecycle ──────────────────────────────────────
 
-  /** Start the agent (interactive mode in a terminal) */
+  /** Start the agent (interactive mode in a terminal).
+   *  Decrypts secrets and materializes ~/.hermes/.env (chmod 600) right
+   *  before launch, so plaintext secrets only exist on disk while running. */
   async start(): Promise<CommandResult> {
+    await secretsStore.materializeEnv();
     return coreAPI.runCommand('hermes', { timeout: 10000 });
   },
 
   /** Start the messaging gateway */
   async startGateway(): Promise<CommandResult> {
+    await secretsStore.materializeEnv();
     return coreAPI.runCommand('hermes gateway start', { timeout: 30000 });
   },
 

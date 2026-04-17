@@ -40,9 +40,19 @@ declare global {
       getPlatform: () => Promise<PlatformInfo>;
       fileExists: (path: string) => Promise<boolean>;
       readFile: (path: string) => Promise<{ success: boolean; content?: string; error?: string }>;
-      writeFile: (path: string, content: string) => Promise<{ success: boolean; error?: string }>;
+      writeFile: (path: string, content: string, options?: { mode?: number }) => Promise<{ success: boolean; error?: string }>;
       mkdir: (path: string) => Promise<{ success: boolean; error?: string }>;
       getDiskSpace: () => Promise<DiskSpaceInfo>;
+
+      // Secure secrets storage
+      secretsBackend: () => Promise<{ backend: string; label: string }>;
+      secretsList: () => Promise<{ success: boolean; backend?: string; keys: string[]; error?: string }>;
+      secretsGet: (key: string) => Promise<{ success: boolean; value?: string; error?: string }>;
+      secretsSet: (key: string, value: string) => Promise<{ success: boolean; backend?: string; error?: string }>;
+      secretsDelete: (key: string) => Promise<{ success: boolean; error?: string }>;
+      secretsMaterializeEnv: (envPath?: string) => Promise<{ success: boolean; count?: number; path?: string; error?: string }>;
+      secretsMigrateFromEnv: (envPath?: string) => Promise<{ success: boolean; migrated?: number; keys?: string[]; error?: string }>;
+
       isElectron: boolean;
     };
   }

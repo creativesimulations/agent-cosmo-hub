@@ -9,8 +9,15 @@ export type { CommandResult, PlatformInfo } from './types';
 import { coreAPI } from './core';
 import { prereqAPI } from './prereqs';
 import { hermesAPI } from './hermes';
+import { secretsStore } from './secretsStore';
+
+export { secretsStore } from './secretsStore';
+export type { SecretsBackend, BackendInfo } from './secretsStore';
 
 export const systemAPI = {
+  // Secure secrets store (keychain → safeStorage → plaintext)
+  secrets: secretsStore,
+
   // Core platform
   getPlatform: coreAPI.getPlatform.bind(coreAPI),
   runCommand: coreAPI.runCommand.bind(coreAPI),
