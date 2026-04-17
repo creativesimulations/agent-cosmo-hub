@@ -1,5 +1,6 @@
 import { Outlet } from "react-router-dom";
 import AppSidebar from "./AppSidebar";
+import InstallStatusPill from "@/components/install/InstallStatusPill";
 
 const AppLayout = () => {
   return (
@@ -8,6 +9,7 @@ const AppLayout = () => {
       <main className="flex-1 overflow-auto">
         <Outlet />
       </main>
+      <InstallStatusPill />
     </div>
   );
 };
