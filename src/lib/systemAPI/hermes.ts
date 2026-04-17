@@ -125,13 +125,17 @@ export const hermesAPI = {
     // base64 payload being whitespace/quote-free.
     const decodeCmd = `echo ${b64} | base64 -d | bash`;
 
+    // Extras must install into the same venv we just created.
+    const extrasCmd = (extrasFlagInner: string) =>
+      `"$HOME/.hermes/venv/bin/pip" install --upgrade 'hermes-agent${extrasFlagInner}'`;
+
     if (platform.isWindows) {
       const baseResult = await coreAPI.runCommand(
         `wsl bash -lc "${decodeCmd}"`,
         { timeout: 600000 }
       );
       if (!baseResult.success || !extrasFlag) return baseResult;
-      const extrasB64 = toB64(`python3 -m pip install --upgrade 'hermes-agent${extrasFlag}'`);
+      const extrasB64 = toB64(extrasCmd(extrasFlag));
       return coreAPI.runCommand(
         `wsl bash -lc "echo ${extrasB64} | base64 -d | bash"`,
         { timeout: 300000 }
@@ -144,7 +148,7 @@ export const hermesAPI = {
         { timeout: 600000 }
       );
       if (!baseResult.success || !extrasFlag) return baseResult;
-      const extrasB64 = toB64(`python3 -m pip install --upgrade 'hermes-agent${extrasFlag}'`);
+      const extrasB64 = toB64(extrasCmd(extrasFlag));
       return coreAPI.runCommand(
         `bash -lc "echo ${extrasB64} | base64 -d | bash"`,
         { timeout: 300000 }
@@ -157,18 +161,26 @@ export const hermesAPI = {
       { timeout: 600000 }
     );
     if (!baseResult.success || !extrasFlag) return baseResult;
+    const extrasB64 = toB64(extrasCmd(extrasFlag));
     return coreAPI.runCommand(
-      `python3 -m pip install --upgrade "hermes-agent${extrasFlag}"`,
+      `bash -c "echo ${extrasB64} | base64 -d | bash"`,
       { timeout: 300000 }
     );
   },
 
-  /** Alternative: install via pip (uses WSL on Windows) */
+  /** Alternative: install via pip into the dedicated venv (uses WSL on Windows) */
   async installViaPip(): Promise<CommandResult> {
     const platform = await coreAPI.getPlatform();
-    const cmd = platform.isWindows
-      ? `wsl bash -lc "python3 -m pip install --upgrade hermes-agent"`
-      : 'python3 -m pip install --upgrade hermes-agent';
+    const script =
+      'set -e; mkdir -p "$HOME/.hermes"; ' +
+      '[ -x "$HOME/.hermes/venv/bin/python" ] || python3 -m venv "$HOME/.hermes/venv"; ' +
+      '"$HOME/.hermes/venv/bin/pip" install --upgrade pip wheel setuptools; ' +
+      '"$HOME/.hermes/venv/bin/pip" install --upgrade hermes-agent; ' +
+      'mkdir -p "$HOME/.local/bin"; ' +
+      'ln -sf "$HOME/.hermes/venv/bin/hermes" "$HOME/.local/bin/hermes"';
+    const b64 = btoa(unescape(encodeURIComponent(script)));
+    const decode = `echo ${b64} | base64 -d | bash`;
+    const cmd = platform.isWindows ? `wsl bash -lc "${decode}"` : `bash -lc "${decode}"`;
     return coreAPI.runCommand(cmd, { timeout: 300000 });
   },
 
