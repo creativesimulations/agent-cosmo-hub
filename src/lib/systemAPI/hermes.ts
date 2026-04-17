@@ -2,9 +2,9 @@ import { coreAPI } from './core';
 import { secretsStore } from './secretsStore';
 import type { CommandResult } from './types';
 
-const HERMES_DIR = '~/.hermes';
-const HERMES_ENV = '~/.hermes/.env';
-const HERMES_CONFIG = '~/.hermes/config.yaml';
+const HERMES_DIR = '$HOME/.hermes';
+const HERMES_ENV = '$HOME/.hermes/.env';
+const HERMES_CONFIG = '$HOME/.hermes/config.yaml';
 const INSTALL_SCRIPT = 'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh';
 
 type CommandOutputHandler = (chunk: { type: string; data?: string; code?: number }) => void;
