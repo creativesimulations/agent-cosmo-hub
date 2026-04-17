@@ -224,23 +224,56 @@ export const prereqAPI = {
    */
   async installFfmpeg(): Promise<CommandResult> {
     const platform = await coreAPI.getPlatform();
+
+    // Helper: install ffmpeg inside WSL via passwordless apt. The agent runs
+    // in WSL, so installing on the Windows host alone (winget) doesn't always
+    // make ffmpeg discoverable to the Python process inside Linux.
+    const installInsideWSL = async (wrapper: (inner: string) => string): Promise<CommandResult> => {
+      const script = [
+        'set -e',
+        'export DEBIAN_FRONTEND=noninteractive',
+        'if command -v ffmpeg >/dev/null 2>&1; then echo "[ffmpeg] already installed"; exit 0; fi',
+        'echo "[ffmpeg] trying passwordless apt-get..."',
+        'if sudo -n true 2>/dev/null; then',
+        '  sudo -n apt-get update 2>&1 | tail -3 || true',
+        '  sudo -n apt-get install -y ffmpeg 2>&1 | tail -10',
+        'else',
+        '  echo "[ffmpeg] no passwordless sudo available" >&2',
+        '  echo "Open your WSL/Ubuntu terminal and run:" >&2',
+        '  echo "  sudo apt update && sudo apt install -y ffmpeg" >&2',
+        '  exit 1',
+        'fi',
+        'command -v ffmpeg >/dev/null 2>&1 || { echo "[ffmpeg] install did not produce a binary" >&2; exit 1; }',
+        'echo "[ffmpeg] installed: $(ffmpeg -version 2>/dev/null | head -1)"',
+      ].join('\n');
+      const b64 = btoa(unescape(encodeURIComponent(script)));
+      return coreAPI.runCommand(wrapper(`echo ${b64} | base64 -d | bash`), { timeout: 600000 });
+    };
+
     if (platform.isWindows) {
-      return coreAPI.runCommand(
+      // Install inside WSL where the agent actually runs.
+      const wslResult = await installInsideWSL((inner) => `wsl bash -lc "${inner}"`);
+      if (wslResult.success) return wslResult;
+      // Fallback: try winget on the host so at least ffmpeg.exe is on the WSL
+      // PATH via interop. Better than nothing.
+      const wingetResult = await coreAPI.runCommand(
         'winget install --id=Gyan.FFmpeg -e --accept-package-agreements --accept-source-agreements',
         { timeout: 600000 }
       );
+      if (wingetResult.success) return wingetResult;
+      return {
+        success: false,
+        stdout: wslResult.stdout,
+        stderr:
+          (wslResult.stderr || '').trim() +
+          '\n\nManual fix: open WSL/Ubuntu and run:\n  sudo apt update && sudo apt install -y ffmpeg',
+        code: wslResult.code ?? 1,
+      };
     }
     if (platform.isMac) {
       return coreAPI.runCommand('brew install ffmpeg', { timeout: 600000 });
     }
-    // Linux / WSL — sudo required, can't do unattended.
-    return {
-      success: false,
-      stdout: '',
-      stderr:
-        'ffmpeg cannot be installed automatically on Linux/WSL because it requires sudo. ' +
-        'Please run `sudo apt install ffmpeg` (or your distro equivalent) in a terminal, then retry.',
-      code: 1,
-    };
+    // Native Linux / WSL session — try passwordless apt, then surface manual cmd.
+    return installInsideWSL((inner) => `bash -lc "${inner}"`);
   },
 };
