@@ -415,8 +415,23 @@ const Index = () => {
 
                     {installing && (
                       <div className="space-y-1">
-                        <Progress value={installProgress} className="h-1" />
-                        <p className="text-xs text-muted-foreground text-right">{installProgress}%</p>
+                        <div className="relative">
+                          <Progress value={installProgress} className="h-1" />
+                          {installProgress >= 90 && (
+                            <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-full">
+                              <div className="h-full w-1/3 bg-primary/40 animate-[install-shimmer_1.6s_ease-in-out_infinite]" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span className="flex items-center gap-1.5">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            {installProgress >= 90
+                              ? "Installing dependencies — this can take a few minutes…"
+                              : "Working…"}
+                          </span>
+                          <span>{installProgress}%</span>
+                        </div>
                       </div>
                     )}
 
