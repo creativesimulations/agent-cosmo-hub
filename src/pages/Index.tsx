@@ -152,8 +152,8 @@ const Index = () => {
       setInstallProgress((prev) => Math.min(prev + 2, 90));
       setInstallOutput((prev) => {
         const messages = [
-          "Checking Python version...",
-          "Creating virtual environment...",
+          "Verifying Python and pip...",
+          "Downloading installer script...",
           "Installing agent framework and dependencies...",
           ...(selectedFeatures.includes("voice") ? ["Installing ffmpeg for voice support..."] : []),
           "Setting up PATH...",

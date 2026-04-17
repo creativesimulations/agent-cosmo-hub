@@ -8,64 +8,59 @@ const INSTALL_SCRIPT = 'https://raw.githubusercontent.com/NousResearch/hermes-ag
 
 /** Hermes Agent installation, configuration, and lifecycle */
 export const hermesAPI = {
-  /** Install the agent using the official install script */
+  /** Install the agent using the official install script.
+   *  On Windows we always run inside WSL because hermes-agent is not published
+   *  to PyPI and requires the install script (which expects a POSIX shell). */
   async install(extras?: string[]): Promise<CommandResult> {
     const platform = await coreAPI.getPlatform();
+    const extrasAnswer = extras && extras.length > 0 ? 'y' : 'n';
+    const extrasFlag = extras && extras.length > 0 ? `[${extras.join(',')}]` : '';
 
     if (platform.isWindows) {
-      // Windows: use pip directly (requires Python already installed)
-      const extrasStr = extras && extras.length > 0 ? `[${extras.join(',')}]` : '';
-      return coreAPI.runCommand(
-        `pip install "hermes-agent${extrasStr}"`,
+      // Run install script inside WSL. Use bash -lc so the user's profile
+      // (PATH, pyenv, etc.) is loaded.
+      const baseResult = await coreAPI.runCommand(
+        `wsl bash -lc "echo ${extrasAnswer} | curl -fsSL ${INSTALL_SCRIPT} | bash"`,
         { timeout: 600000 }
+      );
+      if (!baseResult.success || !extrasFlag) return baseResult;
+      return coreAPI.runCommand(
+        `wsl bash -lc "python3 -m pip install --upgrade 'hermes-agent${extrasFlag}'"`,
+        { timeout: 300000 }
       );
     }
 
     if (platform.isWSL) {
-      // WSL: run install script inside WSL
-      if (extras && extras.length > 0) {
-        const baseResult = await coreAPI.runCommand(
-          `wsl bash -c "echo y | curl -fsSL ${INSTALL_SCRIPT} | bash"`,
-          { timeout: 600000 }
-        );
-        if (!baseResult.success) return baseResult;
-        const extrasStr = extras.join(',');
-        return coreAPI.runCommand(
-          `wsl bash -c "pip install 'hermes-agent[${extrasStr}]'"`,
-          { timeout: 300000 }
-        );
-      }
-      return coreAPI.runCommand(
-        `wsl bash -c "echo n | curl -fsSL ${INSTALL_SCRIPT} | bash"`,
-        { timeout: 600000 }
-      );
-    }
-
-    // macOS / Linux: use echo to pipe answers (cross-platform alternative to `yes`)
-    if (extras && extras.length > 0) {
       const baseResult = await coreAPI.runCommand(
-        `echo y | curl -fsSL ${INSTALL_SCRIPT} | bash`,
+        `bash -lc "echo ${extrasAnswer} | curl -fsSL ${INSTALL_SCRIPT} | bash"`,
         { timeout: 600000 }
       );
-      if (!baseResult.success) return baseResult;
-      const extrasStr = extras.join(',');
+      if (!baseResult.success || !extrasFlag) return baseResult;
       return coreAPI.runCommand(
-        `pip install "hermes-agent[${extrasStr}]"`,
+        `bash -lc "python3 -m pip install --upgrade 'hermes-agent${extrasFlag}'"`,
         { timeout: 300000 }
       );
     }
-    return coreAPI.runCommand(
-      `echo n | curl -fsSL ${INSTALL_SCRIPT} | bash`,
+
+    // macOS / Linux
+    const baseResult = await coreAPI.runCommand(
+      `echo ${extrasAnswer} | curl -fsSL ${INSTALL_SCRIPT} | bash`,
       { timeout: 600000 }
+    );
+    if (!baseResult.success || !extrasFlag) return baseResult;
+    return coreAPI.runCommand(
+      `python3 -m pip install --upgrade "hermes-agent${extrasFlag}"`,
+      { timeout: 300000 }
     );
   },
 
-  /** Alternative: install via pip */
+  /** Alternative: install via pip (uses WSL on Windows) */
   async installViaPip(): Promise<CommandResult> {
-    return coreAPI.runCommand(
-      'pip install hermes-agent',
-      { timeout: 300000 }
-    );
+    const platform = await coreAPI.getPlatform();
+    const cmd = platform.isWindows
+      ? `wsl bash -lc "python3 -m pip install --upgrade hermes-agent"`
+      : 'python3 -m pip install --upgrade hermes-agent';
+    return coreAPI.runCommand(cmd, { timeout: 300000 });
   },
 
   /** Run hermes doctor to verify installation */
