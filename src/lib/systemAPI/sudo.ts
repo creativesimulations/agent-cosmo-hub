@@ -100,10 +100,10 @@ export const sudoAPI = {
   /** Install one or more apt packages with the given password. */
   async aptInstall(packages: string[], password: string): Promise<CommandResult> {
     if (packages.length === 0) return { success: true, stdout: '', stderr: '', code: 0 };
-    const pkgList = packages.map((p) => p.replace(/[^a-zA-Z0-9._+-]/g, '')).join(' ');
+    const safe = packages.map((p) => p.replace(/[^a-zA-Z0-9._+-]/g, ''));
     // apt-get update first (best-effort — failures are okay if cache is recent).
-    await runAptWithPassword('update', password, 180000);
-    return runAptWithPassword(`install -y ${pkgList}`, password, 600000);
+    await runAptWithPassword(['update'], password, 180000);
+    return runAptWithPassword(['install', ...safe], password, 600000);
   },
 
   /**
