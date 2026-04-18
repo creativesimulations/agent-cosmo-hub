@@ -71,15 +71,72 @@ export const secretsStore = {
   /**
    * Decrypt all stored secrets and write them to ~/.hermes/.env (chmod 600).
    * Call this immediately before launching the agent.
+   *
+   * IMPORTANT: On Windows the agent lives inside WSL at
+   * \\wsl$\<distro>\home\<user>\.hermes — NOT under C:\Users\<user>\.
+   * We therefore write the .env via `wsl bash -lc` so it lands in the
+   * Linux $HOME, not the Windows profile (where the hermes CLI can't see it).
+   * On macOS/Linux the OS home directory matches, so a direct shell write works.
    */
   async materializeEnv(): Promise<{ success: boolean; count?: number; path?: string }> {
-    if (isElectron()) {
-      const platform = await coreAPI.getPlatform();
-      return window.electronAPI!.secretsMaterializeEnv(
-        platform.isWindows ? undefined : `${platform.homeDir}/.hermes/.env`
-      );
-    }
-    return { success: true, count: memoryStore.size };
+    if (!isElectron()) return { success: true, count: memoryStore.size };
+
+    // Collect all secrets in the renderer (we already have IPC for this).
+    const { keys } = await this.list();
+    const entries = (await Promise.all(
+      keys.map(async (k) => [k, await this.get(k)] as const),
+    )).filter(([, v]) => v !== '');
+
+    const platform = await coreAPI.getPlatform();
+    const useWsl = platform.isWindows;
+
+    // Build a heredoc-safe script that writes ~/.hermes/.env atomically with chmod 600.
+    // We base64-encode each value so quotes/newlines/backticks can't break out.
+    const encoded = entries.map(([k, v]) => {
+      const b64 = btoa(unescape(encodeURIComponent(v)));
+      return `${k}|${b64}`;
+    }).join('\n');
+
+    const payloadB64 = btoa(unescape(encodeURIComponent(encoded)));
+    const script = [
+      'set -e',
+      'TARGET="$HOME/.hermes/.env"',
+      'mkdir -p "$(dirname "$TARGET")"',
+      // Preserve any existing non-managed lines (comments, user-added keys).
+      'PRESERVED=""',
+      'if [ -f "$TARGET" ]; then',
+      `  MANAGED_KEYS="${entries.map(([k]) => k).join(' ')}"`,
+      '  PRESERVED=$(awk -v keys="$MANAGED_KEYS" \'',
+      '    BEGIN { n=split(keys, arr, " "); for (i=1;i<=n;i++) drop[arr[i]]=1 }',
+      '    /^[[:space:]]*#/ || /^[[:space:]]*$/ { print; next }',
+      '    { eq=index($0, "="); if (eq<2) { print; next } k=substr($0,1,eq-1); gsub(/^[ \\t]+|[ \\t]+$/, "", k); if (!(k in drop)) print }',
+      '  \' "$TARGET")',
+      'fi',
+      '{',
+      '  if [ -n "$PRESERVED" ]; then printf "%s\\n" "$PRESERVED"; fi',
+      '  echo "# ─── Managed by Ainoval (do not edit by hand) ───"',
+      `  echo "${payloadB64}" | base64 -d | while IFS='|' read -r key b64v; do`,
+      '    [ -z "$key" ] && continue',
+      '    val=$(echo "$b64v" | base64 -d)',
+      '    # Escape backslashes and double-quotes for the .env value',
+      '    esc=$(printf "%s" "$val" | sed -e \'s/\\\\/\\\\\\\\/g\' -e \'s/"/\\\\"/g\')',
+      '    printf "%s=\\"%s\\"\\n" "$key" "$esc"',
+      '  done',
+      '} > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"',
+      'chmod 600 "$TARGET" || true',
+      'echo "[materialize] wrote $TARGET"',
+    ].join('\n');
+
+    const wrappedB64 = btoa(unescape(encodeURIComponent(script)));
+    const decode = `echo ${wrappedB64} | base64 -d | bash`;
+    const cmd = useWsl ? `wsl bash -lc "${decode}"` : `bash -lc "${decode}"`;
+
+    const result = await coreAPI.runCommand(cmd, { timeout: 30000 });
+    return {
+      success: result.success,
+      count: entries.length,
+      path: useWsl ? '\\\\wsl$\\<distro>\\home\\<user>\\.hermes\\.env' : `${platform.homeDir}/.hermes/.env`,
+    };
   },
 
   /**
