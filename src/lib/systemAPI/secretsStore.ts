@@ -140,14 +140,53 @@ export const secretsStore = {
   },
 
   /**
-   * One-shot migration: pull every key out of the plaintext .env into
-   * secure storage. Idempotent — safe to call on app startup.
+   * Heuristic: is this .env entry an actual user secret (API key / token /
+   * password), or just a Hermes config flag like TERMINAL_TIMEOUT or
+   * BROWSERBASE_PROXIES that the installer dropped into .env as a default?
+   *
+   * We deliberately keep the Secrets tab focused on credentials only — config
+   * flags belong in the Config Editor, not in an "encrypted secret" list.
+   */
+  isLikelySecretKey(key: string): boolean {
+    const k = key.toUpperCase();
+    // Allow-list: well-known credential providers we explicitly support.
+    const KNOWN = [
+      'OPENROUTER_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
+      'NOUS_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY', 'GROQ_API_KEY',
+      'MISTRAL_API_KEY', 'COHERE_API_KEY', 'PERPLEXITY_API_KEY',
+      'TELEGRAM_BOT_TOKEN', 'DISCORD_BOT_TOKEN', 'SLACK_BOT_TOKEN',
+      'EXA_API_KEY', 'FIRECRAWL_API_KEY', 'ELEVENLABS_API_KEY',
+      'BROWSERBASE_API_KEY', 'BROWSERBASE_PROJECT_ID',
+      'HUGGINGFACE_API_KEY', 'REPLICATE_API_TOKEN',
+    ];
+    if (KNOWN.includes(k)) return true;
+    // Generic shape match: looks like a credential.
+    if (/(_API_KEY|_SECRET|_TOKEN|_PASSWORD|_PRIVATE_KEY|_ACCESS_KEY)$/.test(k)) return true;
+    return false;
+  },
+
+  /**
+   * One-shot migration: pull credential-shaped keys out of the plaintext .env
+   * into secure storage. Idempotent — safe to call on app startup.
+   *
+   * Skips Hermes config flags (TERMINAL_*, BROWSER_*, *_DEBUG, etc.) so the
+   * Secrets tab only shows actual user credentials.
    *
    * Reads from the agent's actual .env location: on Windows that's inside WSL
    * (\\wsl$\<distro>\home\<user>\.hermes\.env), not the Windows profile.
    */
-  async migrateFromEnv(): Promise<{ success: boolean; migrated?: number }> {
+  async migrateFromEnv(): Promise<{ success: boolean; migrated?: number; cleanedUp?: number }> {
     if (!isElectron()) return { success: true, migrated: 0 };
+
+    // First, prune any non-secret junk that previous versions of this app
+    // imported (TERMINAL_TIMEOUT, BROWSERBASE_PROXIES, *_DEBUG, etc.).
+    const existing = await this.list();
+    let cleanedUp = 0;
+    for (const k of existing.keys) {
+      if (!this.isLikelySecretKey(k)) {
+        if (await this.delete(k)) cleanedUp++;
+      }
+    }
 
     const platform = await coreAPI.getPlatform();
     const useWsl = platform.isWindows;
@@ -162,7 +201,7 @@ export const secretsStore = {
     const decode = `echo ${b64} | base64 -d | bash`;
     const cmd = useWsl ? `wsl bash -lc "${decode}"` : `bash -lc "${decode}"`;
     const read = await coreAPI.runCommand(cmd, { timeout: 15000 });
-    if (!read.success || !read.stdout) return { success: true, migrated: 0 };
+    if (!read.success || !read.stdout) return { success: true, migrated: 0, cleanedUp };
 
     let migrated = 0;
     for (const line of read.stdout.split('\n')) {
@@ -171,13 +210,17 @@ export const secretsStore = {
       const eq = t.indexOf('=');
       if (eq < 1) continue;
       const key = t.substring(0, eq).trim();
+      // Skip non-secret config flags entirely.
+      if (!this.isLikelySecretKey(key)) continue;
       let value = t.substring(eq + 1).trim();
       if ((value.startsWith('"') && value.endsWith('"')) ||
           (value.startsWith("'") && value.endsWith("'"))) {
         value = value.slice(1, -1);
       }
+      // Don't overwrite a non-empty user-entered value with a placeholder.
+      if (!value || /^(your[-_]|placeholder|changeme|xxx)/i.test(value)) continue;
       if (await this.set(key, value)) migrated++;
     }
-    return { success: true, migrated };
+    return { success: true, migrated, cleanedUp };
   },
 };
