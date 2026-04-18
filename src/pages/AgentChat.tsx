@@ -6,6 +6,8 @@ import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { systemAPI } from "@/lib/systemAPI";
+import { toast } from "@/hooks/use-toast";
 
 const CHAT_STORAGE_KEY = "ainoval-agent-chat-history";
 
@@ -63,18 +65,53 @@ const AgentChat = () => {
 
   const sendMessage = async () => {
     if (!input.trim() || isStreaming || !agentConnected) return;
+    const promptText = input.trim();
     const userMsg: Message = {
       id: Date.now().toString(),
       role: "user",
-      content: input.trim(),
+      content: promptText,
       timestamp: new Date(),
     };
-    setMessages((prev) => [...prev, userMsg]);
+    const placeholderId = `${Date.now()}-r`;
+    const placeholder: Message = {
+      id: placeholderId,
+      role: "assistant",
+      content: "",
+      timestamp: new Date(),
+      streaming: true,
+    };
+    setMessages((prev) => [...prev, userMsg, placeholder]);
     setInput("");
     setIsStreaming(true);
 
-    // TODO: Send via agent gateway when connected
-    setIsStreaming(false);
+    try {
+      const result = await systemAPI.chatAgent(promptText);
+      const reply = result.reply || result.stdout?.trim() || "(no response)";
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === placeholderId
+            ? { ...m, content: result.success ? reply : `Error: ${result.stderr || reply}`, streaming: false }
+            : m,
+        ),
+      );
+      if (!result.success) {
+        toast({
+          title: "Agent error",
+          description: result.stderr?.split("\n")[0] || "Failed to get a reply from the agent.",
+          variant: "destructive",
+        });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === placeholderId ? { ...m, content: `Error: ${msg}`, streaming: false } : m,
+        ),
+      );
+      toast({ title: "Agent error", description: msg, variant: "destructive" });
+    } finally {
+      setIsStreaming(false);
+    }
   };
 
   return (

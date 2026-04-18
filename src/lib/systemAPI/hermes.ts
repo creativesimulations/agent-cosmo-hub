@@ -593,6 +593,52 @@ export const hermesAPI = {
     return runHermesCli('hermes gateway start', { timeout: 30000 });
   },
 
+  /** Send a single chat prompt to the agent and return its reply.
+   *  The Hermes CLI is interactive by design (`hermes` opens a REPL), so we
+   *  pipe a single prompt on stdin, then send the REPL's exit command so the
+   *  process terminates and we get stdout. We strip ANSI escapes and the
+   *  REPL's own banner/prompt lines for a clean reply.
+   *
+   *  Notes:
+   *  - Secrets are materialized to ~/.hermes/.env right before invocation
+   *    so OPENROUTER_API_KEY (and friends) are visible to the agent.
+   *  - Timeout is generous (90s) because first-token latency on remote
+   *    providers like OpenRouter can be slow. */
+  async chat(prompt: string, onOutput?: CommandOutputHandler): Promise<CommandResult & { reply?: string }> {
+    await materializeHermesEnv();
+
+    const promptB64 = encodeScript(prompt);
+    const script = [
+      'set -e',
+      'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
+      'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
+      `PROMPT="$(echo ${promptB64} | base64 -d)"`,
+      // Feed prompt + /exit to the REPL on stdin. The trailing /exit ensures
+      // the process terminates instead of waiting for more input.
+      'printf "%s\\n/exit\\n" "$PROMPT" | hermes 2>&1',
+    ].join('\n');
+
+    const result = await runHermesShell(script, { timeout: 90000 }, onOutput);
+
+    // Clean the reply: strip ANSI codes, REPL banner lines, and the prompt echo.
+    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+    const cleaned = stripAnsi(result.stdout || '')
+      .split('\n')
+      .filter((line) => {
+        const t = line.trim();
+        if (!t) return false;
+        // Drop common REPL chrome
+        if (/^(hermes|>|user>|assistant>|>>>)/i.test(t)) return false;
+        if (/^\[hermes\]/.test(t)) return false;
+        if (/welcome|loading|exiting|goodbye/i.test(t)) return false;
+        return true;
+      })
+      .join('\n')
+      .trim();
+
+    return { ...result, reply: cleaned || result.stdout?.trim() || '' };
+  },
+
   /** Write initial config for first-time setup */
   async writeInitialConfig(options: {
     model?: string;

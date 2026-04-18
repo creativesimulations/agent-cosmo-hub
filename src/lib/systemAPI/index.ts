@@ -64,6 +64,7 @@ export const systemAPI = {
   setModel: hermesAPI.setModel.bind(hermesAPI),
   startAgent: hermesAPI.start.bind(hermesAPI),
   startGateway: hermesAPI.startGateway.bind(hermesAPI),
+  chatAgent: hermesAPI.chat.bind(hermesAPI),
   writeInitialConfig: hermesAPI.writeInitialConfig.bind(hermesAPI),
   isConfigured: hermesAPI.isConfigured.bind(hermesAPI),
 };
