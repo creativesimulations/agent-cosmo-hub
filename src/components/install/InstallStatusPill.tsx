@@ -1,8 +1,13 @@
+import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, CheckCircle2, XCircle, ArrowRight } from "lucide-react";
 import { useInstall } from "@/contexts/InstallContext";
 import { cn } from "@/lib/utils";
+
+/** How long the green "Installation is complete" pill stays visible
+ *  after the install finishes successfully (ms). */
+const COMPLETE_AUTO_DISMISS_MS = 10_000;
 
 /**
  * Floating pill shown on every page when an install is running OR finished
@@ -14,6 +19,17 @@ const InstallStatusPill = () => {
   const location = useLocation();
   const { mode, installing, installComplete, installProgress, installOutput, setMode } = useInstall();
 
+  // Auto-dismiss the success pill after a short delay so it doesn't linger.
+  const [dismissedComplete, setDismissedComplete] = useState(false);
+  useEffect(() => {
+    if (!installComplete || installing) {
+      setDismissedComplete(false);
+      return;
+    }
+    const t = window.setTimeout(() => setDismissedComplete(true), COMPLETE_AUTO_DISMISS_MS);
+    return () => window.clearTimeout(t);
+  }, [installComplete, installing]);
+
   // Only render if we're actually in install flow with activity
   const inInstallFlow = mode === "install";
   const hasOutput = installOutput.length > 0;
@@ -23,7 +39,7 @@ const InstallStatusPill = () => {
   // Hide on the home route (where wizard already shows)
   const onHome = location.pathname === "/";
 
-  const visible = inInstallFlow && hasOutput && !onHome;
+  const visible = inInstallFlow && hasOutput && !onHome && !(installComplete && dismissedComplete);
 
   const handleReturn = () => {
     setMode("install");
