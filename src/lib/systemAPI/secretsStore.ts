@@ -142,14 +142,42 @@ export const secretsStore = {
   /**
    * One-shot migration: pull every key out of the plaintext .env into
    * secure storage. Idempotent — safe to call on app startup.
+   *
+   * Reads from the agent's actual .env location: on Windows that's inside WSL
+   * (\\wsl$\<distro>\home\<user>\.hermes\.env), not the Windows profile.
    */
   async migrateFromEnv(): Promise<{ success: boolean; migrated?: number }> {
-    if (isElectron()) {
-      const platform = await coreAPI.getPlatform();
-      return window.electronAPI!.secretsMigrateFromEnv(
-        platform.isWindows ? undefined : `${platform.homeDir}/.hermes/.env`
-      );
+    if (!isElectron()) return { success: true, migrated: 0 };
+
+    const platform = await coreAPI.getPlatform();
+    const useWsl = platform.isWindows;
+
+    // Cat the .env from inside the correct shell environment (WSL on Windows,
+    // native shell elsewhere). Returns nothing if the file is absent.
+    const script = [
+      'TARGET="$HOME/.hermes/.env"',
+      '[ -f "$TARGET" ] && cat "$TARGET" || true',
+    ].join('\n');
+    const b64 = btoa(unescape(encodeURIComponent(script)));
+    const decode = `echo ${b64} | base64 -d | bash`;
+    const cmd = useWsl ? `wsl bash -lc "${decode}"` : `bash -lc "${decode}"`;
+    const read = await coreAPI.runCommand(cmd, { timeout: 15000 });
+    if (!read.success || !read.stdout) return { success: true, migrated: 0 };
+
+    let migrated = 0;
+    for (const line of read.stdout.split('\n')) {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) continue;
+      const eq = t.indexOf('=');
+      if (eq < 1) continue;
+      const key = t.substring(0, eq).trim();
+      let value = t.substring(eq + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (await this.set(key, value)) migrated++;
     }
-    return { success: true, migrated: 0 };
+    return { success: true, migrated };
   },
 };
