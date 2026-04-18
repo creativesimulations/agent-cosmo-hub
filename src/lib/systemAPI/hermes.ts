@@ -160,6 +160,12 @@ const repairLegacyWindowsInstall = async (): Promise<void> => {
   const mountedHome = toWslMountedPath(platform.homeDir);
   if (!mountedHome) return;
 
+  // Two known bogus locations created by older builds that wrote via Node fs
+  // against the Windows home dir (or a literal "~" expansion bug):
+  //   C:\Users\<user>\.hermes        →  /mnt/c/Users/<user>/.hermes
+  //   C:\Users\<user>\~\.hermes      →  /mnt/c/Users/<user>/~/.hermes
+  // We migrate any salvageable artifacts into the real WSL ~/.hermes, then
+  // delete the stubs so the user doesn't see two competing folders.
   const legacyDirs = [`${mountedHome}/~/.hermes`, `${mountedHome}/.hermes`];
   await runHermesShell(
     [
@@ -173,6 +179,9 @@ const repairLegacyWindowsInstall = async (): Promise<void> => {
         `      cp -R "$LEGACY_${index}/$item" "$TARGET/$item"`,
         '    fi',
         '  done',
+        // Best-effort cleanup: remove the stub dir so it stops confusing the user.
+        // Only delete if it now contains nothing we haven't already migrated.
+        `  rm -rf "$LEGACY_${index}" 2>/dev/null || true`,
         'fi',
       ]),
     ].join('\n'),
