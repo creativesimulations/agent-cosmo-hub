@@ -6,6 +6,8 @@ import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { systemAPI } from "@/lib/systemAPI";
+import { toast } from "@/hooks/use-toast";
 
 const CHAT_STORAGE_KEY = "ainoval-agent-chat-history";
 
