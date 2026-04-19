@@ -18,6 +18,7 @@ interface Message {
   timestamp: Date;
   streaming?: boolean;
   missingKey?: { provider: string; envVar: string };
+  diagnostics?: string;
 }
 
 const loadStoredMessages = (): Message[] => {
@@ -100,6 +101,7 @@ const AgentChat = () => {
                     : `Error: ${result.stderr || reply}`,
                 streaming: false,
                 missingKey: result.missingKey,
+                diagnostics: result.diagnostics,
               }
             : m,
         ),
@@ -191,6 +193,14 @@ const AgentChat = () => {
                       <KeyRound className="w-3 h-3 mr-1" />
                       Add {msg.missingKey.envVar}
                     </Button>
+                  )}
+                  {msg.diagnostics && (msg.missingKey || msg.content.startsWith("Error")) && (
+                    <details className="mt-2 text-[11px] text-muted-foreground/70">
+                      <summary className="cursor-pointer hover:text-muted-foreground">Diagnostics</summary>
+                      <pre className="mt-1 p-2 rounded bg-background/40 border border-white/5 font-mono text-[10px] whitespace-pre-wrap">
+{msg.diagnostics}
+                      </pre>
+                    </details>
                   )}
                   <p className="text-[10px] text-muted-foreground mt-1">
                     {msg.timestamp.toLocaleTimeString()}
