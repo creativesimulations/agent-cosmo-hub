@@ -687,20 +687,29 @@ export const hermesAPI = {
       const cfg = await readHermesFile(HERMES_CONFIG);
       const modelLine = cfg.success ? cfg.content?.match(/^\s*model:\s*(.+)\s*$/m)?.[1]?.trim() ?? '' : '';
       const provider = modelLine.split('/')[0]?.toLowerCase() ?? '';
-      const envByProvider: Record<string, { provider: string; envVar: string }> = {
-        openrouter: { provider: 'OpenRouter', envVar: 'OPENROUTER_API_KEY' },
-        openai: { provider: 'OpenAI', envVar: 'OPENAI_API_KEY' },
-        anthropic: { provider: 'Anthropic', envVar: 'ANTHROPIC_API_KEY' },
-        google: { provider: 'Google', envVar: 'GOOGLE_API_KEY' },
-        deepseek: { provider: 'DeepSeek', envVar: 'DEEPSEEK_API_KEY' },
-        nous: { provider: 'Nous Portal', envVar: 'NOUS_API_KEY' },
-      };
-      const candidate = envByProvider[provider] ?? { provider: 'your model provider', envVar: 'OPENROUTER_API_KEY' };
 
-      // Verify the key really is absent before nagging the user.
-      const envFile = await readHermesFile(HERMES_ENV);
-      const keyPresent = envFile.success && new RegExp(`^\\s*${candidate.envVar}\\s*=\\s*\\S`, 'm').test(envFile.content || '');
-      if (!keyPresent) missingKey = candidate;
+      // Local providers don't need a key — never nag.
+      const LOCAL_PROVIDERS = new Set(['ollama', 'local', 'lmstudio', 'llamacpp', 'vllm', 'tgi']);
+      if (!LOCAL_PROVIDERS.has(provider)) {
+        const envByProvider: Record<string, { provider: string; envVar: string }> = {
+          openrouter: { provider: 'OpenRouter', envVar: 'OPENROUTER_API_KEY' },
+          openai: { provider: 'OpenAI', envVar: 'OPENAI_API_KEY' },
+          anthropic: { provider: 'Anthropic', envVar: 'ANTHROPIC_API_KEY' },
+          google: { provider: 'Google', envVar: 'GOOGLE_API_KEY' },
+          deepseek: { provider: 'DeepSeek', envVar: 'DEEPSEEK_API_KEY' },
+          nous: { provider: 'Nous Portal', envVar: 'NOUS_API_KEY' },
+        };
+        const candidate = envByProvider[provider];
+        // Only nag for known cloud providers — avoid wrong "Add OPENROUTER_API_KEY"
+        // suggestions when the model string is unknown or local.
+        if (candidate) {
+          // Verify the key really is absent. Accept KEY=value, KEY="value", KEY='value'.
+          const envFile = await readHermesFile(HERMES_ENV);
+          const keyRe = new RegExp(`^\\s*${candidate.envVar}\\s*=\\s*["']?\\S`, 'm');
+          const keyPresent = envFile.success && keyRe.test(envFile.content || '');
+          if (!keyPresent) missingKey = candidate;
+        }
+      }
     }
 
     return { ...result, reply: cleaned || stripAnsi(result.stdout || '').trim(), missingKey };
