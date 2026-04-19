@@ -11,6 +11,7 @@
 import { isElectron } from './types';
 import { coreAPI } from './core';
 import { agentLogs } from '../diagnostics';
+import { isValidEnvVarName, normalizeEnvVarName } from '../secretPresets';
 
 export type SecretsBackend = 'keychain' | 'safestorage' | 'plaintext' | 'memory';
 
@@ -68,19 +69,41 @@ export const secretsStore = {
   },
 
   async set(key: string, value: string): Promise<boolean> {
+    // Hard-block invalid env var names. Hyphens / spaces / dots break bash
+    // (it tries to execute `OPENROUTER-API-KEY=...` as a command). Callers
+    // should normalize via normalizeEnvVarName() before calling — this is a
+    // last-line safety net.
+    const normalized = normalizeEnvVarName(key);
+    if (!isValidEnvVarName(normalized)) {
+      agentLogs.push({
+        source: 'system',
+        level: 'error',
+        summary: `secretsStore.set(${key}) → REJECTED (invalid env var name)`,
+        detail: `Env var names must match /^[A-Z_][A-Z0-9_]*$/. After normalization: "${normalized}".`,
+      });
+      return false;
+    }
+    if (normalized !== key) {
+      agentLogs.push({
+        source: 'system',
+        level: 'warn',
+        summary: `secretsStore.set: normalized "${key}" → "${normalized}"`,
+        detail: 'Env var names cannot contain hyphens, spaces, or dots — they break bash parsing.',
+      });
+    }
     if (isElectron()) {
-      const r = await window.electronAPI!.secretsSet(key, value);
+      const r = await window.electronAPI!.secretsSet(normalized, value);
       agentLogs.push({
         source: 'system',
         level: r.success ? 'info' : 'error',
         summary: r.success
-          ? `secretsStore.set(${key}) → saved (${value.length} chars)`
-          : `secretsStore.set(${key}) → FAILED`,
+          ? `secretsStore.set(${normalized}) → saved (${value.length} chars)`
+          : `secretsStore.set(${normalized}) → FAILED`,
         detail: r.success ? undefined : `error=${r.error || 'unknown'}`,
       });
       return !!r.success;
     }
-    memoryStore.set(key, value);
+    memoryStore.set(normalized, value);
     return true;
   },
 

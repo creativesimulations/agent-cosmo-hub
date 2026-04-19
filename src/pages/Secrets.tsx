@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
-  KeyRound, Eye, EyeOff, Plus, Trash2, Globe, Shield, Loader2, Save, Lock, AlertTriangle, ArrowDownToLine, RefreshCw,
+  KeyRound, Eye, EyeOff, Plus, Trash2, Globe, Shield, Loader2, Lock, AlertTriangle, ArrowDownToLine, RefreshCw,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { systemAPI, secretsStore, type SecretsBackend } from "@/lib/systemAPI";
+import { findPresetByEnvVar } from "@/lib/secretPresets";
+import SecretForm from "@/components/secrets/SecretForm";
 import { toast } from "sonner";
 
 interface SecretEntry {
@@ -15,18 +17,8 @@ interface SecretEntry {
   revealed?: string;
 }
 
-const KNOWN_KEYS: Record<string, string> = {
-  OPENROUTER_API_KEY: "OpenRouter",
-  OPENAI_API_KEY: "OpenAI",
-  ANTHROPIC_API_KEY: "Anthropic",
-  NOUS_API_KEY: "Nous Portal",
-  TELEGRAM_BOT_TOKEN: "Telegram",
-  DISCORD_BOT_TOKEN: "Discord",
-  SLACK_BOT_TOKEN: "Slack",
-  EXA_API_KEY: "Exa Search",
-  FIRECRAWL_API_KEY: "Firecrawl",
-  ELEVENLABS_API_KEY: "ElevenLabs",
-};
+const labelForEnvVar = (envVar: string): string =>
+  findPresetByEnvVar(envVar)?.label ?? envVar;
 
 const maskValue = (val: string): string => {
   if (!val) return "(empty)";
@@ -42,13 +34,14 @@ const backendStyles: Record<SecretsBackend, { color: string; icon: React.ReactNo
 };
 
 const Secrets = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [keys, setKeys] = useState<SecretEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-  const [newKeyName, setNewKeyName] = useState("");
-  const [newKeyValue, setNewKeyValue] = useState("");
   const [adding, setAdding] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [presetEnvVar, setPresetEnvVar] = useState<string>("");
   const [backend, setBackend] = useState<{ backend: SecretsBackend; label: string } | null>(null);
   const [migrating, setMigrating] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -56,6 +49,17 @@ const Secrets = () => {
   useEffect(() => {
     init();
   }, []);
+
+  // Honor ?addKey=OPENROUTER_API_KEY deep-links from the LLM Config page.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || location.hash.split("?")[1] || "");
+    const requested = params.get("addKey");
+    if (requested) {
+      setPresetEnvVar(requested);
+      setShowAddForm(true);
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location, navigate]);
 
   const init = async () => {
     setLoading(true);
@@ -72,7 +76,7 @@ const Secrets = () => {
         const value = await secretsStore.get(envVar);
         return {
           envVar,
-          provider: KNOWN_KEYS[envVar] || envVar,
+          provider: labelForEnvVar(envVar),
           masked: maskValue(value),
           revealed: value,
         };
@@ -81,8 +85,6 @@ const Secrets = () => {
     setKeys(entries);
   };
 
-  // Push the current secret store into ~/.hermes/.env so the agent can see it.
-  // Called automatically after add/delete and exposed as a manual button.
   const syncToAgent = async (showToast = false) => {
     setSyncing(true);
     const res = await secretsStore.materializeEnv();
@@ -103,18 +105,20 @@ const Secrets = () => {
     setShowKeys((prev) => ({ ...prev, [envVar]: !prev[envVar] }));
   };
 
-  const handleAddKey = async () => {
-    if (!newKeyName || !newKeyValue) return;
+  const handleAddKey = async (envVar: string, value: string) => {
+    if (!envVar || !value) return;
     setAdding(true);
-    const ok = await secretsStore.set(newKeyName, newKeyValue);
+    const ok = await secretsStore.set(envVar, value);
     if (ok) {
-      // Immediately push to ~/.hermes/.env so the agent sees the new key
-      // without the user having to re-run the install wizard.
+      toast.success(`Saved ${envVar}`);
       await syncToAgent(false);
+    } else {
+      toast.error(`Could not save ${envVar}`, {
+        description: "Check the Logs tab — the credential store rejected the write.",
+      });
     }
-    setNewKeyName("");
-    setNewKeyValue("");
     setShowAddForm(false);
+    setPresetEnvVar("");
     await loadKeys();
     setAdding(false);
   };
@@ -225,41 +229,15 @@ const Secrets = () => {
       {showAddForm && (
         <GlassCard className="space-y-3">
           <h3 className="text-sm font-semibold text-foreground">Add New Secret</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Variable Name</label>
-              <Input
-                value={newKeyName}
-                onChange={(e) => setNewKeyName(e.target.value.toUpperCase())}
-                placeholder="OPENAI_API_KEY"
-                className="bg-background/50 border-white/10 font-mono text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Value</label>
-              <Input
-                type="password"
-                value={newKeyValue}
-                onChange={(e) => setNewKeyValue(e.target.value)}
-                placeholder="sk-..."
-                className="bg-background/50 border-white/10 font-mono text-sm"
-              />
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <p className="text-xs text-muted-foreground flex-1">
-              Common: OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN
-            </p>
-            <Button
-              size="sm"
-              onClick={handleAddKey}
-              disabled={!newKeyName || !newKeyValue || adding}
-              className="gradient-primary text-primary-foreground"
-            >
-              {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
-              Save
-            </Button>
-          </div>
+          <SecretForm
+            initialEnvVar={presetEnvVar}
+            saving={adding}
+            onSave={handleAddKey}
+            onCancel={() => {
+              setShowAddForm(false);
+              setPresetEnvVar("");
+            }}
+          />
         </GlassCard>
       )}
 

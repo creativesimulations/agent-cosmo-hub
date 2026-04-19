@@ -358,6 +358,10 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
   };
 
   const managedKeys = new Set(secretEntries.map(([key]) => key));
+  // Valid POSIX env var: letter/underscore + letters/digits/underscores.
+  // Anything else (e.g. OPENROUTER-API-KEY) crashes bash when sourcing .env.
+  const VALID_ENV = /^[A-Za-z_][A-Za-z0-9_]*$/;
+  const droppedInvalid: string[] = [];
   const existing = await readHermesFile(HERMES_ENV);
   const preserved = existing.success && existing.content
     ? existing.content
@@ -376,6 +380,13 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
           const eqIndex = trimmed.indexOf('=');
           if (eqIndex < 1) return true;
           const k = trimmed.slice(0, eqIndex).trim();
+          // PURGE invalid env var names. Without this, a line like
+          // `OPENROUTER-API-KEY=sk-...` survives every sync and bash fails
+          // with "command not found" when the agent sources the file.
+          if (!VALID_ENV.test(k)) {
+            droppedInvalid.push(k);
+            return false;
+          }
           if (managedKeys.has(k)) return false;
           // Drop placeholder rows (KEY=your_key_here etc.) so they can't
           // shadow the managed block when bash sources the file.
@@ -385,6 +396,15 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
         .join('\n')
         .replace(/\n+$/, '')
     : '';
+
+  if (droppedInvalid.length > 0) {
+    agentLogs.push({
+      source: 'system',
+      level: 'warn',
+      summary: `materializeHermesEnv: purged ${droppedInvalid.length} invalid env var line(s)`,
+      detail: `These names contain characters bash can't parse (hyphens, spaces, etc.) and would crash the agent: ${droppedInvalid.join(', ')}. They've been removed from ~/.hermes/.env.`,
+    });
+  }
 
   const managed = secretEntries.map(([key, value]) => `${key}=${quoteEnvValue(value)}`).join('\n');
   const sections = [

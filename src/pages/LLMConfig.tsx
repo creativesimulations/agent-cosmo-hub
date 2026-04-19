@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Cpu, AlertCircle, CheckCircle2, KeyRound, Loader2, Save, RefreshCw, Server } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Cpu, AlertCircle, CheckCircle2, KeyRound, Loader2, Save, RefreshCw, Server, Plus } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +47,7 @@ const runtimeToProvider = (rt: LocalRuntime): LLMProvider => ({
 });
 
 const LLMConfig = () => {
+  const navigate = useNavigate();
   const { connected: agentConnected, refresh: refreshConnection } = useAgentConnection();
   const [loading, setLoading] = useState(true);
   const [model, setModel] = useState<string | null>(null);
@@ -403,11 +405,20 @@ const LLMConfig = () => {
             {!draftProviderHasKey && (
               <div className="flex items-start gap-2 text-xs text-warning bg-warning/10 border border-warning/20 rounded-md p-3">
                 <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                <span>
-                  No API key found for {providerForDraft.label}. Add{" "}
-                  <code className="font-mono">{providerForDraft.envVar}</code> in the Secrets
-                  tab before switching, or the agent will fail to start.
-                </span>
+                <div className="flex-1 space-y-2">
+                  <p>
+                    No API key found for {providerForDraft.label}. The agent expects it as{" "}
+                    <code className="font-mono">{providerForDraft.envVar}</code>.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs border-warning/40 text-warning hover:bg-warning/20 hover:text-warning"
+                    onClick={() => navigate(`/secrets?addKey=${providerForDraft.envVar}`)}
+                  >
+                    <Plus className="w-3 h-3 mr-1" /> Add {providerForDraft.envVar}
+                  </Button>
+                </div>
               </div>
             )}
 
