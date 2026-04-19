@@ -397,6 +397,11 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
 
 /** Hermes Agent installation, configuration, and lifecycle */
 export const hermesAPI = {
+  /** Force-write secrets to ~/.hermes/.env and verify. Used by Diagnostics
+   *  page and the Secrets tab "Sync to agent" button. */
+  async materializeEnv() {
+    return materializeHermesEnv();
+  },
   /** Install the agent using the official install script.
    *  On Windows we always run inside WSL because hermes-agent is not published
    *  to PyPI and requires the install script (which expects a POSIX shell). */
