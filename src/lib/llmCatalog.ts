@@ -71,27 +71,10 @@ export const LLM_PROVIDERS: LLMProvider[] = [
     hint: "DeepSeek V3/R1 — strong agentic reasoning. Get a key at platform.deepseek.com",
     defaultModel: "deepseek/deepseek-chat",
   },
-  {
-    id: "ollama",
-    label: "Ollama (local)",
-    envVar: "",
-    prefix: "",
-    hint: "Run models locally via Ollama (ollama.com). No API key needed. Pick a tool-calling model like llama3.1, qwen2.5, or mistral-nemo.",
-    defaultModel: "ollama/llama3.1:8b",
-    local: true,
-    allowCustomModel: true,
-  },
-  {
-    id: "lmstudio",
-    label: "LM Studio (local)",
-    envVar: "",
-    prefix: "",
-    hint: "Run an OpenAI-compatible server with LM Studio. Use the model id shown in LM Studio's developer tab.",
-    defaultModel: "lmstudio/llama-3.1-8b-instruct",
-    local: true,
-    allowCustomModel: true,
-  },
-];
+  // Local runtimes (Ollama, LM Studio, llama.cpp, vLLM, …) are NOT listed
+  // here — they're detected at runtime by src/lib/localModels.ts and only
+  // shown in the LLM tab when actually running on the user's machine.
+
 
 /**
  * Agentic-only model lists per provider. Do NOT add Hermes 3/4 llama models —
