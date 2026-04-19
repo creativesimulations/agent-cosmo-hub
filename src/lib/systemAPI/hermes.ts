@@ -610,8 +610,8 @@ export const hermesAPI = {
   async chat(
     prompt: string,
     onOutput?: CommandOutputHandler,
-  ): Promise<CommandResult & { reply?: string; missingKey?: { provider: string; envVar: string } }> {
-    await materializeHermesEnv();
+  ): Promise<CommandResult & { reply?: string; diagnostics?: string; missingKey?: { provider: string; envVar: string } }> {
+    const mat = await materializeHermesEnv();
 
     const promptB64 = encodeScript(prompt);
     const script = [
@@ -628,14 +628,24 @@ export const hermesAPI = {
       '  # shellcheck disable=SC1091',
       '  . "$HOME/.hermes/.env"',
       '  set +a',
+      '  echo "[hermes-diag] sourced ~/.hermes/.env ($(wc -l < "$HOME/.hermes/.env") lines)" >&2',
+      'else',
+      '  echo "[hermes-diag] WARNING: ~/.hermes/.env does not exist" >&2',
       'fi',
       // Diagnostic: print which key vars are set (length only, never the value)
-      // so the user can see in the streamed output whether the key reached the CLI.
-      'for v in OPENROUTER_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY NOUS_API_KEY; do',
+      // so the user can see whether the key reached the CLI.
+      'for v in OPENROUTER_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY NOUS_API_KEY DEEPSEEK_API_KEY; do',
       '  eval "val=\\${$v}"',
-      '  if [ -n "$val" ]; then echo "[hermes] $v is set (len=${#val})" >&2; fi',
+      '  if [ -n "$val" ]; then echo "[hermes-diag] $v is set (len=${#val})" >&2; else echo "[hermes-diag] $v is NOT set" >&2; fi',
       'done',
-      'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
+      // Diagnostic: show the configured model so we can see what hermes will use.
+      'if [ -f "$HOME/.hermes/config.yaml" ]; then',
+      '  MODEL_LINE="$(grep -E "^\\s*model:" "$HOME/.hermes/config.yaml" | head -n1)"',
+      '  echo "[hermes-diag] config model: ${MODEL_LINE:-<none>}" >&2',
+      'else',
+      '  echo "[hermes-diag] WARNING: ~/.hermes/config.yaml does not exist" >&2',
+      'fi',
+      'command -v hermes >/dev/null 2>&1 || { echo "[hermes-diag] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
       `PROMPT="$(echo ${promptB64} | base64 -d)"`,
       // Run from ~/.hermes so any relative config lookups also work.
       'cd "$HOME/.hermes" 2>/dev/null || true',
