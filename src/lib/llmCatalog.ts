@@ -113,18 +113,8 @@ export const MODEL_OPTIONS: Record<string, LLMModel[]> = {
     { id: "deepseek/deepseek-chat", label: "DeepSeek V3 (recommended)" },
     { id: "deepseek/deepseek-reasoner", label: "DeepSeek R1" },
   ],
-  ollama: [
-    { id: "ollama/llama3.1:8b", label: "Llama 3.1 8B (recommended, agentic)" },
-    { id: "ollama/llama3.1:70b", label: "Llama 3.1 70B" },
-    { id: "ollama/qwen2.5:7b", label: "Qwen 2.5 7B" },
-    { id: "ollama/qwen2.5:32b", label: "Qwen 2.5 32B" },
-    { id: "ollama/mistral-nemo", label: "Mistral Nemo" },
-  ],
-  lmstudio: [
-    { id: "lmstudio/llama-3.1-8b-instruct", label: "Llama 3.1 8B Instruct" },
-    { id: "lmstudio/qwen2.5-7b-instruct", label: "Qwen 2.5 7B Instruct" },
-    { id: "lmstudio/mistral-nemo-instruct", label: "Mistral Nemo Instruct" },
-  ],
+  // Local runtime model lists are populated at runtime from
+  // detectLocalRuntimes() in src/lib/localModels.ts.
 };
 
 export const findProviderForModel = (model: string | null | undefined): LLMProvider | null => {
