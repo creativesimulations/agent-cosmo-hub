@@ -16,6 +16,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { systemAPI } from "@/lib/systemAPI";
+import { secretsStore, type BackendInfo } from "@/lib/systemAPI";
 import { diagnostics, type DiagEntry } from "@/lib/diagnostics";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
