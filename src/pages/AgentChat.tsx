@@ -181,6 +181,17 @@ const AgentChat = () => {
                   {msg.streaming && (
                     <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
                   )}
+                  {msg.missingKey && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="mt-2 h-7 text-xs"
+                      onClick={() => { window.location.hash = "#/secrets"; }}
+                    >
+                      <KeyRound className="w-3 h-3 mr-1" />
+                      Add {msg.missingKey.envVar}
+                    </Button>
+                  )}
                   <p className="text-[10px] text-muted-foreground mt-1">
                     {msg.timestamp.toLocaleTimeString()}
                   </p>
