@@ -67,6 +67,7 @@ export const systemAPI = {
   chatAgent: hermesAPI.chat.bind(hermesAPI),
   writeInitialConfig: hermesAPI.writeInitialConfig.bind(hermesAPI),
   isConfigured: hermesAPI.isConfigured.bind(hermesAPI),
+  listSkills: hermesAPI.listSkills.bind(hermesAPI),
 };
 
 export default systemAPI;
