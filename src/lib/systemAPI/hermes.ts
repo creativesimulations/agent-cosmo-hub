@@ -594,16 +594,19 @@ export const hermesAPI = {
   },
 
   /** Send a single chat prompt to the agent and return its reply.
-   *  The Hermes CLI is interactive by design (`hermes` opens a REPL), so we
-   *  pipe a single prompt on stdin, then send the REPL's exit command so the
-   *  process terminates and we get stdout. We strip ANSI escapes and the
-   *  REPL's own banner/prompt lines for a clean reply.
+   *
+   *  Hermes ships a non-interactive single-query mode: `hermes chat -q "..."`
+   *  We use that instead of piping into the interactive TUI (which would
+   *  just dump its splash banner and exit without ever calling the model).
    *
    *  Notes:
    *  - Secrets are materialized to ~/.hermes/.env right before invocation
    *    so OPENROUTER_API_KEY (and friends) are visible to the agent.
-   *  - Timeout is generous (90s) because first-token latency on remote
-   *    providers like OpenRouter can be slow. */
+   *  - We force a dumb terminal so the CLI doesn't emit ANSI/box-drawing
+   *    chrome around the answer.
+   *  - Timeout is generous (180s) because first-token latency on remote
+   *    providers like OpenRouter can be slow, and tool-using turns can
+   *    take multiple round-trips. */
   async chat(prompt: string, onOutput?: CommandOutputHandler): Promise<CommandResult & { reply?: string }> {
     await materializeHermesEnv();
 
@@ -611,32 +614,47 @@ export const hermesAPI = {
     const script = [
       'set -e',
       'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
+      // Force a non-interactive, plain-text environment.
+      'export TERM=dumb NO_COLOR=1 CI=1 PYTHONUNBUFFERED=1',
       'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
       `PROMPT="$(echo ${promptB64} | base64 -d)"`,
-      // Feed prompt + /exit to the REPL on stdin. The trailing /exit ensures
-      // the process terminates instead of waiting for more input.
-      'printf "%s\\n/exit\\n" "$PROMPT" | hermes 2>&1',
+      // Use the documented one-shot mode. stdin redirected from /dev/null so
+      // the CLI never tries to open a TTY.
+      'hermes chat -q "$PROMPT" </dev/null 2>&1',
     ].join('\n');
 
-    const result = await runHermesShell(script, { timeout: 90000 }, onOutput);
+    const result = await runHermesShell(script, { timeout: 180000 }, onOutput);
 
-    // Clean the reply: strip ANSI codes, REPL banner lines, and the prompt echo.
-    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+    // Clean the reply: strip ANSI codes and any leftover banner/status lines.
+    const stripAnsi = (s: string) =>
+      s
+        // CSI sequences
+        .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+        // OSC sequences
+        .replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, '')
+        // Other escape leftovers
+        .replace(/\x1b[@-Z\\-_]/g, '');
+
+    const boxChars = /[│┃┆┇┊┋║╎╏╽╿─━┄┅┈┉═╌╍╴╶╸╺▎▏▕▌▐▔▁▂▃▄▅▆▇█╭╮╯╰┌┐└┘├┤┬┴┼╔╗╚╝╠╣╦╩╬]/;
+
     const cleaned = stripAnsi(result.stdout || '')
       .split('\n')
+      .map((line) => line.replace(/\r/g, ''))
       .filter((line) => {
         const t = line.trim();
         if (!t) return false;
-        // Drop common REPL chrome
-        if (/^(hermes|>|user>|assistant>|>>>)/i.test(t)) return false;
+        // Drop TUI box-drawing/banner lines if the CLI ever falls back to TUI.
+        if (boxChars.test(t)) return false;
+        if (/^(hermes agent v|available tools|available skills|session:|tip:|warning:|⚠|✦|⚕|❯)/i.test(t)) return false;
         if (/^\[hermes\]/.test(t)) return false;
-        if (/welcome|loading|exiting|goodbye/i.test(t)) return false;
+        if (/^\d+\s+tools\s+·\s+\d+\s+skills/i.test(t)) return false;
+        if (/^\/(exit|help)\b/.test(t)) return false;
         return true;
       })
       .join('\n')
       .trim();
 
-    return { ...result, reply: cleaned || result.stdout?.trim() || '' };
+    return { ...result, reply: cleaned || stripAnsi(result.stdout || '').trim() };
   },
 
   /** Write initial config for first-time setup */
