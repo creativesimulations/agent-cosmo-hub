@@ -607,7 +607,10 @@ export const hermesAPI = {
    *  - Timeout is generous (180s) because first-token latency on remote
    *    providers like OpenRouter can be slow, and tool-using turns can
    *    take multiple round-trips. */
-  async chat(prompt: string, onOutput?: CommandOutputHandler): Promise<CommandResult & { reply?: string }> {
+  async chat(
+    prompt: string,
+    onOutput?: CommandOutputHandler,
+  ): Promise<CommandResult & { reply?: string; missingKey?: { provider: string; envVar: string } }> {
     await materializeHermesEnv();
 
     const promptB64 = encodeScript(prompt);
@@ -628,11 +631,8 @@ export const hermesAPI = {
     // Clean the reply: strip ANSI codes and any leftover banner/status lines.
     const stripAnsi = (s: string) =>
       s
-        // CSI sequences
         .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-        // OSC sequences
         .replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, '')
-        // Other escape leftovers
         .replace(/\x1b[@-Z\\-_]/g, '');
 
     const boxChars = /[│┃┆┇┊┋║╎╏╽╿─━┄┅┈┉═╌╍╴╶╸╺▎▏▕▌▐▔▁▂▃▄▅▆▇█╭╮╯╰┌┐└┘├┤┬┴┼╔╗╚╝╠╣╦╩╬]/;
@@ -643,18 +643,38 @@ export const hermesAPI = {
       .filter((line) => {
         const t = line.trim();
         if (!t) return false;
-        // Drop TUI box-drawing/banner lines if the CLI ever falls back to TUI.
         if (boxChars.test(t)) return false;
         if (/^(hermes agent v|available tools|available skills|session:|tip:|warning:|⚠|✦|⚕|❯)/i.test(t)) return false;
         if (/^\[hermes\]/.test(t)) return false;
         if (/^\d+\s+tools\s+·\s+\d+\s+skills/i.test(t)) return false;
         if (/^\/(exit|help)\b/.test(t)) return false;
+        if (/^query:\s/i.test(t)) return false;
+        if (/^goodbye/i.test(t)) return false;
         return true;
       })
       .join('\n')
       .trim();
 
-    return { ...result, reply: cleaned || stripAnsi(result.stdout || '').trim() };
+    // Detect Hermes's "no inference provider" / "missing API key" error so the
+    // UI can render an actionable CTA → Secrets tab. We read what model is
+    // configured to suggest the right env var.
+    let missingKey: { provider: string; envVar: string } | undefined;
+    if (/no inference provider configured|set an api key|missing api key|api key.*not (set|found)/i.test(cleaned)) {
+      const cfg = await readHermesFile(HERMES_CONFIG);
+      const modelLine = cfg.success ? cfg.content?.match(/^\s*model:\s*(.+)\s*$/m)?.[1]?.trim() ?? '' : '';
+      const provider = modelLine.split('/')[0]?.toLowerCase() ?? '';
+      const envByProvider: Record<string, { provider: string; envVar: string }> = {
+        openrouter: { provider: 'OpenRouter', envVar: 'OPENROUTER_API_KEY' },
+        openai: { provider: 'OpenAI', envVar: 'OPENAI_API_KEY' },
+        anthropic: { provider: 'Anthropic', envVar: 'ANTHROPIC_API_KEY' },
+        google: { provider: 'Google', envVar: 'GOOGLE_API_KEY' },
+        deepseek: { provider: 'DeepSeek', envVar: 'DEEPSEEK_API_KEY' },
+        nous: { provider: 'Nous Portal', envVar: 'NOUS_API_KEY' },
+      };
+      missingKey = envByProvider[provider] ?? { provider: 'your model provider', envVar: 'OPENROUTER_API_KEY' };
+    }
+
+    return { ...result, reply: cleaned || stripAnsi(result.stdout || '').trim(), missingKey };
   },
 
   /** Write initial config for first-time setup */
