@@ -325,7 +325,7 @@ const finalizeInstallVerification = async (result: CommandResult, onOutput?: Com
 
 const quoteEnvValue = (value: string) => `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
-const materializeHermesEnv = async (): Promise<{ success: boolean; count?: number; error?: string }> => {
+const materializeHermesEnv = async (): Promise<{ success: boolean; count?: number; missing?: string[]; error?: string }> => {
   const { keys } = await secretsStore.list();
   const secretEntries = (await Promise.all(
     keys.map(async (key) => [key, await secretsStore.get(key)] as const),
@@ -357,7 +357,42 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
   if (sections.length === 0) return { success: true, count: 0 };
 
   const result = await writeHermesFile(HERMES_ENV, `${sections.join('\n')}\n`, '600');
-  return { success: result.success, count: secretEntries.length, error: result.error };
+  if (!result.success) {
+    return { success: false, count: secretEntries.length, error: result.error };
+  }
+
+  // Defensive verification — read .env back and confirm every managed key
+  // landed with a non-empty value. If any are missing, the write silently
+  // failed (e.g. cmd.exe quoting bug, WSL not running) and the caller should
+  // surface a hard error rather than letting the agent run blind.
+  const verify = await readHermesFile(HERMES_ENV);
+  if (!verify.success || !verify.content) {
+    return { success: false, count: secretEntries.length, error: 'Verification failed: could not read back ~/.hermes/.env' };
+  }
+  const written: Record<string, string> = {};
+  for (const line of verify.content.split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const eq = t.indexOf('=');
+    if (eq < 1) continue;
+    let v = t.slice(eq + 1).trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+      v = v.slice(1, -1);
+    }
+    written[t.slice(0, eq).trim()] = v;
+  }
+  const missing = secretEntries
+    .filter(([k]) => !(written[k] && written[k].length > 0))
+    .map(([k]) => k);
+  if (missing.length > 0) {
+    return {
+      success: false,
+      count: secretEntries.length,
+      missing,
+      error: `Verification failed: ${missing.length} key(s) missing from ~/.hermes/.env after write: ${missing.join(', ')}`,
+    };
+  }
+  return { success: true, count: secretEntries.length };
 };
 
 /** Hermes Agent installation, configuration, and lifecycle */
