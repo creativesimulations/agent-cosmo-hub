@@ -576,8 +576,10 @@ export const hermesAPI = {
 
   /** Run hermes doctor to verify installation */
   async doctor(onOutput?: CommandOutputHandler): Promise<CommandResult> {
+    const start = Date.now();
+    agentLogs.push({ source: 'doctor', level: 'info', summary: 'Running hermes doctor…' });
     await materializeHermesEnv();
-    return runHermesCli(
+    const r = await runHermesCli(
       [
         'echo "[doctor] starting diagnostics..."',
         'hermes doctor',
@@ -585,6 +587,14 @@ export const hermesAPI = {
       { timeout: 90000 },
       onOutput,
     );
+    agentLogs.push({
+      source: 'doctor',
+      level: r.success ? 'info' : 'error',
+      summary: r.success ? `hermes doctor exited cleanly (${r.code ?? 0})` : `hermes doctor failed (exit=${r.code})`,
+      detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
+      durationMs: Date.now() - start,
+    });
+    return r;
   },
 
   /** Get agent status */
@@ -594,7 +604,17 @@ export const hermesAPI = {
 
   /** Run hermes update */
   async update(): Promise<CommandResult> {
-    return runHermesCli('hermes update', { timeout: 300000 });
+    const start = Date.now();
+    agentLogs.push({ source: 'update', level: 'info', summary: 'Running hermes update…' });
+    const r = await runHermesCli('hermes update', { timeout: 300000 });
+    agentLogs.push({
+      source: 'update',
+      level: r.success ? 'info' : 'error',
+      summary: r.success ? 'hermes update complete' : `hermes update failed (exit=${r.code})`,
+      detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
+      durationMs: Date.now() - start,
+    });
+    return r;
   },
 
   // ─── API Key / .env management ────────────────────────────
