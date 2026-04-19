@@ -199,7 +199,18 @@ const AgentChat = () => {
                       Add {msg.missingKey.envVar}
                     </Button>
                   )}
-                  {msg.diagnostics && (msg.missingKey || msg.content.startsWith("Error")) && (
+                  {msg.materializeFailed && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="mt-2 h-7 text-xs"
+                      onClick={() => { window.location.hash = "#/diagnostics"; }}
+                    >
+                      <AlertCircle className="w-3 h-3 mr-1" />
+                      Open Diagnostics
+                    </Button>
+                  )}
+                  {msg.diagnostics && (msg.missingKey || msg.materializeFailed || msg.content.startsWith("Error") || msg.content.startsWith("Failed")) && (
                     <details className="mt-2 text-[11px] text-muted-foreground/70">
                       <summary className="cursor-pointer hover:text-muted-foreground">Diagnostics</summary>
                       <pre className="mt-1 p-2 rounded bg-background/40 border border-white/5 font-mono text-[10px] whitespace-pre-wrap">
