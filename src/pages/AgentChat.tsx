@@ -91,11 +91,20 @@ const AgentChat = () => {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === placeholderId
-            ? { ...m, content: result.success ? reply : `Error: ${result.stderr || reply}`, streaming: false }
+            ? {
+                ...m,
+                content: result.success && !result.missingKey
+                  ? reply
+                  : result.missingKey
+                    ? `No API key found for ${result.missingKey.provider}. Add ${result.missingKey.envVar} in the Secrets tab to start chatting.`
+                    : `Error: ${result.stderr || reply}`,
+                streaming: false,
+                missingKey: result.missingKey,
+              }
             : m,
         ),
       );
-      if (!result.success) {
+      if (!result.success && !result.missingKey) {
         toast({
           title: "Agent error",
           description: result.stderr?.split("\n")[0] || "Failed to get a reply from the agent.",
