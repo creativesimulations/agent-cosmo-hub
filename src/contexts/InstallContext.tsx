@@ -93,7 +93,7 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
   const [selectedProvider, setSelectedProvider] = useState("openrouter");
   const [apiKey, setApiKey] = useState("");
   const [keySaved, setKeySaved] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("openrouter/nous/hermes-3-llama-3.1-70b");
+  const [selectedModel, setSelectedModel] = useState("openrouter/anthropic/claude-3.5-sonnet");
 
   const [doctorRunning, setDoctorRunning] = useState(false);
   const [doctorOutput, setDoctorOutput] = useState<string[]>([]);

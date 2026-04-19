@@ -41,6 +41,7 @@ import { systemAPI } from "@/lib/systemAPI";
 import { useInstall, OPTIONAL_FEATURES, InstallStep } from "@/contexts/InstallContext";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import ronbotLogo from "@/assets/ronbot-logo.png";
+import { LLM_PROVIDERS, MODEL_OPTIONS } from "@/lib/llmCatalog";
 
 const installSteps = [
   { title: "System Prerequisites", desc: "Detect & install required dependencies" },
@@ -53,40 +54,8 @@ const installSteps = [
   { title: "Launch", desc: "Start your AI agent" },
 ];
 
-// Provider definitions with their env var names and key prefixes
-const LLM_PROVIDERS = [
-  { id: "openrouter", label: "OpenRouter", envVar: "OPENROUTER_API_KEY", prefix: "sk-or-", hint: "200+ models via a single API. Get a key at openrouter.ai", defaultModel: "openrouter/nous/hermes-3-llama-3.1-70b" },
-  { id: "openai", label: "OpenAI", envVar: "OPENAI_API_KEY", prefix: "sk-", hint: "GPT-4o and more. Get a key at platform.openai.com", defaultModel: "openai/gpt-4o" },
-  { id: "anthropic", label: "Anthropic", envVar: "ANTHROPIC_API_KEY", prefix: "sk-ant-", hint: "Claude models. Get a key at console.anthropic.com", defaultModel: "anthropic/claude-3.5-sonnet" },
-  { id: "nous", label: "Nous Portal", envVar: "NOUS_API_KEY", prefix: "", hint: "Nous Research portal. Get a key at portal.nousresearch.com", defaultModel: "nous/hermes-3-llama-3.1-70b" },
-  { id: "ollama", label: "Ollama (Local)", envVar: "", prefix: "", hint: "Run models locally — no API key needed. Install Ollama first.", defaultModel: "ollama/llama3.1" },
-];
-
-const MODEL_OPTIONS: Record<string, { id: string; label: string }[]> = {
-  openrouter: [
-    { id: "openrouter/nous/hermes-3-llama-3.1-70b", label: "Hermes 3 Llama 3.1 70B" },
-    { id: "openrouter/anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
-    { id: "openrouter/openai/gpt-4o", label: "GPT-4o" },
-    { id: "openrouter/meta-llama/llama-3.1-70b-instruct", label: "Llama 3.1 70B" },
-  ],
-  openai: [
-    { id: "openai/gpt-4o", label: "GPT-4o" },
-    { id: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
-    { id: "openai/o1", label: "o1" },
-  ],
-  anthropic: [
-    { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
-    { id: "anthropic/claude-3-haiku", label: "Claude 3 Haiku" },
-  ],
-  nous: [
-    { id: "nous/hermes-3-llama-3.1-70b", label: "Hermes 3 Llama 3.1 70B" },
-  ],
-  ollama: [
-    { id: "ollama/llama3.1", label: "Llama 3.1" },
-    { id: "ollama/mistral", label: "Mistral 7B" },
-    { id: "ollama/hermes-3", label: "Hermes 3 (if pulled)" },
-  ],
-};
+// Provider definitions and model lists are sourced from src/lib/llmCatalog.ts
+// to keep installation and the LLM tab in sync.
 
 const Index = () => {
   // Persistent install/wizard state lives in context so navigating
