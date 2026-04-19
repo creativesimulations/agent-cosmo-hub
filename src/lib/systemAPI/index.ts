@@ -68,6 +68,7 @@ export const systemAPI = {
   writeInitialConfig: hermesAPI.writeInitialConfig.bind(hermesAPI),
   isConfigured: hermesAPI.isConfigured.bind(hermesAPI),
   listSkills: hermesAPI.listSkills.bind(hermesAPI),
+  materializeEnv: hermesAPI.materializeEnv.bind(hermesAPI),
 };
 
 export default systemAPI;
