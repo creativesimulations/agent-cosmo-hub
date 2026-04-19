@@ -30,23 +30,53 @@ const parseStatusOutput = (stdout: string) => {
   };
 };
 
+const readConfiguredModel = (config: string) => {
+  const match = config.match(/^\s*model:\s*(.+)\s*$/m);
+  return match ? match[1].trim().replace(/^['"]|['"]$/g, "") : null;
+};
+
 const Dashboard = () => {
   const { connected: agentConnected, location } = useAgentConnection();
   const [metrics, setMetrics] = useState({ status: "—", uptime: "—", model: "—" });
 
   const loadStatus = useCallback(async () => {
     if (!agentConnected) return;
-    const result = await systemAPI.hermesStatus();
-    if (result.success) {
-      setMetrics(parseStatusOutput(result.stdout));
+    const [statusResult, configResult] = await Promise.all([
+      systemAPI.hermesStatus(),
+      systemAPI.readConfig(),
+    ]);
+    const configuredModel =
+      configResult.success && configResult.content
+        ? readConfiguredModel(configResult.content)
+        : null;
+    if (statusResult.success) {
+      const parsed = parseStatusOutput(statusResult.stdout);
+      setMetrics({
+        status: parsed.status,
+        uptime: parsed.uptime,
+        // Prefer the live config.yaml value so dashboard reflects /model
+        // changes made from inside the agent itself.
+        model: configuredModel || parsed.model,
+      });
       return;
     }
-    setMetrics({ status: "Detected", uptime: "—", model: "Configured" });
+    setMetrics({ status: "Detected", uptime: "—", model: configuredModel || "Configured" });
   }, [agentConnected]);
 
   useEffect(() => {
     void loadStatus();
-  }, [loadStatus]);
+    if (!agentConnected) return;
+    // Live-sync: poll every 5s and on window focus so model/status changes
+    // (including ones the agent makes itself) show up here without a manual
+    // refresh.
+    const interval = window.setInterval(() => void loadStatus(), 5000);
+    const onFocus = () => void loadStatus();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [loadStatus, agentConnected]);
 
   if (!agentConnected) {
     return (
