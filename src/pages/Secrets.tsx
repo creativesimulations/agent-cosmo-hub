@@ -229,41 +229,15 @@ const Secrets = () => {
       {showAddForm && (
         <GlassCard className="space-y-3">
           <h3 className="text-sm font-semibold text-foreground">Add New Secret</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Variable Name</label>
-              <Input
-                value={newKeyName}
-                onChange={(e) => setNewKeyName(e.target.value.toUpperCase())}
-                placeholder="OPENAI_API_KEY"
-                className="bg-background/50 border-white/10 font-mono text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Value</label>
-              <Input
-                type="password"
-                value={newKeyValue}
-                onChange={(e) => setNewKeyValue(e.target.value)}
-                placeholder="sk-..."
-                className="bg-background/50 border-white/10 font-mono text-sm"
-              />
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <p className="text-xs text-muted-foreground flex-1">
-              Common: OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN
-            </p>
-            <Button
-              size="sm"
-              onClick={handleAddKey}
-              disabled={!newKeyName || !newKeyValue || adding}
-              className="gradient-primary text-primary-foreground"
-            >
-              {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
-              Save
-            </Button>
-          </div>
+          <SecretForm
+            initialEnvVar={presetEnvVar}
+            saving={adding}
+            onSave={handleAddKey}
+            onCancel={() => {
+              setShowAddForm(false);
+              setPresetEnvVar("");
+            }}
+          />
         </GlassCard>
       )}
 
