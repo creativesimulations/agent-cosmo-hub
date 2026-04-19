@@ -34,13 +34,14 @@ const backendStyles: Record<SecretsBackend, { color: string; icon: React.ReactNo
 };
 
 const Secrets = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [keys, setKeys] = useState<SecretEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-  const [newKeyName, setNewKeyName] = useState("");
-  const [newKeyValue, setNewKeyValue] = useState("");
   const [adding, setAdding] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [presetEnvVar, setPresetEnvVar] = useState<string>("");
   const [backend, setBackend] = useState<{ backend: SecretsBackend; label: string } | null>(null);
   const [migrating, setMigrating] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -48,6 +49,17 @@ const Secrets = () => {
   useEffect(() => {
     init();
   }, []);
+
+  // Honor ?addKey=OPENROUTER_API_KEY deep-links from the LLM Config page.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || location.hash.split("?")[1] || "");
+    const requested = params.get("addKey");
+    if (requested) {
+      setPresetEnvVar(requested);
+      setShowAddForm(true);
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location, navigate]);
 
   const init = async () => {
     setLoading(true);
@@ -64,7 +76,7 @@ const Secrets = () => {
         const value = await secretsStore.get(envVar);
         return {
           envVar,
-          provider: KNOWN_KEYS[envVar] || envVar,
+          provider: labelForEnvVar(envVar),
           masked: maskValue(value),
           revealed: value,
         };
@@ -73,8 +85,6 @@ const Secrets = () => {
     setKeys(entries);
   };
 
-  // Push the current secret store into ~/.hermes/.env so the agent can see it.
-  // Called automatically after add/delete and exposed as a manual button.
   const syncToAgent = async (showToast = false) => {
     setSyncing(true);
     const res = await secretsStore.materializeEnv();
@@ -95,18 +105,20 @@ const Secrets = () => {
     setShowKeys((prev) => ({ ...prev, [envVar]: !prev[envVar] }));
   };
 
-  const handleAddKey = async () => {
-    if (!newKeyName || !newKeyValue) return;
+  const handleAddKey = async (envVar: string, value: string) => {
+    if (!envVar || !value) return;
     setAdding(true);
-    const ok = await secretsStore.set(newKeyName, newKeyValue);
+    const ok = await secretsStore.set(envVar, value);
     if (ok) {
-      // Immediately push to ~/.hermes/.env so the agent sees the new key
-      // without the user having to re-run the install wizard.
+      toast.success(`Saved ${envVar}`);
       await syncToAgent(false);
+    } else {
+      toast.error(`Could not save ${envVar}`, {
+        description: "Check the Logs tab — the credential store rejected the write.",
+      });
     }
-    setNewKeyName("");
-    setNewKeyValue("");
     setShowAddForm(false);
+    setPresetEnvVar("");
     await loadKeys();
     setAdding(false);
   };
