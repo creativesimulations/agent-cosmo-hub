@@ -12,7 +12,14 @@ import {
 } from "@/components/ui/select";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { systemAPI } from "@/lib/systemAPI";
-import { LLM_PROVIDERS, MODEL_OPTIONS, findProviderForModel } from "@/lib/llmCatalog";
+import {
+  LLM_PROVIDERS,
+  MODEL_OPTIONS,
+  findProviderForModel,
+  type LLMProvider,
+  type LLMModel,
+} from "@/lib/llmCatalog";
+import { detectLocalRuntimes, type LocalRuntime } from "@/lib/localModels";
 import { toast } from "sonner";
 
 const CUSTOM_MODEL_VALUE = "__custom__";
@@ -21,6 +28,22 @@ const readConfiguredModel = (config: string) => {
   const match = config.match(/^\s*model:\s*(.+)\s*$/m);
   return match ? match[1].trim().replace(/^['"]|['"]$/g, "") : null;
 };
+
+/** Build a LLMProvider entry on the fly from a detected local runtime. */
+const runtimeToProvider = (rt: LocalRuntime): LLMProvider => ({
+  id: rt.id,
+  label: rt.label,
+  envVar: "",
+  prefix: "",
+  hint: `Detected on ${rt.endpoint}. ${
+    rt.models.length === 0
+      ? "Server is running but no models are loaded — load one in the runtime first."
+      : `${rt.models.length} model${rt.models.length === 1 ? "" : "s"} available.`
+  }`,
+  defaultModel: rt.models[0]?.id ?? `${rt.id}/`,
+  local: true,
+  allowCustomModel: true,
+});
 
 const LLMConfig = () => {
   const { connected: agentConnected, refresh: refreshConnection } = useAgentConnection();
@@ -33,17 +56,41 @@ const LLMConfig = () => {
   const [customModel, setCustomModel] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  // Track whether the user has dirty edits — if so, skip live syncs so we
-  // don't overwrite their work.
+  // Detected local runtimes (Ollama, LM Studio, llama.cpp, vLLM, …).
+  const [localRuntimes, setLocalRuntimes] = useState<LocalRuntime[]>([]);
+  const [scanningLocal, setScanningLocal] = useState(true);
   const dirtyRef = useRef(false);
+
+  // ─── Merged catalog (built-in providers + detected local runtimes) ──────
+  const allProviders = useMemo<LLMProvider[]>(
+    () => [...LLM_PROVIDERS, ...localRuntimes.map(runtimeToProvider)],
+    [localRuntimes],
+  );
+
+  const allModelOptions = useMemo<Record<string, LLMModel[]>>(() => {
+    const merged: Record<string, LLMModel[]> = { ...MODEL_OPTIONS };
+    for (const rt of localRuntimes) {
+      merged[rt.id] = rt.models;
+    }
+    return merged;
+  }, [localRuntimes]);
+
+  const findProvider = (id: string | null | undefined) =>
+    id ? allProviders.find((p) => p.id === id) ?? null : null;
+
+  const findProviderForModelLocal = (m: string | null | undefined): LLMProvider | null => {
+    if (!m) return null;
+    const id = m.split("/")[0];
+    return findProvider(id) ?? findProviderForModel(m);
+  };
 
   const applyLoadedModel = (current: string | null, savedKeyList: string[], force = false) => {
     setSavedKeys(savedKeyList);
     setModel(current);
     if (force || !dirtyRef.current) {
-      const provider = findProviderForModel(current) ?? LLM_PROVIDERS[0];
+      const provider = findProviderForModelLocal(current) ?? allProviders[0];
       setProviderId(provider.id);
-      const known = (MODEL_OPTIONS[provider.id] ?? []).some((m) => m.id === current);
+      const known = (allModelOptions[provider.id] ?? []).some((m) => m.id === current);
       if (current && !known) {
         setIsCustom(true);
         setCustomModel(current);
@@ -69,32 +116,42 @@ const LLMConfig = () => {
     setLoading(false);
   };
 
+  const scanLocal = async (showSpinner = false) => {
+    if (showSpinner) setScanningLocal(true);
+    const found = await detectLocalRuntimes();
+    setLocalRuntimes(found);
+    setScanningLocal(false);
+  };
+
   // Initial load + refresh when connection state flips
   useEffect(() => {
     setLoading(true);
     void loadAll(true);
+    void scanLocal(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentConnected]);
 
-  // Live sync — poll the config file every 5s and on window focus so changes
-  // made by the agent itself (e.g. /model command) show up here.
+  // Live sync — poll config every 5s and re-scan local runtimes every 15s.
   useEffect(() => {
-    const interval = window.setInterval(() => {
+    const cfgInterval = window.setInterval(() => void loadAll(false), 5000);
+    const localInterval = window.setInterval(() => void scanLocal(false), 15000);
+    const onFocus = () => {
       void loadAll(false);
-    }, 5000);
-    const onFocus = () => void loadAll(false);
+      void scanLocal(false);
+    };
     window.addEventListener("focus", onFocus);
     return () => {
-      window.clearInterval(interval);
+      window.clearInterval(cfgInterval);
+      window.clearInterval(localInterval);
       window.removeEventListener("focus", onFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const activeProvider = useMemo(() => findProviderForModel(model), [model]);
+  const activeProvider = useMemo(() => findProviderForModelLocal(model), [model, allProviders]);
   const providerForDraft = useMemo(
-    () => LLM_PROVIDERS.find((p) => p.id === providerId) ?? LLM_PROVIDERS[0],
-    [providerId]
+    () => findProvider(providerId) ?? allProviders[0],
+    [providerId, allProviders],
   );
   const draftProviderHasKey =
     !providerForDraft.envVar || savedKeys.includes(providerForDraft.envVar);
@@ -106,8 +163,8 @@ const LLMConfig = () => {
   const handleProviderChange = (id: string) => {
     markDirty();
     setProviderId(id);
-    const opts = MODEL_OPTIONS[id] ?? [];
-    const provider = LLM_PROVIDERS.find((p) => p.id === id);
+    const opts = allModelOptions[id] ?? [];
+    const provider = findProvider(id);
     const fallback = opts[0]?.id ?? provider?.defaultModel ?? "";
     setIsCustom(false);
     setCustomModel("");
@@ -151,11 +208,13 @@ const LLMConfig = () => {
   const handleManualRefresh = () => {
     dirtyRef.current = false;
     void loadAll(true);
+    void scanLocal(true);
   };
 
-  const modelOptions = MODEL_OPTIONS[providerId] ?? [];
+  const modelOptions = allModelOptions[providerId] ?? [];
   const isDirty = draftModel !== model;
   const selectValue = isCustom ? CUSTOM_MODEL_VALUE : draftModel;
+  const detectedRuntime = localRuntimes.find((r) => r.id === providerId) ?? null;
 
   return (
     <div className="p-6 space-y-6">
@@ -166,8 +225,8 @@ const LLMConfig = () => {
             LLM Configuration
           </h1>
           <p className="text-sm text-muted-foreground">
-            Choose which agentic model your agent should use. Includes hosted providers,
-            OpenRouter's auto-router, and local runtimes.
+            Choose which agentic model your agent should use. Hosted providers, OpenRouter's
+            auto-router, plus any local runtimes detected on this machine.
           </p>
         </div>
         <Button
@@ -176,7 +235,7 @@ const LLMConfig = () => {
           onClick={handleManualRefresh}
           disabled={refreshing}
           className="text-muted-foreground hover:text-foreground"
-          title="Reload from config.yaml"
+          title="Reload from config.yaml and rescan local runtimes"
         >
           {refreshing ? (
             <Loader2 className="w-4 h-4 mr-1 animate-spin" />
@@ -234,22 +293,16 @@ const LLMConfig = () => {
             </GlassCard>
 
             <GlassCard className="space-y-3">
-              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <KeyRound className="w-4 h-4 text-primary" /> Saved credentials
+              <div className="flex items-center justify-between text-sm font-medium text-foreground">
+                <div className="flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-primary" /> Providers
+                </div>
+                {scanningLocal && (
+                  <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
+                )}
               </div>
               <div className="space-y-2">
                 {LLM_PROVIDERS.map((provider) => {
-                  if (provider.local) {
-                    return (
-                      <div
-                        key={provider.id}
-                        className="flex items-center justify-between text-xs text-muted-foreground"
-                      >
-                        <span>{provider.label}</span>
-                        <span className="text-muted-foreground/60">No key needed</span>
-                      </div>
-                    );
-                  }
                   const has = savedKeys.includes(provider.envVar);
                   return (
                     <div
@@ -263,6 +316,26 @@ const LLMConfig = () => {
                     </div>
                   );
                 })}
+                {localRuntimes.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground/70 pt-1 border-t border-white/5">
+                    No local runtimes detected. Start Ollama, LM Studio, llama.cpp, or vLLM and
+                    they'll appear here automatically.
+                  </div>
+                ) : (
+                  localRuntimes.map((rt) => (
+                    <div
+                      key={rt.id}
+                      className="flex items-center justify-between text-xs text-muted-foreground"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Server className="w-3 h-3 text-success" /> {rt.label}
+                      </span>
+                      <span className="text-success">
+                        {rt.models.length > 0 ? `${rt.models.length} models` : "running"}
+                      </span>
+                    </div>
+                  ))
+                )}
               </div>
             </GlassCard>
           </div>
@@ -283,7 +356,7 @@ const LLMConfig = () => {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {LLM_PROVIDERS.map((p) => (
+                    {allProviders.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
                         {p.label}
                       </SelectItem>
@@ -297,7 +370,7 @@ const LLMConfig = () => {
                 <label className="text-xs text-muted-foreground">Model</label>
                 <Select value={selectValue} onValueChange={handleModelSelect}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder={modelOptions.length === 0 ? "No models found" : "Select a model"} />
                   </SelectTrigger>
                   <SelectContent>
                     {modelOptions.map((m) => (
@@ -338,13 +411,14 @@ const LLMConfig = () => {
               </div>
             )}
 
-            {providerForDraft.local && (
+            {providerForDraft.local && detectedRuntime && (
               <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/30 border border-white/5 rounded-md p-3">
                 <Server className="w-4 h-4 mt-0.5 shrink-0 text-primary" />
                 <span>
-                  {providerForDraft.id === "ollama"
-                    ? "Make sure Ollama is running locally (default http://localhost:11434) and that you've pulled the model with `ollama pull <model>`."
-                    : "Make sure LM Studio's local server is running (default http://localhost:1234) with the chosen model loaded."}
+                  Detected at <code className="font-mono">{detectedRuntime.endpoint}</code>.{" "}
+                  {detectedRuntime.models.length === 0
+                    ? "The runtime is up but no models are loaded — load one and click Refresh."
+                    : `${detectedRuntime.models.length} model${detectedRuntime.models.length === 1 ? "" : "s"} available.`}
                 </span>
               </div>
             )}

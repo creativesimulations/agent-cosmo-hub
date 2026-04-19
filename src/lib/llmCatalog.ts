@@ -71,26 +71,10 @@ export const LLM_PROVIDERS: LLMProvider[] = [
     hint: "DeepSeek V3/R1 — strong agentic reasoning. Get a key at platform.deepseek.com",
     defaultModel: "deepseek/deepseek-chat",
   },
-  {
-    id: "ollama",
-    label: "Ollama (local)",
-    envVar: "",
-    prefix: "",
-    hint: "Run models locally via Ollama (ollama.com). No API key needed. Pick a tool-calling model like llama3.1, qwen2.5, or mistral-nemo.",
-    defaultModel: "ollama/llama3.1:8b",
-    local: true,
-    allowCustomModel: true,
-  },
-  {
-    id: "lmstudio",
-    label: "LM Studio (local)",
-    envVar: "",
-    prefix: "",
-    hint: "Run an OpenAI-compatible server with LM Studio. Use the model id shown in LM Studio's developer tab.",
-    defaultModel: "lmstudio/llama-3.1-8b-instruct",
-    local: true,
-    allowCustomModel: true,
-  },
+  // Local runtimes (Ollama, LM Studio, llama.cpp, vLLM, …) are NOT listed
+  // here — they're detected at runtime by src/lib/localModels.ts and only
+  // shown in the LLM tab when actually running on the user's machine.
+
 ];
 
 /**
@@ -130,18 +114,8 @@ export const MODEL_OPTIONS: Record<string, LLMModel[]> = {
     { id: "deepseek/deepseek-chat", label: "DeepSeek V3 (recommended)" },
     { id: "deepseek/deepseek-reasoner", label: "DeepSeek R1" },
   ],
-  ollama: [
-    { id: "ollama/llama3.1:8b", label: "Llama 3.1 8B (recommended, agentic)" },
-    { id: "ollama/llama3.1:70b", label: "Llama 3.1 70B" },
-    { id: "ollama/qwen2.5:7b", label: "Qwen 2.5 7B" },
-    { id: "ollama/qwen2.5:32b", label: "Qwen 2.5 32B" },
-    { id: "ollama/mistral-nemo", label: "Mistral Nemo" },
-  ],
-  lmstudio: [
-    { id: "lmstudio/llama-3.1-8b-instruct", label: "Llama 3.1 8B Instruct" },
-    { id: "lmstudio/qwen2.5-7b-instruct", label: "Qwen 2.5 7B Instruct" },
-    { id: "lmstudio/mistral-nemo-instruct", label: "Mistral Nemo Instruct" },
-  ],
+  // Local runtime model lists are populated at runtime from
+  // detectLocalRuntimes() in src/lib/localModels.ts.
 };
 
 export const findProviderForModel = (model: string | null | undefined): LLMProvider | null => {
