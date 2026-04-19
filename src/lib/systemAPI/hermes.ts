@@ -646,7 +646,7 @@ export const hermesAPI = {
     const configYaml = `# Ronbot — Hermes Agent Configuration
 # Managed by Ronbot Control Panel
 
-model: ${options.model || 'openrouter/nous/hermes-3-llama-3.1-70b'}
+model: ${options.model || 'openrouter/auto'}
 `;
     return this.writeConfig(configYaml);
   },
@@ -654,5 +654,128 @@ model: ${options.model || 'openrouter/nous/hermes-3-llama-3.1-70b'}
   /** Check if hermes config directory exists */
   async isConfigured(): Promise<boolean> {
     return hasUsableHermesInstall(await inspectHermesInstall());
+  },
+
+  /**
+   * List skills installed for the agent.
+   *
+   * Hermes stores skills as folders. We scan a few well-known locations and
+   * de-duplicate by skill name:
+   *   - ~/.hermes/skills/<category>/<skill>/   (user-installed skills)
+   *   - ~/.hermes/skills/<skill>/              (flat layout)
+   *   - <site-packages>/hermes_agent/skills/   (skills bundled with the pip
+   *     install — these are the "75 skills" shown on first launch).
+   *
+   * Each skill directory typically has a SKILL.md or skill.md describing it;
+   * we surface the first non-empty line as a short description when present.
+   */
+  async listSkills(): Promise<{
+    success: boolean;
+    skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string }>;
+    error?: string;
+  }> {
+    const script = [
+      'set +e',
+      'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
+      // Locations to scan. The bundled skills dir lives inside the venv's
+      // site-packages — find it dynamically because the python version varies.
+      'USER_SKILLS="$HOME/.hermes/skills"',
+      'BUNDLED_SKILLS=""',
+      'if [ -x "$HOME/.hermes/venv/bin/python" ]; then',
+      '  BUNDLED_SKILLS="$($HOME/.hermes/venv/bin/python - <<PYEOF 2>/dev/null',
+      'import importlib.util, os, sys',
+      'for mod in ("hermes_agent", "hermes"):',
+      '    spec = importlib.util.find_spec(mod)',
+      '    if spec and spec.submodule_search_locations:',
+      '        for loc in spec.submodule_search_locations:',
+      '            cand = os.path.join(loc, "skills")',
+      '            if os.path.isdir(cand):',
+      '                print(cand); sys.exit(0)',
+      'PYEOF',
+      '  )"',
+      'fi',
+      // Walk both trees, max depth 2, emit "SOURCE\tCATEGORY\tNAME\tDESC_PATH"
+      'walk_skills() {',
+      '  local root="$1" source="$2"',
+      '  [ -d "$root" ] || return 0',
+      '  for entry in "$root"/*; do',
+      '    [ -d "$entry" ] || continue',
+      '    name="$(basename "$entry")"',
+      '    # If this dir itself contains a SKILL.md or a python module, treat it as a skill (flat layout).',
+      '    if [ -f "$entry/SKILL.md" ] || [ -f "$entry/skill.md" ] || [ -f "$entry/__init__.py" ] || [ -f "$entry/skill.yaml" ]; then',
+      '      desc=""',
+      '      for d in "$entry/SKILL.md" "$entry/skill.md"; do',
+      '        if [ -f "$d" ]; then desc="$d"; break; fi',
+      '      done',
+      '      printf "%s\\t%s\\t%s\\t%s\\n" "$source" "general" "$name" "$desc"',
+      '      continue',
+      '    fi',
+      '    # Otherwise treat this dir as a category and descend one level.',
+      '    for sub in "$entry"/*; do',
+      '      [ -d "$sub" ] || continue',
+      '      sub_name="$(basename "$sub")"',
+      '      desc=""',
+      '      for d in "$sub/SKILL.md" "$sub/skill.md"; do',
+      '        if [ -f "$d" ]; then desc="$d"; break; fi',
+      '      done',
+      '      printf "%s\\t%s\\t%s\\t%s\\n" "$source" "$name" "$sub_name" "$desc"',
+      '    done',
+      '  done',
+      '}',
+      'walk_skills "$USER_SKILLS" user',
+      '[ -n "$BUNDLED_SKILLS" ] && walk_skills "$BUNDLED_SKILLS" bundled',
+    ].join('\n');
+
+    const result = await runHermesShell(script, { timeout: 30000 });
+    if (!result.success && !result.stdout) {
+      return { success: false, skills: [], error: result.stderr || 'Failed to list skills' };
+    }
+
+    const seen = new Set<string>();
+    const skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string }> = [];
+    const descPaths: Array<{ key: string; path: string }> = [];
+
+    for (const line of (result.stdout || '').split('\n')) {
+      const parts = line.split('\t');
+      if (parts.length < 3) continue;
+      const [source, category, name, descPath] = parts;
+      if (!name) continue;
+      const key = `${category}/${name}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const skill = {
+        name,
+        category: category || 'general',
+        source: (source === 'user' ? 'user' : 'bundled') as 'user' | 'bundled',
+      };
+      skills.push(skill);
+      if (descPath) descPaths.push({ key, path: descPath });
+    }
+
+    // Pull the first non-empty markdown line as a short description for each
+    // skill that ships one. Done in one shell call to stay fast.
+    if (descPaths.length > 0) {
+      const descScript = descPaths
+        .map(({ key, path }) => `printf "%s\\t" "${key}"; head -n 20 "${path}" 2>/dev/null | grep -m1 -E "^[A-Za-z]" | head -c 200; printf "\\n"`)
+        .join('\n');
+      const descResult = await runHermesShell(descScript, { timeout: 15000 });
+      const descMap = new Map<string, string>();
+      for (const line of (descResult.stdout || '').split('\n')) {
+        const idx = line.indexOf('\t');
+        if (idx <= 0) continue;
+        const key = line.slice(0, idx);
+        const desc = line.slice(idx + 1).trim();
+        if (desc) descMap.set(key, desc);
+      }
+      for (const skill of skills) {
+        const d = descMap.get(`${skill.category}/${skill.name}`);
+        if (d) skill.description = d;
+      }
+    }
+
+    skills.sort((a, b) =>
+      a.category.localeCompare(b.category) || a.name.localeCompare(b.name),
+    );
+    return { success: true, skills };
   },
 };
