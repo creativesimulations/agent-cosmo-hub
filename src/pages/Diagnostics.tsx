@@ -35,6 +35,13 @@ interface ConfigSummary {
   error?: string;
 }
 
+interface StoreSummary {
+  loaded: boolean;
+  backend?: BackendInfo;
+  entries: Array<{ key: string; valueLength: number }>;
+  error?: string;
+}
+
 const Diagnostics = () => {
   const [entries, setEntries] = useState<DiagEntry[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -42,6 +49,7 @@ const Diagnostics = () => {
   const [running, setRunning] = useState<"doctor" | "ping" | null>(null);
   const [envSummary, setEnvSummary] = useState<EnvSummary>({ loaded: false, entries: [] });
   const [cfgSummary, setCfgSummary] = useState<ConfigSummary>({ loaded: false });
+  const [storeSummary, setStoreSummary] = useState<StoreSummary>({ loaded: false, entries: [] });
   const [lastResult, setLastResult] = useState<string>("");
 
   useEffect(() => {
@@ -53,6 +61,17 @@ const Diagnostics = () => {
   }, []);
 
   const refreshSummaries = async () => {
+    // 1. Credential store snapshot — this is the source of truth.
+    try {
+      const backend = await secretsStore.getBackend();
+      const { keys } = await secretsStore.list();
+      const storeEntries = await Promise.all(
+        keys.map(async (k) => ({ key: k, valueLength: (await secretsStore.get(k)).length })),
+      );
+      setStoreSummary({ loaded: true, backend, entries: storeEntries });
+    } catch (e) {
+      setStoreSummary({ loaded: true, entries: [], error: e instanceof Error ? e.message : String(e) });
+    }
     try {
       const env = await systemAPI.readEnvFile();
       const keys = Object.keys(env);
@@ -77,6 +96,7 @@ const Diagnostics = () => {
       setCfgSummary({ loaded: true, error: e instanceof Error ? e.message : String(e) });
     }
   };
+
 
   const handleSyncSecrets = async () => {
     setSyncing(true);
