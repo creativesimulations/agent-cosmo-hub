@@ -42,8 +42,20 @@ export const coreAPI = {
   },
 
   async runCommand(cmd: string, options?: Record<string, unknown>): Promise<CommandResult> {
-    if (isElectron()) return window.electronAPI!.runCommand(cmd, options);
-    return simulateCommand(cmd);
+    const start = Date.now();
+    const result = isElectron()
+      ? await window.electronAPI!.runCommand(cmd, options)
+      : await simulateCommand(cmd);
+    diagnostics.push({
+      label: labelForCommand(cmd),
+      command: truncateForLog(cmd, 2000),
+      exitCode: typeof result.code === 'number' ? result.code : null,
+      success: result.success,
+      stdout: truncateForLog(result.stdout || ''),
+      stderr: truncateForLog(result.stderr || ''),
+      durationMs: Date.now() - start,
+    });
+    return result;
   },
 
   async runCommandStream(
