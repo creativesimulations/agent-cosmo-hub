@@ -701,8 +701,29 @@ export const hermesAPI = {
   async chat(
     prompt: string,
     onOutput?: CommandOutputHandler,
-  ): Promise<CommandResult & { reply?: string; diagnostics?: string; missingKey?: { provider: string; envVar: string } }> {
+  ): Promise<CommandResult & { reply?: string; diagnostics?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean }> {
     const mat = await materializeHermesEnv();
+
+    // Hard-fail before invoking hermes if we couldn't sync secrets.
+    // Calling `hermes chat` against a stale/empty .env would just produce a
+    // misleading "No API key found" error that sends the user on a wild goose
+    // chase. Better to surface the actual sync failure with a link to the
+    // Diagnostics page.
+    if (!mat.success) {
+      const matErr = mat.error || 'unknown error';
+      const missingNote = mat.missing && mat.missing.length > 0
+        ? ` Missing keys after write: ${mat.missing.join(', ')}.`
+        : '';
+      return {
+        success: false,
+        stdout: '',
+        stderr: `Failed to sync secrets to ~/.hermes/.env: ${matErr}.${missingNote} Open the Diagnostics page to see the exact shell command and output.`,
+        code: 1,
+        reply: '',
+        diagnostics: `materializeEnv failed: ${matErr}${missingNote}`,
+        materializeFailed: true,
+      };
+    }
 
     const promptB64 = encodeScript(prompt);
     const script = [
