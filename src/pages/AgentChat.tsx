@@ -17,6 +17,7 @@ interface Message {
   content: string;
   timestamp: Date;
   streaming?: boolean;
+  missingKey?: { provider: string; envVar: string };
 }
 
 const loadStoredMessages = (): Message[] => {
