@@ -2,6 +2,7 @@ import { coreAPI } from './core';
 import { secretsStore } from './secretsStore';
 import { isElectron } from './types';
 import type { CommandResult } from './types';
+import { agentLogs, truncateForLog } from '../diagnostics';
 
 const HERMES_DIR = '$HOME/.hermes';
 const HERMES_ENV = '$HOME/.hermes/.env';
@@ -575,8 +576,10 @@ export const hermesAPI = {
 
   /** Run hermes doctor to verify installation */
   async doctor(onOutput?: CommandOutputHandler): Promise<CommandResult> {
+    const start = Date.now();
+    agentLogs.push({ source: 'doctor', level: 'info', summary: 'Running hermes doctor…' });
     await materializeHermesEnv();
-    return runHermesCli(
+    const r = await runHermesCli(
       [
         'echo "[doctor] starting diagnostics..."',
         'hermes doctor',
@@ -584,6 +587,14 @@ export const hermesAPI = {
       { timeout: 90000 },
       onOutput,
     );
+    agentLogs.push({
+      source: 'doctor',
+      level: r.success ? 'info' : 'error',
+      summary: r.success ? `hermes doctor exited cleanly (${r.code ?? 0})` : `hermes doctor failed (exit=${r.code})`,
+      detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
+      durationMs: Date.now() - start,
+    });
+    return r;
   },
 
   /** Get agent status */
@@ -593,7 +604,17 @@ export const hermesAPI = {
 
   /** Run hermes update */
   async update(): Promise<CommandResult> {
-    return runHermesCli('hermes update', { timeout: 300000 });
+    const start = Date.now();
+    agentLogs.push({ source: 'update', level: 'info', summary: 'Running hermes update…' });
+    const r = await runHermesCli('hermes update', { timeout: 300000 });
+    agentLogs.push({
+      source: 'update',
+      level: r.success ? 'info' : 'error',
+      summary: r.success ? 'hermes update complete' : `hermes update failed (exit=${r.code})`,
+      detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
+      durationMs: Date.now() - start,
+    });
+    return r;
   },
 
   // ─── API Key / .env management ────────────────────────────
@@ -679,14 +700,30 @@ export const hermesAPI = {
    *  Decrypts secrets and materializes ~/.hermes/.env (chmod 600) right
    *  before launch, so plaintext secrets only exist on disk while running. */
   async start(): Promise<CommandResult> {
+    agentLogs.push({ source: 'start', level: 'info', summary: 'Starting agent (interactive)…' });
     await materializeHermesEnv();
-    return runHermesCli('hermes', { timeout: 10000 });
+    const r = await runHermesCli('hermes', { timeout: 10000 });
+    agentLogs.push({
+      source: 'start',
+      level: r.success ? 'info' : 'error',
+      summary: r.success ? 'Agent launched' : `Agent failed to start (exit=${r.code})`,
+      detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
+    });
+    return r;
   },
 
   /** Start the messaging gateway */
   async startGateway(): Promise<CommandResult> {
+    agentLogs.push({ source: 'gateway', level: 'info', summary: 'Starting messaging gateway…' });
     await materializeHermesEnv();
-    return runHermesCli('hermes gateway start', { timeout: 30000 });
+    const r = await runHermesCli('hermes gateway start', { timeout: 30000 });
+    agentLogs.push({
+      source: 'gateway',
+      level: r.success ? 'info' : 'error',
+      summary: r.success ? 'Gateway started' : `Gateway failed (exit=${r.code})`,
+      detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
+    });
+    return r;
   },
 
   /** Send a single chat prompt to the agent and return its reply.
@@ -707,6 +744,12 @@ export const hermesAPI = {
     prompt: string,
     onOutput?: CommandOutputHandler,
   ): Promise<CommandResult & { reply?: string; diagnostics?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean }> {
+    const startedAt = Date.now();
+    agentLogs.push({
+      source: 'chat',
+      level: 'info',
+      summary: `→ Prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
+    });
     const mat = await materializeHermesEnv();
 
     // Hard-fail before invoking hermes if we couldn't sync secrets.
@@ -719,6 +762,13 @@ export const hermesAPI = {
       const missingNote = mat.missing && mat.missing.length > 0
         ? ` Missing keys after write: ${mat.missing.join(', ')}.`
         : '';
+      agentLogs.push({
+        source: 'chat',
+        level: 'error',
+        summary: `Sync to ~/.hermes/.env failed — chat aborted`,
+        detail: `${matErr}${missingNote}`,
+        durationMs: Date.now() - startedAt,
+      });
       return {
         success: false,
         stdout: '',
@@ -842,10 +892,39 @@ export const hermesAPI = {
       }
     }
 
+    const finalReply = cleaned || stripAnsi(result.stdout || '').trim();
+    const finalDiag = diagnostics || (mat.success ? '' : `materializeEnv failed: ${mat.error || 'unknown'}`);
+
+    if (missingKey) {
+      agentLogs.push({
+        source: 'chat',
+        level: 'error',
+        summary: `Missing API key: ${missingKey.envVar} (${missingKey.provider})`,
+        detail: finalDiag,
+        durationMs: Date.now() - startedAt,
+      });
+    } else if (!result.success) {
+      agentLogs.push({
+        source: 'chat',
+        level: 'error',
+        summary: `Chat failed (exit=${result.code})`,
+        detail: truncateForLog([finalReply, finalDiag, result.stderr].filter(Boolean).join('\n')),
+        durationMs: Date.now() - startedAt,
+      });
+    } else {
+      agentLogs.push({
+        source: 'chat',
+        level: 'info',
+        summary: `← Reply: ${finalReply.length > 120 ? finalReply.slice(0, 120) + '…' : finalReply || '(empty)'}`,
+        detail: truncateForLog([finalReply, finalDiag ? `\n--- diagnostics ---\n${finalDiag}` : ''].filter(Boolean).join('')),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
     return {
       ...result,
-      reply: cleaned || stripAnsi(result.stdout || '').trim(),
-      diagnostics: diagnostics || (mat.success ? '' : `materializeEnv failed: ${mat.error || 'unknown'}`),
+      reply: finalReply,
+      diagnostics: finalDiag,
       missingKey,
     };
   },

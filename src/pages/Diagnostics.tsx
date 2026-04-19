@@ -152,7 +152,10 @@ const Diagnostics = () => {
           Diagnostics
         </h1>
         <p className="text-sm text-muted-foreground">
-          Inspect agent state, sync secrets manually, and review every shell command the app has run.
+          Inspect agent state, sync secrets manually, and review every shell command the app has run.{" "}
+          <a href="#/logs" className="text-primary hover:underline">
+            Looking for chat history or agent activity? See Logs →
+          </a>
         </p>
       </div>
 
