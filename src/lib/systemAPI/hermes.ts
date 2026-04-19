@@ -2,6 +2,7 @@ import { coreAPI } from './core';
 import { secretsStore } from './secretsStore';
 import { isElectron } from './types';
 import type { CommandResult } from './types';
+import { agentLogs, truncateForLog } from '../diagnostics';
 
 const HERMES_DIR = '$HOME/.hermes';
 const HERMES_ENV = '$HOME/.hermes/.env';
