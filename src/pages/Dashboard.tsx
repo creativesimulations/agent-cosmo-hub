@@ -15,19 +15,32 @@ import { Button } from "@/components/ui/button";
 import { systemAPI } from "@/lib/systemAPI";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 
+/** Parse `hermes status` output into a flat key/value map. */
 const parseStatusOutput = (stdout: string) => {
-  const values = stdout.split("\n").reduce<Record<string, string>>((acc, line) => {
+  return stdout.split("\n").reduce<Record<string, string>>((acc, line) => {
     const [label, ...rest] = line.split(":");
     if (!label || rest.length === 0) return acc;
     acc[label.trim().toLowerCase()] = rest.join(":").trim();
     return acc;
   }, {});
+};
 
-  return {
-    status: values.status || "Detected",
-    uptime: values.uptime || "—",
-    model: values.model || "Configured",
-  };
+/**
+ * Map raw `hermes status` output to a UI-friendly status string.
+ *
+ * Hermes is a CLI, not a long-running daemon. `hermes status` reports on the
+ * optional *messaging gateway* (Telegram/Discord/etc.) which is almost never
+ * running for a fresh install. So a literal "stopped" reading just means
+ * "the gateway isn't up" — the agent itself is perfectly usable for chat.
+ */
+const deriveDisplayStatus = (
+  raw: Record<string, string>,
+  installed: boolean,
+): string => {
+  if (!installed) return "Not configured";
+  const s = (raw.status || "").toLowerCase();
+  if (/run|active|online|up|started/.test(s)) return "Gateway running";
+  return "Ready";
 };
 
 const readConfiguredModel = (config: string) => {
@@ -49,18 +62,19 @@ const Dashboard = () => {
       configResult.success && configResult.content
         ? readConfiguredModel(configResult.content)
         : null;
-    if (statusResult.success) {
-      const parsed = parseStatusOutput(statusResult.stdout);
-      setMetrics({
-        status: parsed.status,
-        uptime: parsed.uptime,
-        // Prefer the live config.yaml value so dashboard reflects /model
-        // changes made from inside the agent itself.
-        model: configuredModel || parsed.model,
-      });
-      return;
-    }
-    setMetrics({ status: "Detected", uptime: "—", model: configuredModel || "Configured" });
+
+    const raw = statusResult.success ? parseStatusOutput(statusResult.stdout) : {};
+    const status = deriveDisplayStatus(raw, agentConnected);
+    // Uptime only makes sense when something is actually running.
+    const uptime = status === "Gateway running" ? raw.uptime || "—" : "—";
+
+    setMetrics({
+      status,
+      uptime,
+      // Prefer the live config.yaml value so dashboard reflects /model
+      // changes made from inside the agent itself.
+      model: configuredModel || raw.model || "Configured",
+    });
   }, [agentConnected]);
 
   useEffect(() => {
