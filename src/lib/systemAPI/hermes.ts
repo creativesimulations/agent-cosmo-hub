@@ -672,10 +672,18 @@ export const hermesAPI = {
       .trim();
 
     // Detect Hermes's "no inference provider" / "missing API key" error so the
-    // UI can render an actionable CTA → Secrets tab. We read what model is
-    // configured to suggest the right env var.
+    // UI can render an actionable CTA → Secrets tab.
+    //
+    // IMPORTANT: Hermes prints a help hint that mentions
+    // "set an API key (OPENROUTER_API_KEY, ...) in ~/.hermes/.env"
+    // inside its splash banner on EVERY chat invocation, even when the key
+    // is set and the model replies normally. So we must NOT match on that
+    // phrasing alone — we look for the specific runtime error string and,
+    // as a safety net, verify the relevant env var is actually missing
+    // from ~/.hermes/.env before flagging it to the user.
     let missingKey: { provider: string; envVar: string } | undefined;
-    if (/no inference provider configured|set an api key|missing api key|api key.*not (set|found)/i.test(cleaned)) {
+    const hardErrorRe = /no inference provider configured|missing api key|api key.*not (set|found)|invalid api key|unauthorized.*api key/i;
+    if (hardErrorRe.test(cleaned)) {
       const cfg = await readHermesFile(HERMES_CONFIG);
       const modelLine = cfg.success ? cfg.content?.match(/^\s*model:\s*(.+)\s*$/m)?.[1]?.trim() ?? '' : '';
       const provider = modelLine.split('/')[0]?.toLowerCase() ?? '';
@@ -687,7 +695,12 @@ export const hermesAPI = {
         deepseek: { provider: 'DeepSeek', envVar: 'DEEPSEEK_API_KEY' },
         nous: { provider: 'Nous Portal', envVar: 'NOUS_API_KEY' },
       };
-      missingKey = envByProvider[provider] ?? { provider: 'your model provider', envVar: 'OPENROUTER_API_KEY' };
+      const candidate = envByProvider[provider] ?? { provider: 'your model provider', envVar: 'OPENROUTER_API_KEY' };
+
+      // Verify the key really is absent before nagging the user.
+      const envFile = await readHermesFile(HERMES_ENV);
+      const keyPresent = envFile.success && new RegExp(`^\\s*${candidate.envVar}\\s*=\\s*\\S`, 'm').test(envFile.content || '');
+      if (!keyPresent) missingKey = candidate;
     }
 
     return { ...result, reply: cleaned || stripAnsi(result.stdout || '').trim(), missingKey };
