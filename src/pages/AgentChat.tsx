@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { motion } from "framer-motion";
-import { MessageSquare, Send, Bot, User, Loader2, AlertCircle } from "lucide-react";
+import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ interface Message {
   content: string;
   timestamp: Date;
   streaming?: boolean;
+  missingKey?: { provider: string; envVar: string };
 }
 
 const loadStoredMessages = (): Message[] => {
@@ -90,11 +91,20 @@ const AgentChat = () => {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === placeholderId
-            ? { ...m, content: result.success ? reply : `Error: ${result.stderr || reply}`, streaming: false }
+            ? {
+                ...m,
+                content: result.success && !result.missingKey
+                  ? reply
+                  : result.missingKey
+                    ? `No API key found for ${result.missingKey.provider}. Add ${result.missingKey.envVar} in the Secrets tab to start chatting.`
+                    : `Error: ${result.stderr || reply}`,
+                streaming: false,
+                missingKey: result.missingKey,
+              }
             : m,
         ),
       );
-      if (!result.success) {
+      if (!result.success && !result.missingKey) {
         toast({
           title: "Agent error",
           description: result.stderr?.split("\n")[0] || "Failed to get a reply from the agent.",
@@ -170,6 +180,17 @@ const AgentChat = () => {
                   <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                   {msg.streaming && (
                     <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
+                  )}
+                  {msg.missingKey && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="mt-2 h-7 text-xs"
+                      onClick={() => { window.location.hash = "#/secrets"; }}
+                    >
+                      <KeyRound className="w-3 h-3 mr-1" />
+                      Add {msg.missingKey.envVar}
+                    </Button>
                   )}
                   <p className="text-[10px] text-muted-foreground mt-1">
                     {msg.timestamp.toLocaleTimeString()}
