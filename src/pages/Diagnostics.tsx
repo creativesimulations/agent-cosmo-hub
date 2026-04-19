@@ -16,6 +16,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { systemAPI } from "@/lib/systemAPI";
+import { secretsStore, type BackendInfo } from "@/lib/systemAPI";
 import { diagnostics, type DiagEntry } from "@/lib/diagnostics";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -34,6 +35,13 @@ interface ConfigSummary {
   error?: string;
 }
 
+interface StoreSummary {
+  loaded: boolean;
+  backend?: BackendInfo;
+  entries: Array<{ key: string; valueLength: number }>;
+  error?: string;
+}
+
 const Diagnostics = () => {
   const [entries, setEntries] = useState<DiagEntry[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -41,6 +49,7 @@ const Diagnostics = () => {
   const [running, setRunning] = useState<"doctor" | "ping" | null>(null);
   const [envSummary, setEnvSummary] = useState<EnvSummary>({ loaded: false, entries: [] });
   const [cfgSummary, setCfgSummary] = useState<ConfigSummary>({ loaded: false });
+  const [storeSummary, setStoreSummary] = useState<StoreSummary>({ loaded: false, entries: [] });
   const [lastResult, setLastResult] = useState<string>("");
 
   useEffect(() => {
@@ -52,6 +61,17 @@ const Diagnostics = () => {
   }, []);
 
   const refreshSummaries = async () => {
+    // 1. Credential store snapshot — this is the source of truth.
+    try {
+      const backend = await secretsStore.getBackend();
+      const { keys } = await secretsStore.list();
+      const storeEntries = await Promise.all(
+        keys.map(async (k) => ({ key: k, valueLength: (await secretsStore.get(k)).length })),
+      );
+      setStoreSummary({ loaded: true, backend, entries: storeEntries });
+    } catch (e) {
+      setStoreSummary({ loaded: true, entries: [], error: e instanceof Error ? e.message : String(e) });
+    }
     try {
       const env = await systemAPI.readEnvFile();
       const keys = Object.keys(env);
@@ -76,6 +96,7 @@ const Diagnostics = () => {
       setCfgSummary({ loaded: true, error: e instanceof Error ? e.message : String(e) });
     }
   };
+
 
   const handleSyncSecrets = async () => {
     setSyncing(true);
@@ -182,6 +203,46 @@ const Diagnostics = () => {
           <pre className="mt-3 p-3 rounded bg-background/40 border border-white/5 text-[11px] font-mono whitespace-pre-wrap max-h-64 overflow-auto">
             {lastResult}
           </pre>
+        )}
+      </GlassCard>
+
+      {/* Credential store snapshot — source of truth, before materialize */}
+      <GlassCard className="p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-primary" />
+            OS credential store
+            {storeSummary.backend && (
+              <Badge variant="outline" className="text-[9px] py-0 px-1.5 ml-1">
+                {storeSummary.backend.label}
+              </Badge>
+            )}
+          </h2>
+          <span className="text-[11px] text-muted-foreground">
+            What's actually saved (before materialize)
+          </span>
+        </div>
+        {storeSummary.error ? (
+          <p className="text-xs text-destructive">{storeSummary.error}</p>
+        ) : storeSummary.entries.length === 0 ? (
+          <p className="text-xs text-destructive">
+            ⚠ No keys in the credential store. Add them in the Secrets tab. If keys disappear after re-adding,
+            the OS backend ({storeSummary.backend?.backend ?? "unknown"}) isn't persisting them — check Logs for errors.
+          </p>
+        ) : (
+          <ul className="text-xs font-mono space-y-1">
+            {storeSummary.entries.map((e) => (
+              <li key={e.key} className="flex items-center gap-2">
+                <span className={cn(e.valueLength > 0 ? "text-foreground" : "text-destructive")}>
+                  {e.key}
+                </span>
+                <span className="text-muted-foreground">= ({e.valueLength} chars)</span>
+                {e.valueLength === 0 && (
+                  <Badge variant="destructive" className="text-[9px] py-0 px-1">empty</Badge>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
       </GlassCard>
 

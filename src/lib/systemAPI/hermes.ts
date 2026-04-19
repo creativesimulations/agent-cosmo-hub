@@ -327,10 +327,35 @@ const finalizeInstallVerification = async (result: CommandResult, onOutput?: Com
 const quoteEnvValue = (value: string) => `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
 const materializeHermesEnv = async (): Promise<{ success: boolean; count?: number; missing?: string[]; error?: string }> => {
-  const { keys } = await secretsStore.list();
+  const { keys, backend } = await secretsStore.list();
   const secretEntries = (await Promise.all(
     keys.map(async (key) => [key, await secretsStore.get(key)] as const),
   )).filter(([, value]) => value !== '');
+
+  agentLogs.push({
+    source: 'system',
+    level: secretEntries.length === 0 ? 'warn' : 'info',
+    summary: `materializeHermesEnv: ${secretEntries.length}/${keys.length} non-empty key(s) from ${backend}`,
+    detail: secretEntries.length === 0
+      ? `Credential store has ${keys.length} key entries but all values are empty. Re-add your API keys in the Secrets tab — the OS credential backend (${backend}) may not be persisting them.`
+      : `Keys to write: ${secretEntries.map(([k, v]) => `${k}(${v.length}c)`).join(', ')}`,
+  });
+
+  // Heuristic: a line from the Hermes example template — placeholder values
+  // like KEY=your_key_here, KEY=<your-...>, KEY="changeme", or just KEY=.
+  // We strip these so the example template doesn't drown the managed block.
+  const isPlaceholderLine = (line: string): boolean => {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) return false;
+    const eq = t.indexOf('=');
+    if (eq < 1) return false;
+    let v = t.slice(eq + 1).trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+      v = v.slice(1, -1);
+    }
+    if (!v) return true;
+    return /^(your[-_]|<your|placeholder|changeme|xxx|sk-\.{3}|example|insert[-_]|todo$)/i.test(v);
+  };
 
   const managedKeys = new Set(secretEntries.map(([key]) => key));
   const existing = await readHermesFile(HERMES_ENV);
@@ -339,10 +364,23 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
         .split('\n')
         .filter((line) => {
           const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#')) return true;
+          if (!trimmed) return true;
+          // Strip the original Hermes template's helper comments — they only
+          // confuse users and add 100s of noise lines.
+          if (trimmed.startsWith('#')) {
+            if (/Copy this file to \.env/i.test(trimmed)) return false;
+            if (/fill in your API keys/i.test(trimmed)) return false;
+            if (/Hermes Agent Environment Configuration/i.test(trimmed)) return false;
+            return true;
+          }
           const eqIndex = trimmed.indexOf('=');
           if (eqIndex < 1) return true;
-          return !managedKeys.has(trimmed.slice(0, eqIndex).trim());
+          const k = trimmed.slice(0, eqIndex).trim();
+          if (managedKeys.has(k)) return false;
+          // Drop placeholder rows (KEY=your_key_here etc.) so they can't
+          // shadow the managed block when bash sources the file.
+          if (isPlaceholderLine(line)) return false;
+          return true;
         })
         .join('\n')
         .replace(/\n+$/, '')
@@ -355,7 +393,14 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
     managed,
   ].filter(Boolean);
 
-  if (sections.length === 0) return { success: true, count: 0 };
+  if (sections.length === 0) {
+    agentLogs.push({
+      source: 'system',
+      level: 'warn',
+      summary: 'materializeHermesEnv: nothing to write (no secrets, no preserved lines)',
+    });
+    return { success: true, count: 0 };
+  }
 
   const result = await writeHermesFile(HERMES_ENV, `${sections.join('\n')}\n`, '600');
   if (!result.success) {
@@ -393,6 +438,11 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
       error: `Verification failed: ${missing.length} key(s) missing from ~/.hermes/.env after write: ${missing.join(', ')}`,
     };
   }
+  agentLogs.push({
+    source: 'system',
+    level: 'info',
+    summary: `materializeHermesEnv: ✓ wrote ${secretEntries.length} key(s) to ~/.hermes/.env`,
+  });
   return { success: true, count: secretEntries.length };
 };
 

@@ -31,6 +31,20 @@ const fetchWithTimeout = async (url: string, init?: RequestInit) => {
   }
 };
 
+/**
+ * Models with these suffixes are NOT actually local — Ollama proxies them
+ * to the provider's cloud endpoint and they require an API key. Hide them
+ * from the "local runtimes" list so users don't pick them by mistake.
+ *
+ *   minimax-m2.5:cloud      → MiniMax hosted
+ *   gpt-oss:cloud           → OpenAI-style routed
+ *   anything ending :cloud  → cloud-routed
+ */
+const isCloudRoutedModelName = (name: string): boolean => {
+  const lower = name.toLowerCase();
+  return /:cloud(\b|$)/.test(lower) || /:hosted(\b|$)/.test(lower) || /:remote(\b|$)/.test(lower);
+};
+
 /** Ollama exposes GET /api/tags → { models: [{ name, ... }] } */
 const probeOllama = async (host: string): Promise<LocalRuntime | null> => {
   try {
@@ -39,7 +53,8 @@ const probeOllama = async (host: string): Promise<LocalRuntime | null> => {
     const data = (await res.json()) as { models?: Array<{ name?: string; model?: string }> };
     const names = (data.models ?? [])
       .map((m) => m.name || m.model)
-      .filter((n): n is string => typeof n === "string" && n.length > 0);
+      .filter((n): n is string => typeof n === "string" && n.length > 0)
+      .filter((n) => !isCloudRoutedModelName(n));
     if (names.length === 0) {
       // Server is up but no models pulled — still report so user sees the hint.
       return { id: "ollama", label: "Ollama (local)", endpoint: host, models: [] };

@@ -10,6 +10,7 @@
 
 import { isElectron } from './types';
 import { coreAPI } from './core';
+import { agentLogs } from '../diagnostics';
 
 export type SecretsBackend = 'keychain' | 'safestorage' | 'plaintext' | 'memory';
 
@@ -37,7 +38,14 @@ export const secretsStore = {
   async list(): Promise<{ keys: string[]; backend: SecretsBackend }> {
     if (isElectron()) {
       const r = await window.electronAPI!.secretsList();
-      return { keys: r.keys || [], backend: (r.backend || 'plaintext') as SecretsBackend };
+      const result = { keys: r.keys || [], backend: (r.backend || 'plaintext') as SecretsBackend };
+      agentLogs.push({
+        source: 'system',
+        level: 'debug',
+        summary: `secretsStore.list → ${result.keys.length} key(s) from ${result.backend}`,
+        detail: result.keys.length > 0 ? `Keys: ${result.keys.join(', ')}` : '(no keys stored)',
+      });
+      return result;
     }
     return { keys: Array.from(memoryStore.keys()), backend: 'memory' };
   },
@@ -45,7 +53,16 @@ export const secretsStore = {
   async get(key: string): Promise<string> {
     if (isElectron()) {
       const r = await window.electronAPI!.secretsGet(key);
-      return r.success ? r.value || '' : '';
+      const value = r.success ? r.value || '' : '';
+      if (!r.success || !value) {
+        agentLogs.push({
+          source: 'system',
+          level: 'warn',
+          summary: `secretsStore.get(${key}) → empty/missing`,
+          detail: `success=${r.success}, value length=${value.length}, error=${r.error || 'none'}`,
+        });
+      }
+      return value;
     }
     return memoryStore.get(key) || '';
   },
@@ -53,6 +70,14 @@ export const secretsStore = {
   async set(key: string, value: string): Promise<boolean> {
     if (isElectron()) {
       const r = await window.electronAPI!.secretsSet(key, value);
+      agentLogs.push({
+        source: 'system',
+        level: r.success ? 'info' : 'error',
+        summary: r.success
+          ? `secretsStore.set(${key}) → saved (${value.length} chars)`
+          : `secretsStore.set(${key}) → FAILED`,
+        detail: r.success ? undefined : `error=${r.error || 'unknown'}`,
+      });
       return !!r.success;
     }
     memoryStore.set(key, value);
@@ -62,6 +87,12 @@ export const secretsStore = {
   async delete(key: string): Promise<boolean> {
     if (isElectron()) {
       const r = await window.electronAPI!.secretsDelete(key);
+      agentLogs.push({
+        source: 'system',
+        level: r.success ? 'info' : 'warn',
+        summary: r.success ? `secretsStore.delete(${key})` : `secretsStore.delete(${key}) → FAILED`,
+        detail: r.success ? undefined : `error=${r.error || 'unknown'}`,
+      });
       return !!r.success;
     }
     memoryStore.delete(key);
