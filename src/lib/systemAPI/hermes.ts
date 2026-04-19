@@ -700,14 +700,30 @@ export const hermesAPI = {
    *  Decrypts secrets and materializes ~/.hermes/.env (chmod 600) right
    *  before launch, so plaintext secrets only exist on disk while running. */
   async start(): Promise<CommandResult> {
+    agentLogs.push({ source: 'start', level: 'info', summary: 'Starting agent (interactive)…' });
     await materializeHermesEnv();
-    return runHermesCli('hermes', { timeout: 10000 });
+    const r = await runHermesCli('hermes', { timeout: 10000 });
+    agentLogs.push({
+      source: 'start',
+      level: r.success ? 'info' : 'error',
+      summary: r.success ? 'Agent launched' : `Agent failed to start (exit=${r.code})`,
+      detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
+    });
+    return r;
   },
 
   /** Start the messaging gateway */
   async startGateway(): Promise<CommandResult> {
+    agentLogs.push({ source: 'gateway', level: 'info', summary: 'Starting messaging gateway…' });
     await materializeHermesEnv();
-    return runHermesCli('hermes gateway start', { timeout: 30000 });
+    const r = await runHermesCli('hermes gateway start', { timeout: 30000 });
+    agentLogs.push({
+      source: 'gateway',
+      level: r.success ? 'info' : 'error',
+      summary: r.success ? 'Gateway started' : `Gateway failed (exit=${r.code})`,
+      detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
+    });
+    return r;
   },
 
   /** Send a single chat prompt to the agent and return its reply.
