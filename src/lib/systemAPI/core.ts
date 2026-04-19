@@ -63,8 +63,22 @@ export const coreAPI = {
     options?: Record<string, unknown>,
     onOutput?: (event: Omit<CommandOutputEvent, 'streamId'>) => void,
   ): Promise<CommandResult> {
+    const start = Date.now();
+    const finalize = (result: CommandResult) => {
+      diagnostics.push({
+        label: labelForCommand(cmd),
+        command: truncateForLog(cmd, 2000),
+        exitCode: typeof result.code === 'number' ? result.code : null,
+        success: result.success,
+        stdout: truncateForLog(result.stdout || ''),
+        stderr: truncateForLog(result.stderr || ''),
+        durationMs: Date.now() - start,
+      });
+      return result;
+    };
+
     if (isElectron()) {
-      return new Promise((resolve) => {
+      return new Promise<CommandResult>((resolve) => {
         const { id, promise } = window.electronAPI!.runCommandStream(cmd, options);
         let stdout = '';
         let stderr = '';
@@ -83,24 +97,24 @@ export const coreAPI = {
         promise
           .then((result) => {
             unsubscribe();
-            resolve({
+            resolve(finalize({
               success: result.success,
               stdout,
               stderr,
               code: typeof result.code === 'number' ? result.code : code,
-            });
+            }));
           })
           .catch((error) => {
             unsubscribe();
             const message = error instanceof Error ? error.message : String(error);
             const normalized = message.endsWith('\n') ? message : `${message}\n`;
             onOutput?.({ type: 'stderr', data: normalized, code: 1 });
-            resolve({
+            resolve(finalize({
               success: false,
               stdout,
               stderr: `${stderr}${normalized}`,
               code: code || 1,
-            });
+            }));
           });
       });
     }
