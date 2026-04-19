@@ -1,60 +1,87 @@
 
 
-# Hermes Agent Control Panel — Electron Desktop App
+## Diagnosis: why nothing reaches the agent
 
-A modern dark glass-styled desktop application for installing, configuring, and monitoring NousResearch's Hermes Agent.
+The error in your Diagnostics panel is the smoking gun:
+```
+materializeEnv failed: cp: missing destination file operand after '/mnt/c/Users/Kadosh/.ainoval/tmp/write-xxx.dat'
+chmod: missing operand after '600'
+```
 
-## Core Screens
+That filename pattern (`write-<stamp>.dat`) is built by `writeHermesFile` in `src/lib/systemAPI/hermes.ts` (line 153). It's the function the chat path uses to materialize `~/.hermes/.env` before every chat.
 
-### 1. Welcome / Connection Screen
-- **Connect to running agent**: Enter the Hermes gateway URL or detect a locally running instance
-- **Install & Setup Wizard**: Step-by-step guided installation (Python/pip install, initial config, provider setup, first run) — mirrors `hermes_cli/setup.py` flow with a visual UI
+### Root cause: cmd.exe is eating the destination argument
 
-### 2. Dashboard (Main View)
-- Agent health status (online/offline, uptime, CPU/memory)
-- Active sub-agents list with current task descriptions (from `delegate_tool`)
-- Live activity feed / log stream from the agent
-- Quick-action buttons (restart, pause, open terminal)
+`writeHermesFile` on Windows builds this script and passes it through `cmd.exe → wsl bash -lc "..."`:
 
-### 3. Sub-Agent Monitor
-- Tree/graph view of parent agent → spawned sub-agents
-- Per-agent: status, current task, model being used, token usage
-- Ability to kill/pause individual sub-agents
+```bash
+TARGET="$HOME/.hermes/.env"
+mkdir -p "$(dirname "$TARGET")"
+cp "/mnt/c/.../write-xxx.dat" "$TARGET"
+chmod 600 "$TARGET"
+```
 
-### 4. LLM Configuration
-- List of configured providers (OpenAI, Anthropic, local models via Ollama/vLLM, etc.)
-- Toggle which models are available to the agent
-- Set default model, auxiliary model
-- Local model setup helper (detect Ollama, configure endpoints)
+The whole script is wrapped in **outer double quotes** for `wsl bash -lc "<script>"`. But the script itself contains many **inner double quotes** (`"$HOME/.hermes/.env"`, `"$(dirname "$TARGET")"`, the `cp` operands, etc.). `cmd.exe` does not honor backslash-escaping of `"` — every inner `"` closes the outer argument prematurely.
 
-### 5. API Keys & Credentials
-- Secure entry and storage for provider API keys
-- Maps to Hermes `auth.py` provider registry
-- Show key status (valid/invalid/expired)
-- Stored encrypted locally via Electron's safeStorage API
+Result: by the time bash sees the command, `cp`'s second argument and `chmod`'s argument have been chopped off → the materialization aborts → `~/.hermes/.env` is never written → the agent has no `OPENROUTER_API_KEY` → "No inference provider configured."
 
-### 6. Skills Manager
-- Browse installed, bundled, and optional skills
-- Enable/disable skills per platform
-- Install optional skills from the official repo
-- View skill details and capabilities
+The local-model error has the **same root cause**: even local providers fail because materializeEnv crashes early (`set -e` in chat script aborts before any model logic runs), and even when it doesn't abort, the chat code's diagnostics show the env wasn't sourced.
 
-### 7. Settings & Terminal
-- Embedded terminal for direct Hermes CLI access
-- Agent configuration editor (config.yaml)
-- Gateway platform management (Telegram, Discord, etc.)
-- Cron/scheduler job management
+We previously fixed this exact bug in `secretsStore.materializeEnv` by base64-encoding the script before handing it to cmd.exe. `writeHermesFile` was never given the same treatment — so every `writeConfig` / `materializeHermesEnv` / `setEnvVar` call on Windows is broken in the same way.
 
-## Technical Approach
-- **Electron app** packaged for Windows, macOS, and Linux
-- **React + Tailwind** UI with the modern dark glass aesthetic you chose
-- **Admin/CLI access** via Node.js `child_process` in Electron main process
-- Communication with Hermes via its Gateway API server and direct CLI commands
-- All screens built as React routes with smooth transitions
+### Why the LLM Config tab also says "No API key found"
+That tab reads the materialized `~/.hermes/.env` to verify the key is present. Since materialization silently fails on Windows, the file never contains the key the user just added → false "missing key" warning, even though it's correctly stored in the OS keychain.
 
-## Design System
-- Dark gradient background (slate-950 → indigo-950)
-- Glassmorphism cards (backdrop-blur, white/5 backgrounds, white/10 borders)
-- Violet/indigo/cyan accent colors for metrics and highlights
-- Clean typography, rounded corners, subtle shadows
+---
+
+## The fix
+
+### 1. Make `writeHermesFile` cmd-safe on Windows (the actual bug)
+In `src/lib/systemAPI/hermes.ts`, the Windows branch of `writeHermesFile` will be rewritten to base64-encode the entire bash script before passing it through cmd.exe — same pattern that already works for `runHermesShell`. cmd.exe then sees only safe characters (`echo <b64> | base64 -d | bash`), and bash receives the script intact with all its nested quotes preserved.
+
+This single change unblocks: `materializeHermesEnv`, `writeConfig`, `setEnvVar`, `removeEnvVar`, and the install flow's first-time config write.
+
+### 2. Add a persistent, user-visible diagnostics layer
+Right now diagnostics only appear inline in failed chat bubbles. We will add:
+
+- **A "Diagnostics" page** (new route `/diagnostics`, sidebar entry under Settings) that shows:
+  - Last materialization attempt: timestamp, result, full stderr/stdout
+  - Current contents of `~/.hermes/.env` (key names + value lengths only — never the raw secret)
+  - Current `~/.hermes/config.yaml` model line
+  - Output of a one-click "Run hermes doctor" button
+  - Output of a one-click "Test chat round-trip" button (sends "ping", shows full raw stdout/stderr)
+- **A rolling in-memory log buffer** (`src/lib/diagnostics.ts`) that every shell call in `systemAPI` appends to: `{ timestamp, label, command, exitCode, stdout, stderr, durationMs }`. Capped at the last 200 entries. Viewable + copy-to-clipboard + download-as-text from the Diagnostics page.
+- **Toast on materialize failure** anywhere in the app (not just chat), with a "View diagnostics" action that deep-links to the page.
+
+### 3. Tighten the chat error path
+- When materialization fails, the chat bubble will show a hard error ("Failed to sync secrets to agent — open Diagnostics") instead of the misleading "No API key found" CTA.
+- Stop attempting to call `hermes chat` at all if materialization failed; the result is guaranteed wrong and the noisy banner only confuses things further.
+
+### 4. Defensive verification step
+After every materialize, immediately read `~/.hermes/.env` back and assert the expected keys are present (length > 0). If not, surface a clear error rather than letting the chat run against a stale/empty env.
+
+---
+
+## Files touched
+
+```text
+src/lib/systemAPI/hermes.ts          (fix writeHermesFile Windows path,
+                                      tighten chat materialize-fail handling,
+                                      add post-write verification)
+src/lib/diagnostics.ts               (new — in-memory log buffer + helpers)
+src/lib/systemAPI/core.ts            (hook runCommand/runCommandStream into
+                                      the diagnostics buffer)
+src/pages/Diagnostics.tsx            (new — diagnostics dashboard)
+src/components/layout/AppSidebar.tsx (add "Diagnostics" nav entry)
+src/App.tsx                          (register /diagnostics route)
+src/pages/AgentChat.tsx              (clearer error bubble + link to Diagnostics
+                                      when materialize fails)
+```
+
+## How you'll verify it worked
+
+1. Open the new **Diagnostics** page → click "Sync secrets now" → see "OK, wrote N keys to ~/.hermes/.env" with the file contents listed (key names only).
+2. Switch back to **Agent Chat** with OpenRouter selected → send "hi" → get a real reply.
+3. Switch model to your local Qwen → send "hi" → get a real reply (no key needed for local).
+4. If anything still fails, the Diagnostics page will show the exact shell command that ran, its exit code, and full stdout/stderr — so we can pinpoint any remaining issue in one screenshot.
 
