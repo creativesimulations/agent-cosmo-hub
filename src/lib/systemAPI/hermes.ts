@@ -663,15 +663,24 @@ export const hermesAPI = {
 
     const boxChars = /[│┃┆┇┊┋║╎╏╽╿─━┄┅┈┉═╌╍╴╶╸╺▎▏▕▌▐▔▁▂▃▄▅▆▇█╭╮╯╰┌┐└┘├┤┬┴┼╔╗╚╝╠╣╦╩╬]/;
 
-    const cleaned = stripAnsi(result.stdout || '')
+    // Pull diagnostic lines out separately so we can show them to the user
+    // when there's an error, but keep them out of the normal reply.
+    const rawLines = stripAnsi(result.stdout || '')
       .split('\n')
-      .map((line) => line.replace(/\r/g, ''))
+      .map((line) => line.replace(/\r/g, ''));
+
+    const diagnostics = rawLines
+      .filter((line) => /^\[hermes-diag\]/.test(line.trim()))
+      .map((line) => line.trim().replace(/^\[hermes-diag\]\s*/, ''))
+      .join('\n');
+
+    const cleaned = rawLines
       .filter((line) => {
         const t = line.trim();
         if (!t) return false;
         if (boxChars.test(t)) return false;
         if (/^(hermes agent v|available tools|available skills|session:|tip:|warning:|⚠|✦|⚕|❯)/i.test(t)) return false;
-        if (/^\[hermes\]/.test(t)) return false;
+        if (/^\[hermes(-diag)?\]/.test(t)) return false;
         if (/^\d+\s+tools\s+·\s+\d+\s+skills/i.test(t)) return false;
         if (/^\/(exit|help)\b/.test(t)) return false;
         if (/^query:\s/i.test(t)) return false;
@@ -683,17 +692,11 @@ export const hermesAPI = {
 
     // Detect Hermes's "no inference provider" / "missing API key" error so the
     // UI can render an actionable CTA → Secrets tab.
-    //
-    // IMPORTANT: Hermes prints a help hint that mentions
-    // "set an API key (OPENROUTER_API_KEY, ...) in ~/.hermes/.env"
-    // inside its splash banner on EVERY chat invocation, even when the key
-    // is set and the model replies normally. So we must NOT match on that
-    // phrasing alone — we look for the specific runtime error string and,
-    // as a safety net, verify the relevant env var is actually missing
-    // from ~/.hermes/.env before flagging it to the user.
     let missingKey: { provider: string; envVar: string } | undefined;
-    const hardErrorRe = /no inference provider configured|missing api key|api key.*not (set|found)|invalid api key|unauthorized.*api key/i;
-    if (hardErrorRe.test(cleaned)) {
+    const hardErrorRe = /missing api key|api key.*not (set|found)|invalid api key|unauthorized.*api key|401.*unauthorized/i;
+    const noProviderRe = /no inference provider configured/i;
+
+    if (hardErrorRe.test(cleaned) || noProviderRe.test(cleaned)) {
       const cfg = await readHermesFile(HERMES_CONFIG);
       const modelLine = cfg.success ? cfg.content?.match(/^\s*model:\s*(.+)\s*$/m)?.[1]?.trim() ?? '' : '';
       const provider = modelLine.split('/')[0]?.toLowerCase() ?? '';
@@ -710,19 +713,24 @@ export const hermesAPI = {
           nous: { provider: 'Nous Portal', envVar: 'NOUS_API_KEY' },
         };
         const candidate = envByProvider[provider];
-        // Only nag for known cloud providers — avoid wrong "Add OPENROUTER_API_KEY"
-        // suggestions when the model string is unknown or local.
+        // Only flag missing key when the diagnostic confirms the env var is
+        // genuinely NOT set in the chat shell. The diagnostic is the source
+        // of truth — it ran with the same env hermes saw. If diag says it's
+        // set, hermes had it too, so the real problem is config (e.g.
+        // unrecognized model), not a missing key.
         if (candidate) {
-          // Verify the key really is absent. Accept KEY=value, KEY="value", KEY='value'.
-          const envFile = await readHermesFile(HERMES_ENV);
-          const keyRe = new RegExp(`^\\s*${candidate.envVar}\\s*=\\s*["']?\\S`, 'm');
-          const keyPresent = envFile.success && keyRe.test(envFile.content || '');
-          if (!keyPresent) missingKey = candidate;
+          const diagSaysSet = new RegExp(`${candidate.envVar}\\s+is\\s+set`).test(diagnostics);
+          if (!diagSaysSet) missingKey = candidate;
         }
       }
     }
 
-    return { ...result, reply: cleaned || stripAnsi(result.stdout || '').trim(), missingKey };
+    return {
+      ...result,
+      reply: cleaned || stripAnsi(result.stdout || '').trim(),
+      diagnostics: diagnostics || (mat.success ? '' : `materializeEnv failed: ${mat.error || 'unknown'}`),
+      missingKey,
+    };
   },
 
   /** Write initial config for first-time setup */
