@@ -41,6 +41,7 @@ import { systemAPI } from "@/lib/systemAPI";
 import { useInstall, OPTIONAL_FEATURES, InstallStep } from "@/contexts/InstallContext";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import ronbotLogo from "@/assets/ronbot-logo.png";
+import { LLM_PROVIDERS, MODEL_OPTIONS } from "@/lib/llmCatalog";
 
 const installSteps = [
   { title: "System Prerequisites", desc: "Detect & install required dependencies" },
