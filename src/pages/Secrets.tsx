@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import {
-  KeyRound, Eye, EyeOff, Plus, Trash2, Globe, Shield, Loader2, Save, Lock, AlertTriangle, ArrowDownToLine,
+  KeyRound, Eye, EyeOff, Plus, Trash2, Globe, Shield, Loader2, Save, Lock, AlertTriangle, ArrowDownToLine, RefreshCw,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { systemAPI, secretsStore, type SecretsBackend } from "@/lib/systemAPI";
+import { toast } from "sonner";
 
 interface SecretEntry {
   envVar: string;
@@ -50,6 +51,7 @@ const Secrets = () => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [backend, setBackend] = useState<{ backend: SecretsBackend; label: string } | null>(null);
   const [migrating, setMigrating] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     init();
@@ -59,8 +61,6 @@ const Secrets = () => {
     setLoading(true);
     const info = await secretsStore.getBackend();
     setBackend(info);
-    // Auto-migrate any plaintext .env into secure storage on first load
-    await secretsStore.migrateFromEnv();
     await loadKeys();
     setLoading(false);
   };
@@ -81,6 +81,24 @@ const Secrets = () => {
     setKeys(entries);
   };
 
+  // Push the current secret store into ~/.hermes/.env so the agent can see it.
+  // Called automatically after add/delete and exposed as a manual button.
+  const syncToAgent = async (showToast = false) => {
+    setSyncing(true);
+    const res = await secretsStore.materializeEnv();
+    setSyncing(false);
+    if (showToast) {
+      if (res.success) {
+        toast.success("Secrets synced to agent", {
+          description: `${res.count ?? 0} secret${res.count === 1 ? "" : "s"} written to ~/.hermes/.env`,
+        });
+      } else {
+        toast.error("Failed to sync secrets", { description: res.error || "Unknown error" });
+      }
+    }
+    return res;
+  };
+
   const toggleVisibility = (envVar: string) => {
     setShowKeys((prev) => ({ ...prev, [envVar]: !prev[envVar] }));
   };
@@ -88,7 +106,12 @@ const Secrets = () => {
   const handleAddKey = async () => {
     if (!newKeyName || !newKeyValue) return;
     setAdding(true);
-    await secretsStore.set(newKeyName, newKeyValue);
+    const ok = await secretsStore.set(newKeyName, newKeyValue);
+    if (ok) {
+      // Immediately push to ~/.hermes/.env so the agent sees the new key
+      // without the user having to re-run the install wizard.
+      await syncToAgent(false);
+    }
     setNewKeyName("");
     setNewKeyValue("");
     setShowAddForm(false);
@@ -98,6 +121,7 @@ const Secrets = () => {
 
   const handleDeleteKey = async (envVar: string) => {
     await secretsStore.delete(envVar);
+    await syncToAgent(false);
     await loadKeys();
   };
 
@@ -106,6 +130,10 @@ const Secrets = () => {
     await secretsStore.migrateFromEnv();
     await loadKeys();
     setMigrating(false);
+  };
+
+  const handleManualSync = () => {
+    void syncToAgent(true);
   };
 
   const style = backend ? backendStyles[backend.backend] : backendStyles.plaintext;
@@ -161,20 +189,35 @@ const Secrets = () => {
           </div>
         </div>
         {backend?.backend !== "memory" && (
-          <div className="flex items-center justify-between pt-2 border-t border-white/5">
-            <p className="text-xs text-muted-foreground">
-              Found old secrets in <code>.env</code>? Re-import them into secure storage.
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
+            <p className="text-xs text-muted-foreground flex-1">
+              Secrets are pushed to <code>~/.hermes/.env</code> automatically when you add or
+              remove a key. Use the buttons if anything looks out of sync.
             </p>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleMigrateFromEnv}
-              disabled={migrating}
-              className="h-7 text-xs"
-            >
-              {migrating ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <ArrowDownToLine className="w-3 h-3 mr-1" />}
-              Re-import from .env
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleMigrateFromEnv}
+                disabled={migrating}
+                className="h-7 text-xs"
+                title="Pull credential-shaped keys out of an existing plaintext .env into secure storage"
+              >
+                {migrating ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <ArrowDownToLine className="w-3 h-3 mr-1" />}
+                Re-import .env
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleManualSync}
+                disabled={syncing}
+                className="h-7 text-xs"
+                title="Decrypt all stored secrets and write them to ~/.hermes/.env"
+              >
+                {syncing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+                Sync to agent
+              </Button>
+            </div>
           </div>
         )}
       </GlassCard>

@@ -70,86 +70,128 @@ export const secretsStore = {
 
   /**
    * Decrypt all stored secrets and write them to ~/.hermes/.env (chmod 600).
-   * Call this immediately before launching the agent.
+   * Call this immediately before launching the agent OR right after the
+   * user edits a secret in the Secrets tab.
    *
-   * IMPORTANT: On Windows the agent lives inside WSL at
-   * \\wsl$\<distro>\home\<user>\.hermes — NOT under C:\Users\<user>\.
-   * We therefore write the .env via `wsl bash -lc` so it lands in the
-   * Linux $HOME, not the Windows profile (where the hermes CLI can't see it).
-   * On macOS/Linux the OS home directory matches, so a direct shell write works.
+   * Strategy: build the .env content fully in JS, then hand it to the
+   * shell as a base64 blob. On Windows we additionally stage the payload
+   * through a Windows temp file and use a minimal `wsl cp` — this avoids
+   * cmd.exe mangling shell metacharacters (the source of the recurring
+   * "'true' is not recognized" + "system cannot find the path specified"
+   * errors).
    */
-  async materializeEnv(): Promise<{ success: boolean; count?: number; path?: string }> {
+  async materializeEnv(): Promise<{ success: boolean; count?: number; path?: string; error?: string }> {
     if (!isElectron()) return { success: true, count: memoryStore.size };
 
-    // Collect all secrets in the renderer (we already have IPC for this).
+    // 1. Collect all secrets.
     const { keys } = await this.list();
     const entries = (await Promise.all(
       keys.map(async (k) => [k, await this.get(k)] as const),
     )).filter(([, v]) => v !== '');
 
     const platform = await coreAPI.getPlatform();
-    const useWsl = platform.isWindows;
 
-    // Build a heredoc-safe script that writes ~/.hermes/.env atomically with chmod 600.
-    // We base64-encode each value so quotes/newlines/backticks can't break out.
-    const encoded = entries.map(([k, v]) => {
-      const b64 = btoa(unescape(encodeURIComponent(v)));
-      return `${k}|${b64}`;
-    }).join('\n');
+    // 2. Read existing .env (if any) and preserve non-managed lines so we
+    //    don't clobber comments or user-added keys.
+    const managedKeys = new Set(entries.map(([k]) => k));
+    const readScript = [
+      'TARGET="$HOME/.hermes/.env"',
+      '[ -f "$TARGET" ] && cat "$TARGET" || true',
+    ].join('\n');
+    const readB64 = btoa(unescape(encodeURIComponent(readScript)));
+    const readDecode = `echo ${readB64} | base64 -d | bash`;
+    const readCmd = platform.isWindows ? `wsl bash -lc "${readDecode}"` : `bash -lc "${readDecode}"`;
+    const readRes = await coreAPI.runCommand(readCmd, { timeout: 15000 });
 
-    const payloadB64 = btoa(unescape(encodeURIComponent(encoded)));
-    const script = [
+    const preservedLines: string[] = [];
+    if (readRes.success && readRes.stdout) {
+      for (const line of readRes.stdout.split('\n')) {
+        const t = line.trim();
+        if (!t) { preservedLines.push(line); continue; }
+        if (t.startsWith('#')) {
+          // Skip our own managed-block marker so it doesn't accumulate.
+          if (/Managed by Ainoval/i.test(t)) continue;
+          preservedLines.push(line);
+          continue;
+        }
+        const eq = t.indexOf('=');
+        if (eq < 1) { preservedLines.push(line); continue; }
+        const k = t.substring(0, eq).trim();
+        if (!managedKeys.has(k)) preservedLines.push(line);
+      }
+    }
+
+    // 3. Build the final .env content entirely in JS (no shell quoting).
+    const escapeForDoubleQuotes = (v: string) =>
+      v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
+    const managedBlock = entries
+      .map(([k, v]) => `${k}="${escapeForDoubleQuotes(v)}"`)
+      .join('\n');
+    const content =
+      (preservedLines.length ? preservedLines.join('\n').replace(/\n+$/, '') + '\n' : '') +
+      '# ─── Managed by Ainoval (do not edit by hand) ───\n' +
+      managedBlock + '\n';
+
+    // 4. Write the content. On Windows, stage via Windows temp + `wsl cp`
+    //    to sidestep cmd.exe quoting bugs entirely.
+    if (platform.isWindows) {
+      const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const winTmpDir = `${platform.homeDir}\\.ainoval\\tmp`;
+      const winTmpFile = `${winTmpDir}\\env-${stamp}.dat`;
+      await coreAPI.mkdir(winTmpDir);
+      const wrote = await coreAPI.writeFile(winTmpFile, content);
+      if (!wrote.success) {
+        return { success: false, error: wrote.error || 'Failed to stage .env content' };
+      }
+      const drive = winTmpFile[0].toLowerCase();
+      const wslSource = `/mnt/${drive}${winTmpFile.slice(2).replace(/\\/g, '/')}`;
+      // Tiny script — no `||`, no pipes, nothing cmd.exe can mangle.
+      const script = [
+        'TARGET="$HOME/.hermes/.env"',
+        'mkdir -p "$(dirname "$TARGET")"',
+        `cp "${wslSource}" "$TARGET"`,
+        `rm -f "${wslSource}"`,
+        'chmod 600 "$TARGET"',
+        'echo "[materialize] wrote $TARGET"',
+      ].join('; ');
+      const result = await coreAPI.runCommand(`wsl bash -lc "${script}"`, { timeout: 30000 });
+      return {
+        success: result.success,
+        count: entries.length,
+        path: '\\\\wsl$\\<distro>\\home\\<user>\\.hermes\\.env',
+        error: result.success ? undefined : (result.stderr || result.stdout || 'wsl cp failed'),
+      };
+    }
+
+    // macOS / Linux: write content via base64 pipe — single shell, no cmd.exe.
+    const contentB64 = btoa(unescape(encodeURIComponent(content)));
+    const writeScript = [
       'set -e',
       'TARGET="$HOME/.hermes/.env"',
       'mkdir -p "$(dirname "$TARGET")"',
-      // Preserve any existing non-managed lines (comments, user-added keys).
-      'PRESERVED=""',
-      'if [ -f "$TARGET" ]; then',
-      `  MANAGED_KEYS="${entries.map(([k]) => k).join(' ')}"`,
-      '  PRESERVED=$(awk -v keys="$MANAGED_KEYS" \'',
-      '    BEGIN { n=split(keys, arr, " "); for (i=1;i<=n;i++) drop[arr[i]]=1 }',
-      '    /^[[:space:]]*#/ || /^[[:space:]]*$/ { print; next }',
-      '    { eq=index($0, "="); if (eq<2) { print; next } k=substr($0,1,eq-1); gsub(/^[ \\t]+|[ \\t]+$/, "", k); if (!(k in drop)) print }',
-      '  \' "$TARGET")',
-      'fi',
-      '{',
-      '  if [ -n "$PRESERVED" ]; then printf "%s\\n" "$PRESERVED"; fi',
-      '  echo "# ─── Managed by Ainoval (do not edit by hand) ───"',
-      `  echo "${payloadB64}" | base64 -d | while IFS='|' read -r key b64v; do`,
-      '    [ -z "$key" ] && continue',
-      '    val=$(echo "$b64v" | base64 -d)',
-      '    # Escape backslashes and double-quotes for the .env value',
-      '    esc=$(printf "%s" "$val" | sed -e \'s/\\\\/\\\\\\\\/g\' -e \'s/"/\\\\"/g\')',
-      '    printf "%s=\\"%s\\"\\n" "$key" "$esc"',
-      '  done',
-      '} > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"',
+      `echo ${contentB64} | base64 -d > "$TARGET"`,
       'chmod 600 "$TARGET" || true',
       'echo "[materialize] wrote $TARGET"',
     ].join('\n');
-
-    const wrappedB64 = btoa(unescape(encodeURIComponent(script)));
-    const decode = `echo ${wrappedB64} | base64 -d | bash`;
-    const cmd = useWsl ? `wsl bash -lc "${decode}"` : `bash -lc "${decode}"`;
-
-    const result = await coreAPI.runCommand(cmd, { timeout: 30000 });
+    const writeB64 = btoa(unescape(encodeURIComponent(writeScript)));
+    const writeCmd = `bash -lc "echo ${writeB64} | base64 -d | bash"`;
+    const result = await coreAPI.runCommand(writeCmd, { timeout: 30000 });
     return {
       success: result.success,
       count: entries.length,
-      path: useWsl ? '\\\\wsl$\\<distro>\\home\\<user>\\.hermes\\.env' : `${platform.homeDir}/.hermes/.env`,
+      path: `${platform.homeDir}/.hermes/.env`,
+      error: result.success ? undefined : (result.stderr || result.stdout || 'write failed'),
     };
   },
 
   /**
    * Heuristic: is this .env entry an actual user secret (API key / token /
-   * password), or just a Hermes config flag like TERMINAL_TIMEOUT or
-   * BROWSERBASE_PROXIES that the installer dropped into .env as a default?
-   *
-   * We deliberately keep the Secrets tab focused on credentials only — config
-   * flags belong in the Config Editor, not in an "encrypted secret" list.
+   * password), or just a Hermes config flag like TERMINAL_TIMEOUT?
+   * Used ONLY to decide what to import from a plaintext .env into secure
+   * storage — never to delete existing secrets the user has stored.
    */
   isLikelySecretKey(key: string): boolean {
     const k = key.toUpperCase();
-    // Allow-list: well-known credential providers we explicitly support.
     const KNOWN = [
       'OPENROUTER_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
       'NOUS_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY', 'GROQ_API_KEY',
@@ -158,41 +200,32 @@ export const secretsStore = {
       'EXA_API_KEY', 'FIRECRAWL_API_KEY', 'ELEVENLABS_API_KEY',
       'BROWSERBASE_API_KEY', 'BROWSERBASE_PROJECT_ID',
       'HUGGINGFACE_API_KEY', 'REPLICATE_API_TOKEN',
+      'DEEPSEEK_API_KEY',
     ];
     if (KNOWN.includes(k)) return true;
-    // Generic shape match: looks like a credential.
     if (/(_API_KEY|_SECRET|_TOKEN|_PASSWORD|_PRIVATE_KEY|_ACCESS_KEY)$/.test(k)) return true;
     return false;
   },
 
   /**
-   * One-shot migration: pull credential-shaped keys out of the plaintext .env
-   * into secure storage. Idempotent — safe to call on app startup.
+   * IMPORT-ONLY migration: pull credential-shaped keys out of the plaintext
+   * .env into secure storage. Idempotent — safe to call repeatedly.
    *
-   * Skips Hermes config flags (TERMINAL_*, BROWSER_*, *_DEBUG, etc.) so the
-   * Secrets tab only shows actual user credentials.
+   * IMPORTANT: This function NEVER deletes anything from secure storage.
+   * Earlier versions auto-pruned keys whose names didn't match the heuristic,
+   * which caused real user-entered secrets to silently disappear when the
+   * Secrets page remounted. Pruning is now a separate, explicit operation.
    *
-   * Reads from the agent's actual .env location: on Windows that's inside WSL
-   * (\\wsl$\<distro>\home\<user>\.hermes\.env), not the Windows profile.
+   * - Skips Hermes config flags (TERMINAL_*, BROWSER_*, *_DEBUG, etc.)
+   * - Won't overwrite an existing stored value with a placeholder
+   * - Reads from the agent's actual .env location (inside WSL on Windows)
    */
-  async migrateFromEnv(): Promise<{ success: boolean; migrated?: number; cleanedUp?: number }> {
+  async migrateFromEnv(): Promise<{ success: boolean; migrated?: number }> {
     if (!isElectron()) return { success: true, migrated: 0 };
-
-    // First, prune any non-secret junk that previous versions of this app
-    // imported (TERMINAL_TIMEOUT, BROWSERBASE_PROXIES, *_DEBUG, etc.).
-    const existing = await this.list();
-    let cleanedUp = 0;
-    for (const k of existing.keys) {
-      if (!this.isLikelySecretKey(k)) {
-        if (await this.delete(k)) cleanedUp++;
-      }
-    }
 
     const platform = await coreAPI.getPlatform();
     const useWsl = platform.isWindows;
 
-    // Cat the .env from inside the correct shell environment (WSL on Windows,
-    // native shell elsewhere). Returns nothing if the file is absent.
     const script = [
       'TARGET="$HOME/.hermes/.env"',
       '[ -f "$TARGET" ] && cat "$TARGET" || true',
@@ -201,7 +234,11 @@ export const secretsStore = {
     const decode = `echo ${b64} | base64 -d | bash`;
     const cmd = useWsl ? `wsl bash -lc "${decode}"` : `bash -lc "${decode}"`;
     const read = await coreAPI.runCommand(cmd, { timeout: 15000 });
-    if (!read.success || !read.stdout) return { success: true, migrated: 0, cleanedUp };
+    if (!read.success || !read.stdout) return { success: true, migrated: 0 };
+
+    // Don't overwrite already-stored secrets — only import keys that aren't
+    // already in secure storage (or whose stored value is empty).
+    const existing = new Set((await this.list()).keys);
 
     let migrated = 0;
     for (const line of read.stdout.split('\n')) {
@@ -210,17 +247,20 @@ export const secretsStore = {
       const eq = t.indexOf('=');
       if (eq < 1) continue;
       const key = t.substring(0, eq).trim();
-      // Skip non-secret config flags entirely.
       if (!this.isLikelySecretKey(key)) continue;
       let value = t.substring(eq + 1).trim();
       if ((value.startsWith('"') && value.endsWith('"')) ||
           (value.startsWith("'") && value.endsWith("'"))) {
         value = value.slice(1, -1);
       }
-      // Don't overwrite a non-empty user-entered value with a placeholder.
       if (!value || /^(your[-_]|placeholder|changeme|xxx)/i.test(value)) continue;
+      // Don't clobber a value the user already has in secure storage.
+      if (existing.has(key)) {
+        const stored = await this.get(key);
+        if (stored) continue;
+      }
       if (await this.set(key, value)) migrated++;
     }
-    return { success: true, migrated, cleanedUp };
+    return { success: true, migrated };
   },
 };
