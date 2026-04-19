@@ -189,20 +189,35 @@ const Secrets = () => {
           </div>
         </div>
         {backend?.backend !== "memory" && (
-          <div className="flex items-center justify-between pt-2 border-t border-white/5">
-            <p className="text-xs text-muted-foreground">
-              Found old secrets in <code>.env</code>? Re-import them into secure storage.
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
+            <p className="text-xs text-muted-foreground flex-1">
+              Secrets are pushed to <code>~/.hermes/.env</code> automatically when you add or
+              remove a key. Use the buttons if anything looks out of sync.
             </p>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleMigrateFromEnv}
-              disabled={migrating}
-              className="h-7 text-xs"
-            >
-              {migrating ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <ArrowDownToLine className="w-3 h-3 mr-1" />}
-              Re-import from .env
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleMigrateFromEnv}
+                disabled={migrating}
+                className="h-7 text-xs"
+                title="Pull credential-shaped keys out of an existing plaintext .env into secure storage"
+              >
+                {migrating ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <ArrowDownToLine className="w-3 h-3 mr-1" />}
+                Re-import .env
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleManualSync}
+                disabled={syncing}
+                className="h-7 text-xs"
+                title="Decrypt all stored secrets and write them to ~/.hermes/.env"
+              >
+                {syncing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+                Sync to agent
+              </Button>
+            </div>
           </div>
         )}
       </GlassCard>
