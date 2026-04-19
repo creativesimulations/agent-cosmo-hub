@@ -1,5 +1,15 @@
 import { isElectron } from './types';
 import type { CommandResult, PlatformInfo, DiskSpaceInfo } from './types';
+import { diagnostics, truncateForLog } from '@/lib/diagnostics';
+
+const labelForCommand = (cmd: string): string => {
+  const trimmed = cmd.trim();
+  if (trimmed.startsWith('wsl ')) return 'wsl';
+  if (trimmed.startsWith('bash ')) return 'bash';
+  if (trimmed.startsWith('powershell') || trimmed.startsWith('pwsh')) return 'powershell';
+  if (trimmed.startsWith('cmd ')) return 'cmd';
+  return trimmed.split(/\s+/)[0] || 'cmd';
+};
 
 type CommandOutputEvent = {
   streamId: string;
