@@ -19,6 +19,7 @@ interface Message {
   streaming?: boolean;
   missingKey?: { provider: string; envVar: string };
   diagnostics?: string;
+  materializeFailed?: boolean;
 }
 
 const loadStoredMessages = (): Message[] => {
@@ -89,6 +90,7 @@ const AgentChat = () => {
     try {
       const result = await systemAPI.chatAgent(promptText);
       const reply = result.reply || result.stdout?.trim() || "(no response)";
+      const matFailed = (result as { materializeFailed?: boolean }).materializeFailed === true;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === placeholderId
@@ -96,19 +98,22 @@ const AgentChat = () => {
                 ...m,
                 content: result.success && !result.missingKey
                   ? reply
-                  : result.missingKey
-                    ? `No API key found for ${result.missingKey.provider}. Add ${result.missingKey.envVar} in the Secrets tab to start chatting.`
-                    : `Error: ${result.stderr || reply}`,
+                  : matFailed
+                    ? `Failed to sync your secrets to the agent. Open Diagnostics for the exact shell error.\n\n${result.stderr || ""}`
+                    : result.missingKey
+                      ? `No API key found for ${result.missingKey.provider}. Add ${result.missingKey.envVar} in the Secrets tab to start chatting.`
+                      : `Error: ${result.stderr || reply}`,
                 streaming: false,
-                missingKey: result.missingKey,
+                missingKey: matFailed ? undefined : result.missingKey,
                 diagnostics: result.diagnostics,
+                materializeFailed: matFailed,
               }
             : m,
         ),
       );
       if (!result.success && !result.missingKey) {
         toast({
-          title: "Agent error",
+          title: matFailed ? "Secret sync failed" : "Agent error",
           description: result.stderr?.split("\n")[0] || "Failed to get a reply from the agent.",
           variant: "destructive",
         });
