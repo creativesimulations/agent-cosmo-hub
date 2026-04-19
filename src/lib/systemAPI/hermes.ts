@@ -74,9 +74,20 @@ const buildHermesShellCommand = async (script: string): Promise<string> => {
     return platform.isWindows ? `wsl bash -lc "${decodeCmd}"` : `bash -lc "${decodeCmd}"`;
   }
 
+  // Run the staged script and clean it up. Keep the entire pipeline inside
+  // the bash -lc payload (NOT visible to the outer shell), because on Windows
+  // cmd.exe does NOT honor single quotes — any `||`, `|`, `>`, `2>` chars
+  // outside double quotes would be eaten by cmd.exe and break the command.
+  // We use double quotes and escape the inner double-quoted paths.
   const exec = `bash ${staged.path}; __rc=$?; ${staged.cleanup}; exit $__rc`;
-  // Use single-quoted -lc payload; staged.path contains no quotes/spaces.
-  return platform.isWindows ? `wsl bash -lc '${exec}'` : `bash -lc '${exec}'`;
+  if (platform.isWindows) {
+    // Inside cmd.exe's double-quoted argument to wsl, we cannot easily nest
+    // double quotes. Re-encode the exec line as base64 so the outer shell
+    // sees only safe characters; bash decodes and runs it.
+    const execB64 = encodeScript(exec);
+    return `wsl bash -lc "echo ${execB64} | base64 -d | bash"`;
+  }
+  return `bash -lc '${exec}'`;
 };
 
 const runHermesShell = async (
