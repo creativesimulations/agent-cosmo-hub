@@ -75,6 +75,7 @@ export const LLM_PROVIDERS: LLMProvider[] = [
   // here — they're detected at runtime by src/lib/localModels.ts and only
   // shown in the LLM tab when actually running on the user's machine.
 
+];
 
 /**
  * Agentic-only model lists per provider. Do NOT add Hermes 3/4 llama models —
