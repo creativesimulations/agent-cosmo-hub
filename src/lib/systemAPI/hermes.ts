@@ -158,15 +158,25 @@ const writeHermesFile = async (
     }
     const drive = winTmpFile[0].toLowerCase();
     const wslSource = `/mnt/${drive}${winTmpFile.slice(2).replace(/\\/g, '/')}`;
-    // Tiny script: no metacharacters cmd.exe could choke on outside the quotes.
+    // Build the bash script and base64-encode it BEFORE handing it to cmd.exe.
+    // cmd.exe doesn't honor backslash-escaping of inner double quotes, so any
+    // nested `"` (like `"$(dirname "$TARGET")"`) gets chopped, leaving cp/chmod
+    // with missing operands. Encoding the whole script means cmd.exe only ever
+    // sees safe alphanumerics — bash decodes and runs the script intact.
     const script = [
+      'set -e',
       `TARGET="${targetPath}"`,
       'mkdir -p "$(dirname "$TARGET")"',
       `cp "${wslSource}" "$TARGET"`,
-      `rm -f "${wslSource}"`,
-      ...(mode ? [`chmod ${mode} "$TARGET"`] : []),
-    ].join('; ');
-    const result = await coreAPI.runCommand(`wsl bash -lc "${script}"`, { timeout: 30000 });
+      `rm -f "${wslSource}" 2>/dev/null || true`,
+      ...(mode ? [`chmod ${mode} "$TARGET" || true`] : []),
+      'echo "[writeHermesFile] wrote $TARGET"',
+    ].join('\n');
+    const b64 = encodeScript(script);
+    const result = await coreAPI.runCommand(
+      `wsl bash -c "echo ${b64} | base64 -d | bash"`,
+      { timeout: 30000 },
+    );
     return {
       success: result.success,
       error: result.success ? undefined : (result.stderr || result.stdout || 'Failed to write Hermes file'),
@@ -315,7 +325,7 @@ const finalizeInstallVerification = async (result: CommandResult, onOutput?: Com
 
 const quoteEnvValue = (value: string) => `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
-const materializeHermesEnv = async (): Promise<{ success: boolean; count?: number; error?: string }> => {
+const materializeHermesEnv = async (): Promise<{ success: boolean; count?: number; missing?: string[]; error?: string }> => {
   const { keys } = await secretsStore.list();
   const secretEntries = (await Promise.all(
     keys.map(async (key) => [key, await secretsStore.get(key)] as const),
@@ -347,11 +357,51 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
   if (sections.length === 0) return { success: true, count: 0 };
 
   const result = await writeHermesFile(HERMES_ENV, `${sections.join('\n')}\n`, '600');
-  return { success: result.success, count: secretEntries.length, error: result.error };
+  if (!result.success) {
+    return { success: false, count: secretEntries.length, error: result.error };
+  }
+
+  // Defensive verification — read .env back and confirm every managed key
+  // landed with a non-empty value. If any are missing, the write silently
+  // failed (e.g. cmd.exe quoting bug, WSL not running) and the caller should
+  // surface a hard error rather than letting the agent run blind.
+  const verify = await readHermesFile(HERMES_ENV);
+  if (!verify.success || !verify.content) {
+    return { success: false, count: secretEntries.length, error: 'Verification failed: could not read back ~/.hermes/.env' };
+  }
+  const written: Record<string, string> = {};
+  for (const line of verify.content.split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const eq = t.indexOf('=');
+    if (eq < 1) continue;
+    let v = t.slice(eq + 1).trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+      v = v.slice(1, -1);
+    }
+    written[t.slice(0, eq).trim()] = v;
+  }
+  const missing = secretEntries
+    .filter(([k]) => !(written[k] && written[k].length > 0))
+    .map(([k]) => k);
+  if (missing.length > 0) {
+    return {
+      success: false,
+      count: secretEntries.length,
+      missing,
+      error: `Verification failed: ${missing.length} key(s) missing from ~/.hermes/.env after write: ${missing.join(', ')}`,
+    };
+  }
+  return { success: true, count: secretEntries.length };
 };
 
 /** Hermes Agent installation, configuration, and lifecycle */
 export const hermesAPI = {
+  /** Force-write secrets to ~/.hermes/.env and verify. Used by Diagnostics
+   *  page and the Secrets tab "Sync to agent" button. */
+  async materializeEnv() {
+    return materializeHermesEnv();
+  },
   /** Install the agent using the official install script.
    *  On Windows we always run inside WSL because hermes-agent is not published
    *  to PyPI and requires the install script (which expects a POSIX shell). */
@@ -656,8 +706,29 @@ export const hermesAPI = {
   async chat(
     prompt: string,
     onOutput?: CommandOutputHandler,
-  ): Promise<CommandResult & { reply?: string; diagnostics?: string; missingKey?: { provider: string; envVar: string } }> {
+  ): Promise<CommandResult & { reply?: string; diagnostics?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean }> {
     const mat = await materializeHermesEnv();
+
+    // Hard-fail before invoking hermes if we couldn't sync secrets.
+    // Calling `hermes chat` against a stale/empty .env would just produce a
+    // misleading "No API key found" error that sends the user on a wild goose
+    // chase. Better to surface the actual sync failure with a link to the
+    // Diagnostics page.
+    if (!mat.success) {
+      const matErr = mat.error || 'unknown error';
+      const missingNote = mat.missing && mat.missing.length > 0
+        ? ` Missing keys after write: ${mat.missing.join(', ')}.`
+        : '';
+      return {
+        success: false,
+        stdout: '',
+        stderr: `Failed to sync secrets to ~/.hermes/.env: ${matErr}.${missingNote} Open the Diagnostics page to see the exact shell command and output.`,
+        code: 1,
+        reply: '',
+        diagnostics: `materializeEnv failed: ${matErr}${missingNote}`,
+        materializeFailed: true,
+      };
+    }
 
     const promptB64 = encodeScript(prompt);
     const script = [

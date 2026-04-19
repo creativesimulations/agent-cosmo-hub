@@ -19,6 +19,7 @@ import LogViewer from "./pages/LogViewer";
 import ConfigEditor from "./pages/ConfigEditor";
 import UpdateManager from "./pages/UpdateManager";
 import BackupRestore from "./pages/BackupRestore";
+import Diagnostics from "./pages/Diagnostics";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -48,6 +49,7 @@ const App = () => (
             <Route path="/config" element={<ConfigEditor />} />
             <Route path="/updates" element={<UpdateManager />} />
             <Route path="/backups" element={<BackupRestore />} />
+            <Route path="/diagnostics" element={<Diagnostics />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

@@ -19,6 +19,7 @@ interface Message {
   streaming?: boolean;
   missingKey?: { provider: string; envVar: string };
   diagnostics?: string;
+  materializeFailed?: boolean;
 }
 
 const loadStoredMessages = (): Message[] => {
@@ -89,6 +90,7 @@ const AgentChat = () => {
     try {
       const result = await systemAPI.chatAgent(promptText);
       const reply = result.reply || result.stdout?.trim() || "(no response)";
+      const matFailed = (result as { materializeFailed?: boolean }).materializeFailed === true;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === placeholderId
@@ -96,19 +98,22 @@ const AgentChat = () => {
                 ...m,
                 content: result.success && !result.missingKey
                   ? reply
-                  : result.missingKey
-                    ? `No API key found for ${result.missingKey.provider}. Add ${result.missingKey.envVar} in the Secrets tab to start chatting.`
-                    : `Error: ${result.stderr || reply}`,
+                  : matFailed
+                    ? `Failed to sync your secrets to the agent. Open Diagnostics for the exact shell error.\n\n${result.stderr || ""}`
+                    : result.missingKey
+                      ? `No API key found for ${result.missingKey.provider}. Add ${result.missingKey.envVar} in the Secrets tab to start chatting.`
+                      : `Error: ${result.stderr || reply}`,
                 streaming: false,
-                missingKey: result.missingKey,
+                missingKey: matFailed ? undefined : result.missingKey,
                 diagnostics: result.diagnostics,
+                materializeFailed: matFailed,
               }
             : m,
         ),
       );
       if (!result.success && !result.missingKey) {
         toast({
-          title: "Agent error",
+          title: matFailed ? "Secret sync failed" : "Agent error",
           description: result.stderr?.split("\n")[0] || "Failed to get a reply from the agent.",
           variant: "destructive",
         });
@@ -194,7 +199,18 @@ const AgentChat = () => {
                       Add {msg.missingKey.envVar}
                     </Button>
                   )}
-                  {msg.diagnostics && (msg.missingKey || msg.content.startsWith("Error")) && (
+                  {msg.materializeFailed && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="mt-2 h-7 text-xs"
+                      onClick={() => { window.location.hash = "#/diagnostics"; }}
+                    >
+                      <AlertCircle className="w-3 h-3 mr-1" />
+                      Open Diagnostics
+                    </Button>
+                  )}
+                  {msg.diagnostics && (msg.missingKey || msg.materializeFailed || msg.content.startsWith("Error") || msg.content.startsWith("Failed")) && (
                     <details className="mt-2 text-[11px] text-muted-foreground/70">
                       <summary className="cursor-pointer hover:text-muted-foreground">Diagnostics</summary>
                       <pre className="mt-1 p-2 rounded bg-background/40 border border-white/5 font-mono text-[10px] whitespace-pre-wrap">

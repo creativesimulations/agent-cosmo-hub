@@ -14,6 +14,7 @@ import {
   FileCode,
   RefreshCw,
   Archive,
+  Activity,
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
 import ronbotLogo from "@/assets/ronbot-logo.png";
@@ -43,6 +44,7 @@ const navGroups = [
     items: [
       { path: "/updates", icon: RefreshCw, label: "Updates" },
       { path: "/backups", icon: Archive, label: "Backups" },
+      { path: "/diagnostics", icon: Activity, label: "Diagnostics" },
       { path: "/settings", icon: Settings, label: "Settings" },
       { path: "/terminal", icon: Terminal, label: "Terminal" },
     ],

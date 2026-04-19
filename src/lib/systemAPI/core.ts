@@ -1,5 +1,15 @@
 import { isElectron } from './types';
 import type { CommandResult, PlatformInfo, DiskSpaceInfo } from './types';
+import { diagnostics, truncateForLog } from '@/lib/diagnostics';
+
+const labelForCommand = (cmd: string): string => {
+  const trimmed = cmd.trim();
+  if (trimmed.startsWith('wsl ')) return 'wsl';
+  if (trimmed.startsWith('bash ')) return 'bash';
+  if (trimmed.startsWith('powershell') || trimmed.startsWith('pwsh')) return 'powershell';
+  if (trimmed.startsWith('cmd ')) return 'cmd';
+  return trimmed.split(/\s+/)[0] || 'cmd';
+};
 
 type CommandOutputEvent = {
   streamId: string;
@@ -32,8 +42,20 @@ export const coreAPI = {
   },
 
   async runCommand(cmd: string, options?: Record<string, unknown>): Promise<CommandResult> {
-    if (isElectron()) return window.electronAPI!.runCommand(cmd, options);
-    return simulateCommand(cmd);
+    const start = Date.now();
+    const result = isElectron()
+      ? await window.electronAPI!.runCommand(cmd, options)
+      : await simulateCommand(cmd);
+    diagnostics.push({
+      label: labelForCommand(cmd),
+      command: truncateForLog(cmd, 2000),
+      exitCode: typeof result.code === 'number' ? result.code : null,
+      success: result.success,
+      stdout: truncateForLog(result.stdout || ''),
+      stderr: truncateForLog(result.stderr || ''),
+      durationMs: Date.now() - start,
+    });
+    return result;
   },
 
   async runCommandStream(
@@ -41,8 +63,22 @@ export const coreAPI = {
     options?: Record<string, unknown>,
     onOutput?: (event: Omit<CommandOutputEvent, 'streamId'>) => void,
   ): Promise<CommandResult> {
+    const start = Date.now();
+    const finalize = (result: CommandResult) => {
+      diagnostics.push({
+        label: labelForCommand(cmd),
+        command: truncateForLog(cmd, 2000),
+        exitCode: typeof result.code === 'number' ? result.code : null,
+        success: result.success,
+        stdout: truncateForLog(result.stdout || ''),
+        stderr: truncateForLog(result.stderr || ''),
+        durationMs: Date.now() - start,
+      });
+      return result;
+    };
+
     if (isElectron()) {
-      return new Promise((resolve) => {
+      return new Promise<CommandResult>((resolve) => {
         const { id, promise } = window.electronAPI!.runCommandStream(cmd, options);
         let stdout = '';
         let stderr = '';
@@ -61,24 +97,24 @@ export const coreAPI = {
         promise
           .then((result) => {
             unsubscribe();
-            resolve({
+            resolve(finalize({
               success: result.success,
               stdout,
               stderr,
               code: typeof result.code === 'number' ? result.code : code,
-            });
+            }));
           })
           .catch((error) => {
             unsubscribe();
             const message = error instanceof Error ? error.message : String(error);
             const normalized = message.endsWith('\n') ? message : `${message}\n`;
             onOutput?.({ type: 'stderr', data: normalized, code: 1 });
-            resolve({
+            resolve(finalize({
               success: false,
               stdout,
               stderr: `${stderr}${normalized}`,
               code: code || 1,
-            });
+            }));
           });
       });
     }
@@ -87,7 +123,7 @@ export const coreAPI = {
     if (result.stdout) onOutput?.({ type: 'stdout', data: result.stdout, code: result.code });
     if (result.stderr) onOutput?.({ type: 'stderr', data: result.stderr, code: result.code });
     onOutput?.({ type: 'exit', code: result.code });
-    return result;
+    return finalize(result);
   },
 
   async fileExists(path: string): Promise<boolean> {

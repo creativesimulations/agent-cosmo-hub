@@ -145,21 +145,30 @@ export const secretsStore = {
       }
       const drive = winTmpFile[0].toLowerCase();
       const wslSource = `/mnt/${drive}${winTmpFile.slice(2).replace(/\\/g, '/')}`;
-      // Tiny script — no `||`, no pipes, nothing cmd.exe can mangle.
+      // Base64-encode the entire bash script before handing it to cmd.exe.
+      // cmd.exe doesn't honor backslash-escaping of `"`, so any nested double
+      // quote (e.g. `"$(dirname "$TARGET")"`) gets chopped, leaving cp/chmod
+      // with missing operands ("'true' is not recognized...", "missing
+      // destination file operand"). Encoding sidesteps that entirely.
       const script = [
+        'set -e',
         'TARGET="$HOME/.hermes/.env"',
         'mkdir -p "$(dirname "$TARGET")"',
         `cp "${wslSource}" "$TARGET"`,
-        `rm -f "${wslSource}"`,
-        'chmod 600 "$TARGET"',
-        'echo "[materialize] wrote $TARGET"',
-      ].join('; ');
-      const result = await coreAPI.runCommand(`wsl bash -lc "${script}"`, { timeout: 30000 });
+        `rm -f "${wslSource}" 2>/dev/null || true`,
+        'chmod 600 "$TARGET" || true',
+        'echo "[materialize] wrote $TARGET ($(wc -l < "$TARGET") lines)"',
+      ].join('\n');
+      const scriptB64 = btoa(unescape(encodeURIComponent(script)));
+      const result = await coreAPI.runCommand(
+        `wsl bash -c "echo ${scriptB64} | base64 -d | bash"`,
+        { timeout: 30000 },
+      );
       return {
         success: result.success,
         count: entries.length,
         path: '\\\\wsl$\\<distro>\\home\\<user>\\.hermes\\.env',
-        error: result.success ? undefined : (result.stderr || result.stdout || 'wsl cp failed'),
+        error: result.success ? undefined : (result.stderr || result.stdout || 'wsl materialize failed'),
       };
     }
 
