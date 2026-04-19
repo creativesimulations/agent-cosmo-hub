@@ -762,6 +762,13 @@ export const hermesAPI = {
       const missingNote = mat.missing && mat.missing.length > 0
         ? ` Missing keys after write: ${mat.missing.join(', ')}.`
         : '';
+      agentLogs.push({
+        source: 'chat',
+        level: 'error',
+        summary: `Sync to ~/.hermes/.env failed — chat aborted`,
+        detail: `${matErr}${missingNote}`,
+        durationMs: Date.now() - startedAt,
+      });
       return {
         success: false,
         stdout: '',
