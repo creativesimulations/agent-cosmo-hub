@@ -101,6 +101,7 @@ const AgentChat = () => {
                     : `Error: ${result.stderr || reply}`,
                 streaming: false,
                 missingKey: result.missingKey,
+                diagnostics: result.diagnostics,
               }
             : m,
         ),
