@@ -892,10 +892,39 @@ export const hermesAPI = {
       }
     }
 
+    const finalReply = cleaned || stripAnsi(result.stdout || '').trim();
+    const finalDiag = diagnostics || (mat.success ? '' : `materializeEnv failed: ${mat.error || 'unknown'}`);
+
+    if (missingKey) {
+      agentLogs.push({
+        source: 'chat',
+        level: 'error',
+        summary: `Missing API key: ${missingKey.envVar} (${missingKey.provider})`,
+        detail: finalDiag,
+        durationMs: Date.now() - startedAt,
+      });
+    } else if (!result.success) {
+      agentLogs.push({
+        source: 'chat',
+        level: 'error',
+        summary: `Chat failed (exit=${result.code})`,
+        detail: truncateForLog([finalReply, finalDiag, result.stderr].filter(Boolean).join('\n')),
+        durationMs: Date.now() - startedAt,
+      });
+    } else {
+      agentLogs.push({
+        source: 'chat',
+        level: 'info',
+        summary: `← Reply: ${finalReply.length > 120 ? finalReply.slice(0, 120) + '…' : finalReply || '(empty)'}`,
+        detail: truncateForLog([finalReply, finalDiag ? `\n--- diagnostics ---\n${finalDiag}` : ''].filter(Boolean).join('')),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
     return {
       ...result,
-      reply: cleaned || stripAnsi(result.stdout || '').trim(),
-      diagnostics: diagnostics || (mat.success ? '' : `materializeEnv failed: ${mat.error || 'unknown'}`),
+      reply: finalReply,
+      diagnostics: finalDiag,
       missingKey,
     };
   },
