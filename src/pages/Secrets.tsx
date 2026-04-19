@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import {
-  KeyRound, Eye, EyeOff, Plus, Trash2, Globe, Shield, Loader2, Save, Lock, AlertTriangle, ArrowDownToLine,
+  KeyRound, Eye, EyeOff, Plus, Trash2, Globe, Shield, Loader2, Save, Lock, AlertTriangle, ArrowDownToLine, RefreshCw,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { systemAPI, secretsStore, type SecretsBackend } from "@/lib/systemAPI";
+import { toast } from "sonner";
 
 interface SecretEntry {
   envVar: string;
