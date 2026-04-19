@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
-  KeyRound, Eye, EyeOff, Plus, Trash2, Globe, Shield, Loader2, Save, Lock, AlertTriangle, ArrowDownToLine, RefreshCw,
+  KeyRound, Eye, EyeOff, Plus, Trash2, Globe, Shield, Loader2, Lock, AlertTriangle, ArrowDownToLine, RefreshCw,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { systemAPI, secretsStore, type SecretsBackend } from "@/lib/systemAPI";
+import { findPresetByEnvVar } from "@/lib/secretPresets";
+import SecretForm from "@/components/secrets/SecretForm";
 import { toast } from "sonner";
 
 interface SecretEntry {
@@ -15,18 +17,8 @@ interface SecretEntry {
   revealed?: string;
 }
 
-const KNOWN_KEYS: Record<string, string> = {
-  OPENROUTER_API_KEY: "OpenRouter",
-  OPENAI_API_KEY: "OpenAI",
-  ANTHROPIC_API_KEY: "Anthropic",
-  NOUS_API_KEY: "Nous Portal",
-  TELEGRAM_BOT_TOKEN: "Telegram",
-  DISCORD_BOT_TOKEN: "Discord",
-  SLACK_BOT_TOKEN: "Slack",
-  EXA_API_KEY: "Exa Search",
-  FIRECRAWL_API_KEY: "Firecrawl",
-  ELEVENLABS_API_KEY: "ElevenLabs",
-};
+const labelForEnvVar = (envVar: string): string =>
+  findPresetByEnvVar(envVar)?.label ?? envVar;
 
 const maskValue = (val: string): string => {
   if (!val) return "(empty)";
