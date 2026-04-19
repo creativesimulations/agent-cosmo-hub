@@ -744,6 +744,12 @@ export const hermesAPI = {
     prompt: string,
     onOutput?: CommandOutputHandler,
   ): Promise<CommandResult & { reply?: string; diagnostics?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean }> {
+    const startedAt = Date.now();
+    agentLogs.push({
+      source: 'chat',
+      level: 'info',
+      summary: `→ Prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
+    });
     const mat = await materializeHermesEnv();
 
     // Hard-fail before invoking hermes if we couldn't sync secrets.
