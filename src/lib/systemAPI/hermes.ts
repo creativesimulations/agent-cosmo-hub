@@ -138,6 +138,41 @@ const writeHermesFile = async (
   content: string,
   mode?: string,
 ): Promise<{ success: boolean; error?: string }> => {
+  const platform = await coreAPI.getPlatform();
+
+  // On Windows, writing through `wsl bash -lc "echo BIGB64 | base64 -d > ..."`
+  // is fragile: cmd.exe doesn't honor single quotes, and any `|`, `>`, `||`
+  // tokens that escape the WSL quoting get interpreted by cmd.exe — producing
+  // confusing errors like `'true' is not recognized as an internal or external
+  // command`. To sidestep this entirely, stage the file content to a Windows
+  // temp path (via the Node fs IPC, no shell), then run a TINY wsl command
+  // that just copies it into place and chmods.
+  if (platform.isWindows) {
+    const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const winTmpDir = `${platform.homeDir}\\.ainoval\\tmp`;
+    const winTmpFile = `${winTmpDir}\\write-${stamp}.dat`;
+    await coreAPI.mkdir(winTmpDir);
+    const wrote = await coreAPI.writeFile(winTmpFile, content);
+    if (!wrote.success) {
+      return { success: false, error: wrote.error || 'Failed to stage file content' };
+    }
+    const drive = winTmpFile[0].toLowerCase();
+    const wslSource = `/mnt/${drive}${winTmpFile.slice(2).replace(/\\/g, '/')}`;
+    // Tiny script: no metacharacters cmd.exe could choke on outside the quotes.
+    const script = [
+      `TARGET="${targetPath}"`,
+      'mkdir -p "$(dirname "$TARGET")"',
+      `cp "${wslSource}" "$TARGET"`,
+      `rm -f "${wslSource}"`,
+      ...(mode ? [`chmod ${mode} "$TARGET"`] : []),
+    ].join('; ');
+    const result = await coreAPI.runCommand(`wsl bash -lc "${script}"`, { timeout: 30000 });
+    return {
+      success: result.success,
+      error: result.success ? undefined : (result.stderr || result.stdout || 'Failed to write Hermes file'),
+    };
+  }
+
   const b64 = encodeScript(content);
   const result = await runHermesShell(
     [
