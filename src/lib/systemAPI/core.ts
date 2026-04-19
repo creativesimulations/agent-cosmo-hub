@@ -123,7 +123,7 @@ export const coreAPI = {
     if (result.stdout) onOutput?.({ type: 'stdout', data: result.stdout, code: result.code });
     if (result.stderr) onOutput?.({ type: 'stderr', data: result.stderr, code: result.code });
     onOutput?.({ type: 'exit', code: result.code });
-    return result;
+    return finalize(result);
   },
 
   async fileExists(path: string): Promise<boolean> {
