@@ -158,15 +158,25 @@ const writeHermesFile = async (
     }
     const drive = winTmpFile[0].toLowerCase();
     const wslSource = `/mnt/${drive}${winTmpFile.slice(2).replace(/\\/g, '/')}`;
-    // Tiny script: no metacharacters cmd.exe could choke on outside the quotes.
+    // Build the bash script and base64-encode it BEFORE handing it to cmd.exe.
+    // cmd.exe doesn't honor backslash-escaping of inner double quotes, so any
+    // nested `"` (like `"$(dirname "$TARGET")"`) gets chopped, leaving cp/chmod
+    // with missing operands. Encoding the whole script means cmd.exe only ever
+    // sees safe alphanumerics — bash decodes and runs the script intact.
     const script = [
+      'set -e',
       `TARGET="${targetPath}"`,
       'mkdir -p "$(dirname "$TARGET")"',
       `cp "${wslSource}" "$TARGET"`,
-      `rm -f "${wslSource}"`,
-      ...(mode ? [`chmod ${mode} "$TARGET"`] : []),
-    ].join('; ');
-    const result = await coreAPI.runCommand(`wsl bash -lc "${script}"`, { timeout: 30000 });
+      `rm -f "${wslSource}" 2>/dev/null || true`,
+      ...(mode ? [`chmod ${mode} "$TARGET" || true`] : []),
+      'echo "[writeHermesFile] wrote $TARGET"',
+    ].join('\n');
+    const b64 = encodeScript(script);
+    const result = await coreAPI.runCommand(
+      `wsl bash -c "echo ${b64} | base64 -d | bash"`,
+      { timeout: 30000 },
+    );
     return {
       success: result.success,
       error: result.success ? undefined : (result.stderr || result.stdout || 'Failed to write Hermes file'),
