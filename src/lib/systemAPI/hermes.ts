@@ -619,10 +619,26 @@ export const hermesAPI = {
       'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
       // Force a non-interactive, plain-text environment.
       'export TERM=dumb NO_COLOR=1 CI=1 PYTHONUNBUFFERED=1',
+      // Source ~/.hermes/.env so OPENROUTER_API_KEY (and friends) are visible
+      // to the agent. Hermes itself does load .env, but only when run from
+      // its own working directory — being explicit here removes any ambiguity
+      // and also surfaces shell parse errors in the .env file immediately.
+      'if [ -f "$HOME/.hermes/.env" ]; then',
+      '  set -a',
+      '  # shellcheck disable=SC1091',
+      '  . "$HOME/.hermes/.env"',
+      '  set +a',
+      'fi',
+      // Diagnostic: print which key vars are set (length only, never the value)
+      // so the user can see in the streamed output whether the key reached the CLI.
+      'for v in OPENROUTER_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY NOUS_API_KEY; do',
+      '  eval "val=\\${$v}"',
+      '  if [ -n "$val" ]; then echo "[hermes] $v is set (len=${#val})" >&2; fi',
+      'done',
       'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
       `PROMPT="$(echo ${promptB64} | base64 -d)"`,
-      // Use the documented one-shot mode. stdin redirected from /dev/null so
-      // the CLI never tries to open a TTY.
+      // Run from ~/.hermes so any relative config lookups also work.
+      'cd "$HOME/.hermes" 2>/dev/null || true',
       'hermes chat -q "$PROMPT" </dev/null 2>&1',
     ].join('\n');
 
