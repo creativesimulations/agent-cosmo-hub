@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
+import { useChat } from "@/contexts/ChatContext";
 import { motion } from "framer-motion";
-import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X } from "lucide-react";
+import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,48 +18,20 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
-import { systemAPI } from "@/lib/systemAPI";
-import { toast } from "@/hooks/use-toast";
-
-// Persist across app restarts (was sessionStorage — wiped on close).
-const CHAT_STORAGE_KEY = "ainoval-agent-chat-history-v2";
-
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: Date;
-  streaming?: boolean;
-  missingKey?: { provider: string; envVar: string };
-  diagnostics?: string;
-  materializeFailed?: boolean;
-}
-
-const loadStoredMessages = (): Message[] => {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const raw = window.localStorage.getItem(CHAT_STORAGE_KEY);
-    if (!raw) return [];
-
-    const parsed = JSON.parse(raw) as Array<Omit<Message, "timestamp"> & { timestamp: string }>;
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed.map((message) => ({
-      ...message,
-      timestamp: new Date(message.timestamp),
-      streaming: false,
-    }));
-  } catch {
-    return [];
-  }
-};
 
 const AgentChat = () => {
-  const [messages, setMessages] = useState<Message[]>(() => loadStoredMessages());
   const [input, setInput] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
   const { connected: agentConnected } = useAgentConnection();
+  const {
+    messages,
+    isStreaming,
+    sessionId,
+    sendMessage,
+    deleteMessage,
+    clearAll,
+    markChatViewed,
+    startNewSession,
+  } = useChat();
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -66,19 +39,10 @@ const AgentChat = () => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
+  // The page itself is the "viewed" signal — clear unread badge on mount.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    window.localStorage.setItem(
-      CHAT_STORAGE_KEY,
-      JSON.stringify(
-        messages.map((message) => ({
-          ...message,
-          timestamp: message.timestamp.toISOString(),
-        }))
-      )
-    );
-  }, [messages]);
+    markChatViewed();
+  }, [markChatViewed]);
 
   // Auto-grow the textarea as the user types, capped to ~8 lines.
   useEffect(() => {
@@ -88,85 +52,18 @@ const AgentChat = () => {
     ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [input]);
 
-  const deleteMessage = (id: string) => {
-    setMessages((prev) => prev.filter((m) => m.id !== id));
-  };
-
-  const clearAll = () => {
-    setMessages([]);
-    toast({ title: "Conversation cleared", description: "All messages have been removed." });
-  };
-
-  const sendMessage = async () => {
+  const handleSend = async () => {
     if (!input.trim() || isStreaming || !agentConnected) return;
-    const promptText = input.trim();
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: promptText,
-      timestamp: new Date(),
-    };
-    const placeholderId = `${Date.now()}-r`;
-    const placeholder: Message = {
-      id: placeholderId,
-      role: "assistant",
-      content: "",
-      timestamp: new Date(),
-      streaming: true,
-    };
-    setMessages((prev) => [...prev, userMsg, placeholder]);
+    const text = input;
     setInput("");
-    setIsStreaming(true);
-
-    try {
-      const result = await systemAPI.chatAgent(promptText);
-      const reply = result.reply || result.stdout?.trim() || "(no response)";
-      const matFailed = (result as { materializeFailed?: boolean }).materializeFailed === true;
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === placeholderId
-            ? {
-                ...m,
-                content: result.success && !result.missingKey
-                  ? reply
-                  : matFailed
-                    ? `Failed to sync your secrets to the agent. Open Diagnostics for the exact shell error.\n\n${result.stderr || ""}`
-                    : result.missingKey
-                      ? `No API key found for ${result.missingKey.provider}. Add ${result.missingKey.envVar} in the Secrets tab to start chatting.`
-                      : `Error: ${result.stderr || reply}`,
-                streaming: false,
-                missingKey: matFailed ? undefined : result.missingKey,
-                diagnostics: result.diagnostics,
-                materializeFailed: matFailed,
-              }
-            : m,
-        ),
-      );
-      if (!result.success && !result.missingKey) {
-        toast({
-          title: matFailed ? "Secret sync failed" : "Agent error",
-          description: result.stderr?.split("\n")[0] || "Failed to get a reply from the agent.",
-          variant: "destructive",
-        });
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === placeholderId ? { ...m, content: `Error: ${msg}`, streaming: false } : m,
-        ),
-      );
-      toast({ title: "Agent error", description: msg, variant: "destructive" });
-    } finally {
-      setIsStreaming(false);
-    }
+    await sendMessage(text);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Enter sends, Shift+Enter inserts a newline (default browser behavior).
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      void handleSend();
     }
   };
 
@@ -178,32 +75,53 @@ const AgentChat = () => {
             <MessageSquare className="w-6 h-6 text-primary" />
             Agent Chat
           </h1>
-          <p className="text-sm text-muted-foreground">Interact directly with your AI agent</p>
+          <p className="text-sm text-muted-foreground">
+            {sessionId ? (
+              <>Resuming session <span className="font-mono text-[11px] text-muted-foreground/80">{sessionId}</span></>
+            ) : (
+              "Interact directly with your AI agent"
+            )}
+          </p>
         </div>
-        {messages.length > 0 && (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive">
-                <Trash2 className="w-4 h-4 mr-1.5" />
-                Clear all
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This deletes every message in this chat from your device. The agent's own session history on disk is not affected. This cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={clearAll} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+        <div className="flex items-center gap-1">
+          {sessionId && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={startNewSession}
+              disabled={isStreaming}
+              title="Start a fresh agent session (clears resume id but keeps message history)"
+            >
+              <RotateCcw className="w-4 h-4 mr-1.5" />
+              New session
+            </Button>
+          )}
+          {messages.length > 0 && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive">
+                  <Trash2 className="w-4 h-4 mr-1.5" />
                   Clear all
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        )}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This deletes every message in this chat from your device. The agent's own session history on disk is not affected. This cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={clearAll} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                    Clear all
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </div>
       </div>
 
       <GlassCard className="flex-1 flex flex-col overflow-hidden p-0">
@@ -306,7 +224,7 @@ const AgentChat = () => {
 
         <div className="p-4 border-t border-white/5">
           <form
-            onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
+            onSubmit={(e) => { e.preventDefault(); void handleSend(); }}
             className="flex gap-2 items-end"
           >
             <Textarea
