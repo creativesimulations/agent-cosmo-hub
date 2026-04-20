@@ -1,15 +1,27 @@
 import { useState, useRef, useEffect } from "react";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { motion } from "framer-motion";
-import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound } from "lucide-react";
+import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
 
-const CHAT_STORAGE_KEY = "ainoval-agent-chat-history";
+// Persist across app restarts (was sessionStorage — wiped on close).
+const CHAT_STORAGE_KEY = "ainoval-agent-chat-history-v2";
 
 interface Message {
   id: string;
@@ -26,7 +38,7 @@ const loadStoredMessages = (): Message[] => {
   if (typeof window === "undefined") return [];
 
   try {
-    const raw = window.sessionStorage.getItem(CHAT_STORAGE_KEY);
+    const raw = window.localStorage.getItem(CHAT_STORAGE_KEY);
     if (!raw) return [];
 
     const parsed = JSON.parse(raw) as Array<Omit<Message, "timestamp"> & { timestamp: string }>;
@@ -35,6 +47,7 @@ const loadStoredMessages = (): Message[] => {
     return parsed.map((message) => ({
       ...message,
       timestamp: new Date(message.timestamp),
+      streaming: false,
     }));
   } catch {
     return [];
@@ -47,6 +60,7 @@ const AgentChat = () => {
   const [isStreaming, setIsStreaming] = useState(false);
   const { connected: agentConnected } = useAgentConnection();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -55,7 +69,7 @@ const AgentChat = () => {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    window.sessionStorage.setItem(
+    window.localStorage.setItem(
       CHAT_STORAGE_KEY,
       JSON.stringify(
         messages.map((message) => ({
@@ -65,6 +79,23 @@ const AgentChat = () => {
       )
     );
   }, [messages]);
+
+  // Auto-grow the textarea as the user types, capped to ~8 lines.
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+  }, [input]);
+
+  const deleteMessage = (id: string) => {
+    setMessages((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  const clearAll = () => {
+    setMessages([]);
+    toast({ title: "Conversation cleared", description: "All messages have been removed." });
+  };
 
   const sendMessage = async () => {
     if (!input.trim() || isStreaming || !agentConnected) return;
@@ -131,14 +162,48 @@ const AgentChat = () => {
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter sends, Shift+Enter inserts a newline (default browser behavior).
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
   return (
     <div className="p-6 flex flex-col h-[calc(100vh-2rem)] max-h-screen">
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-          <MessageSquare className="w-6 h-6 text-primary" />
-          Agent Chat
-        </h1>
-        <p className="text-sm text-muted-foreground">Interact directly with your AI agent</p>
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            <MessageSquare className="w-6 h-6 text-primary" />
+            Agent Chat
+          </h1>
+          <p className="text-sm text-muted-foreground">Interact directly with your AI agent</p>
+        </div>
+        {messages.length > 0 && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive">
+                <Trash2 className="w-4 h-4 mr-1.5" />
+                Clear all
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This deletes every message in this chat from your device. The agent's own session history on disk is not affected. This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={clearAll} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                  Clear all
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
       </div>
 
       <GlassCard className="flex-1 flex flex-col overflow-hidden p-0">
@@ -162,7 +227,7 @@ const AgentChat = () => {
                 key={msg.id}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className={cn("flex gap-3", msg.role === "user" && "flex-row-reverse")}
+                className={cn("flex gap-3 group", msg.role === "user" && "flex-row-reverse")}
               >
                 <div
                   className={cn(
@@ -178,12 +243,24 @@ const AgentChat = () => {
                 </div>
                 <div
                   className={cn(
-                    "max-w-[70%] rounded-xl px-4 py-3",
+                    "relative max-w-[70%] rounded-xl px-4 py-3",
                     msg.role === "assistant"
                       ? "glass-subtle text-foreground"
                       : "bg-primary/15 border border-primary/20 text-foreground"
                   )}
                 >
+                  {!msg.streaming && (
+                    <button
+                      type="button"
+                      onClick={() => deleteMessage(msg.id)}
+                      aria-label="Delete message"
+                      className={cn(
+                        "absolute -top-2 -right-2 w-6 h-6 rounded-full bg-background/90 border border-white/10 text-muted-foreground hover:text-destructive hover:border-destructive/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center",
+                      )}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
                   <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                   {msg.streaming && (
                     <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
@@ -230,19 +307,22 @@ const AgentChat = () => {
         <div className="p-4 border-t border-white/5">
           <form
             onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
-            className="flex gap-2"
+            className="flex gap-2 items-end"
           >
-            <Input
+            <Textarea
+              ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={agentConnected ? "Message your agent..." : "Agent not connected"}
-              className="bg-background/50 border-white/10 focus:border-primary/50 flex-1"
+              onKeyDown={handleKeyDown}
+              placeholder={agentConnected ? "Message your agent…  (Shift+Enter for newline)" : "Agent not connected"}
+              className="bg-background/50 border-white/10 focus:border-primary/50 flex-1 min-h-[44px] max-h-[200px] resize-none py-2.5"
+              rows={1}
               disabled={isStreaming || !agentConnected}
             />
             <Button
               type="submit"
               disabled={!input.trim() || isStreaming || !agentConnected}
-              className="gradient-primary text-primary-foreground"
+              className="gradient-primary text-primary-foreground shrink-0 h-[44px]"
             >
               {isStreaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </Button>

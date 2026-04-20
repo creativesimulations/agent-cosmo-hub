@@ -922,6 +922,15 @@ export const hermesAPI = {
         if (/^\/(exit|help)\b/.test(t)) return false;
         if (/^query:\s/i.test(t)) return false;
         if (/^goodbye/i.test(t)) return false;
+        // Strip the lifecycle/footer noise Hermes prints around every reply.
+        if (/^initializing agent\.{0,3}$/i.test(t)) return false;
+        if (/^resume this session( with)?:?$/i.test(t)) return false;
+        if (/^hermes\s+--resume\b/i.test(t)) return false;
+        if (/^duration:\s/i.test(t)) return false;
+        if (/^messages:\s/i.test(t)) return false;
+        if (/^tokens?:\s/i.test(t)) return false;
+        if (/^cost:\s/i.test(t)) return false;
+        if (/^\d+\s+(user|tool calls?|assistant)/i.test(t)) return false;
         return true;
       })
       .join('\n')
