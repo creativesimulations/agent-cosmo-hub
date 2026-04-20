@@ -125,6 +125,17 @@ const SettingsPage = () => {
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
 
+  // Upgrade unlock state, refreshed when license keys change.
+  const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
+  const [unlocksLoading, setUnlocksLoading] = useState(true);
+  const refreshUnlocks = async () => {
+    const map: Record<string, boolean> = {};
+    for (const u of UPGRADES) map[u.id] = await isUpgradeUnlocked(u.id);
+    setUnlocks(map);
+    setUnlocksLoading(false);
+  };
+  useEffect(() => { void refreshUnlocks(); }, []);
+
   useEffect(() => {
     if (!agentConnected) {
       setLoading(false);
