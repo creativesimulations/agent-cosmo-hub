@@ -18,6 +18,7 @@ import {
   Play,
   History,
   Network,
+  Sparkles,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Input } from "@/components/ui/input";
@@ -46,6 +47,8 @@ import {
 } from "@/lib/notify";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import UpgradeCard from "@/components/channels/UpgradeCard";
+import { UPGRADES, isUpgradeUnlocked } from "@/lib/licenses";
 
 /** A labelled toggle row — keeps the page readable when there are 8+ settings. */
 const ToggleRow = ({
