@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import AppLayout from "./components/layout/AppLayout";
 import { InstallProvider } from "./contexts/InstallContext";
 import { AgentConnectionProvider } from "./contexts/AgentConnectionContext";
+import { ChatProvider } from "./contexts/ChatContext";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import SubAgents from "./pages/SubAgents";
@@ -32,6 +33,7 @@ const App = () => (
       <HashRouter>
         <AgentConnectionProvider>
         <InstallProvider>
+        <ChatProvider>
         <Routes>
           <Route element={<AppLayout />}>
             <Route path="/" element={<Index />} />
@@ -53,6 +55,7 @@ const App = () => (
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </ChatProvider>
         </InstallProvider>
         </AgentConnectionProvider>
       </HashRouter>

@@ -19,6 +19,7 @@ import {
 import NotificationCenter from "@/components/NotificationCenter";
 import ronbotLogo from "@/assets/ronbot-logo.png";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
+import { useChat } from "@/contexts/ChatContext";
 
 const navGroups = [
   {
@@ -27,7 +28,7 @@ const navGroups = [
       { path: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
       { path: "/agents", icon: Network, label: "Sub-Agents" },
       { path: "/logs", icon: FileText, label: "Logs" },
-      { path: "/chat", icon: MessageSquare, label: "Agent Chat" },
+      { path: "/chat", icon: MessageSquare, label: "Agent Chat", showChatBadge: true },
     ],
   },
   {
