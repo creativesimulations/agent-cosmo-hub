@@ -17,6 +17,7 @@ import Skills from "./pages/Skills";
 import SettingsPage from "./pages/SettingsPage";
 import TerminalPage from "./pages/TerminalPage";
 import AgentChat from "./pages/AgentChat";
+import Channels from "./pages/Channels";
 import LogViewer from "./pages/LogViewer";
 import ConfigEditor from "./pages/ConfigEditor";
 import UpdateManager from "./pages/UpdateManager";
@@ -49,6 +50,7 @@ const App = () => (
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/terminal" element={<TerminalPage />} />
             <Route path="/chat" element={<AgentChat />} />
+            <Route path="/channels" element={<Channels />} />
             <Route path="/logs" element={<LogViewer />} />
             <Route path="/config" element={<ConfigEditor />} />
             <Route path="/updates" element={<UpdateManager />} />
