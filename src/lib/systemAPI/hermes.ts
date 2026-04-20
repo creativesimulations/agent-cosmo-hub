@@ -887,7 +887,12 @@ export const hermesAPI = {
       `PROMPT="$(echo ${promptB64} | base64 -d)"`,
       // Run from ~/.hermes so any relative config lookups also work.
       'cd "$HOME/.hermes" 2>/dev/null || true',
-      'hermes chat -q "$PROMPT" </dev/null 2>&1',
+      // If we have a session id from a previous turn, resume it so the agent
+      // keeps full conversation context. Otherwise start fresh and we'll
+      // capture the new session id from the footer Hermes prints.
+      resumeId
+        ? `hermes chat --resume ${JSON.stringify(resumeId)} -q "$PROMPT" </dev/null 2>&1`
+        : 'hermes chat -q "$PROMPT" </dev/null 2>&1',
     ].join('\n');
 
     const result = await runHermesShell(script, { timeout: 180000 }, onOutput);
