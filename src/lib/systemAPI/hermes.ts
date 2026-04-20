@@ -1035,6 +1035,33 @@ export const hermesAPI = {
     };
   },
 
+  /** Write the SOUL.md persona file so the agent knows its given name. */
+  async setAgentName(name: string): Promise<{ success: boolean }> {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return { success: false };
+    const soul = `# ${trimmed}
+
+You are ${trimmed}, the user's personal AI agent.
+
+Your name is **${trimmed}**. When the user asks who you are or what your name is,
+respond as ${trimmed} — not as "Hermes" or "an AI assistant". You were set up by
+the user with this name during installation, and they expect you to use it.
+
+You are still powered by the Hermes Agent framework (built by Nous Research)
+and have full access to its tools, skills, and memory — but your identity to
+the user is **${trimmed}**.
+`;
+    return writeHermesFile('$HOME/.hermes/SOUL.md', soul, '600');
+  },
+
+  /** Read the agent's name from SOUL.md (first H1), if any. */
+  async getAgentName(): Promise<string | null> {
+    const r = await readHermesFile('$HOME/.hermes/SOUL.md');
+    if (!r.success || !r.content) return null;
+    const m = r.content.match(/^#\s+(.+?)\s*$/m);
+    return m ? m[1].trim() : null;
+  },
+
   /** Write initial config for first-time setup.
    *  If `name` is provided, also writes a SOUL.md persona file so the agent
    *  knows what to call itself across every conversation. */
@@ -1050,20 +1077,7 @@ model: ${options.model || 'openrouter/auto'}
     const configResult = await this.writeConfig(configYaml);
 
     if (options.name && options.name.trim()) {
-      const name = options.name.trim();
-      const soul = `# ${name}
-
-You are ${name}, the user's personal AI agent.
-
-Your name is **${name}**. When the user asks who you are or what your name is,
-respond as ${name} — not as "Hermes" or "an AI assistant". You were set up by
-the user with this name during installation, and they expect you to use it.
-
-You are still powered by the Hermes Agent framework (built by Nous Research)
-and have full access to its tools, skills, and memory — but your identity to
-the user is **${name}**.
-`;
-      await writeHermesFile('$HOME/.hermes/SOUL.md', soul, '600');
+      await this.setAgentName(options.name);
     }
 
     return configResult;
