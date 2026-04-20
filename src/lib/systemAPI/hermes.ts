@@ -684,6 +684,7 @@ export const hermesAPI = {
       detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
       durationMs: Date.now() - start,
     });
+    return r;
   },
 
   /**
