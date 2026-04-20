@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Network, AlertCircle, RefreshCw, Loader2, CheckCircle2, Activity, FileText } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import StatusBadge from "@/components/ui/StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
+import { useSettings } from "@/contexts/SettingsContext";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
+import { showDesktopNotification, playReplyChime } from "@/lib/notify";
 
 type ActiveSubAgent = {
   id: string;
@@ -48,12 +50,17 @@ const formatRelative = (iso: string) => {
 
 const SubAgents = () => {
   const { connected: agentConnected } = useAgentConnection();
+  const { settings } = useSettings();
   const [active, setActive] = useState<ActiveSubAgent[]>([]);
   const [recent, setRecent] = useState<RecentSubAgent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logPath, setLogPath] = useState<string>("~/.hermes/logs/agent.log");
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
+  // Track which completed-subagent ids we've already alerted on so we don't
+  // re-fire a notification on every 3-second poll.
+  const seenCompletedRef = useRef<Set<string>>(new Set());
+  const isFirstLoadRef = useRef(true);
 
   const refresh = useCallback(
     async (showToast = false) => {
@@ -75,6 +82,20 @@ const SubAgents = () => {
         } else {
           setActive(res.active);
           setRecent(res.recent);
+          // Diff completions for the "notify on subagent completion" setting.
+          // Skip the very first poll after mount so reopening the tab doesn't
+          // dump a flood of stale notifications for already-finished work.
+          if (settings.notifyOnSubAgentComplete && !isFirstLoadRef.current) {
+            for (const r of res.recent) {
+              if (!seenCompletedRef.current.has(r.id)) {
+                showDesktopNotification("Sub-agent finished", r.goal.slice(0, 140));
+                if (settings.soundOnReply) playReplyChime();
+              }
+            }
+          }
+          // Refresh the seen set with everything currently visible.
+          seenCompletedRef.current = new Set(res.recent.map((r) => r.id));
+          isFirstLoadRef.current = false;
         }
         setLastFetched(new Date());
       } catch (e) {
@@ -84,7 +105,7 @@ const SubAgents = () => {
         setLoading(false);
       }
     },
-    [agentConnected],
+    [agentConnected, settings.notifyOnSubAgentComplete, settings.soundOnReply],
   );
 
   // Initial load + 3s polling while connected.

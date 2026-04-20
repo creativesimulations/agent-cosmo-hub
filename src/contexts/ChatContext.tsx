@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, Re
 import { useLocation } from "react-router-dom";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
+import { useSettings } from "./SettingsContext";
+import { handleAgentReplyArrived } from "@/lib/notify";
 
 /**
  * Chat is hoisted into a top-level context so:
@@ -68,10 +70,15 @@ const loadStoredSessionId = (): string | null => {
 };
 
 export const ChatProvider = ({ children }: { children: ReactNode }) => {
+  const { settings } = useSettings();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadStoredMessages());
   const [isStreaming, setIsStreaming] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [sessionId, setSessionId] = useState<string | null>(() => loadStoredSessionId());
+  // Honor "Auto-resume last session" — when disabled, we drop any persisted id
+  // so the next message starts a fresh Hermes session.
+  const [sessionId, setSessionId] = useState<string | null>(() =>
+    settings.autoResumeSession ? loadStoredSessionId() : null,
+  );
 
   // Track the current route via a ref so the async sendMessage callback can
   // read the latest value without re-creating itself on every navigation.
@@ -81,14 +88,32 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     onChatPageRef.current = location.pathname === "/chat";
   }, [location.pathname]);
 
-  // Persist messages.
+  // Mirror settings into a ref so the long-lived sendMessage closure can
+  // read the latest sound/notification preferences without re-creating itself.
+  const settingsRef = useRef(settings);
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  // Persist messages, capped to settings.maxStoredMessages (0 = unlimited).
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const max = settings.maxStoredMessages;
+    const toStore = max > 0 && messages.length > max ? messages.slice(-max) : messages;
     window.localStorage.setItem(
       CHAT_STORAGE_KEY,
-      JSON.stringify(messages.map((m) => ({ ...m, timestamp: m.timestamp.toISOString() }))),
+      JSON.stringify(toStore.map((m) => ({ ...m, timestamp: m.timestamp.toISOString() }))),
     );
-  }, [messages]);
+  }, [messages, settings.maxStoredMessages]);
+
+  // When the limit is lowered, trim in-memory list to match.
+  useEffect(() => {
+    const max = settings.maxStoredMessages;
+    if (max > 0 && messages.length > max) {
+      setMessages((prev) => prev.slice(-max));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.maxStoredMessages]);
 
   // Persist session id so app restarts can keep talking to the same Hermes session.
   useEffect(() => {
@@ -174,7 +199,11 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         });
       }
 
-      // Bump unread count if the user isn't currently looking at the chat.
+      // Bump unread count if the user isn't currently looking at the chat,
+      // and fire the user's chosen alerts (chime / desktop notification).
+      if (result.success && !result.missingKey && !matFailed) {
+        handleAgentReplyArrived(settingsRef.current, reply);
+      }
       if (!onChatPageRef.current) {
         setUnreadCount((n) => n + 1);
       }

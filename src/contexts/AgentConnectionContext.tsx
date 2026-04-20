@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { systemAPI } from "@/lib/systemAPI";
+import { useSettings } from "./SettingsContext";
 
 interface AgentConnectionValue {
   /** True when we've verified the agent is installed and configured locally. */
@@ -19,11 +20,13 @@ interface AgentConnectionValue {
 const AgentConnectionContext = createContext<AgentConnectionValue | null>(null);
 
 export const AgentConnectionProvider = ({ children }: { children: ReactNode }) => {
+  const { settings } = useSettings();
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<AgentConnectionValue["status"]>("unknown");
   const [error, setError] = useState<string | null>(null);
   const [location, setLocation] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const autoStartedRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (inFlight.current) return connected;
@@ -67,6 +70,19 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-start the agent (background hermes status warm-up) once after
+  // detection if the user enabled it. Hermes is a CLI, not a daemon — there
+  // is no long-running service to launch — but `hermes status` triggers
+  // venv activation and any first-run state migrations so the very first
+  // chat reply isn't slow.
+  useEffect(() => {
+    if (!settings.autoStartAgent || !connected || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    void systemAPI.hermesStatus().catch(() => {
+      /* best-effort warm-up; failures don't affect the UI */
+    });
+  }, [settings.autoStartAgent, connected]);
 
   return (
     <AgentConnectionContext.Provider value={{ connected, status, error, location, refresh, markConnected }}>
