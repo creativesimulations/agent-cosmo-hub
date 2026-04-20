@@ -1,87 +1,115 @@
 
 
-## Diagnosis: why nothing reaches the agent
+## Channels feature — final scope
 
-The error in your Diagnostics panel is the smoking gun:
-```
-materializeEnv failed: cp: missing destination file operand after '/mnt/c/Users/Kadosh/.ainoval/tmp/write-xxx.dat'
-chmod: missing operand after '600'
-```
+### Free channels (native Hermes setup, guided UI)
+1. **Telegram** — `@BotFather` → bot token → done. Easiest.
+2. **Slack** — workspace install → bot token + app token.
+3. **Email (IMAP/SMTP)** — works with Gmail / iCloud / any provider via app password.
+4. **WhatsApp** — Hermes ships a WhatsApp gateway. We'll guide the user through Meta Cloud API setup (free tier from Meta covers most personal use). It's the hardest of the four; the wizard will be the longest, with screenshots and copy-paste-ready values.
 
-That filename pattern (`write-<stamp>.dat`) is built by `writeHermesFile` in `src/lib/systemAPI/hermes.ts` (line 153). It's the function the chat path uses to materialize `~/.hermes/.env` before every chat.
+### Paid channel (one-time unlock, lifetime)
+5. **Discord** — locked behind a one-time "Discord Channel" upgrade purchased on your website. Once unlocked, the user enters a license key in the app and it's theirs forever, updates included. Same model as a future "BRAID" upgrade or other paid customizations.
 
-### Root cause: cmd.exe is eating the destination argument
-
-`writeHermesFile` on Windows builds this script and passes it through `cmd.exe → wsl bash -lc "..."`:
-
-```bash
-TARGET="$HOME/.hermes/.env"
-mkdir -p "$(dirname "$TARGET")"
-cp "/mnt/c/.../write-xxx.dat" "$TARGET"
-chmod 600 "$TARGET"
-```
-
-The whole script is wrapped in **outer double quotes** for `wsl bash -lc "<script>"`. But the script itself contains many **inner double quotes** (`"$HOME/.hermes/.env"`, `"$(dirname "$TARGET")"`, the `cp` operands, etc.). `cmd.exe` does not honor backslash-escaping of `"` — every inner `"` closes the outer argument prematurely.
-
-Result: by the time bash sees the command, `cp`'s second argument and `chmod`'s argument have been chopped off → the materialization aborts → `~/.hermes/.env` is never written → the agent has no `OPENROUTER_API_KEY` → "No inference provider configured."
-
-The local-model error has the **same root cause**: even local providers fail because materializeEnv crashes early (`set -e` in chat script aborts before any model logic runs), and even when it doesn't abort, the chat code's diagnostics show the env wasn't sourced.
-
-We previously fixed this exact bug in `secretsStore.materializeEnv` by base64-encoding the script before handing it to cmd.exe. `writeHermesFile` was never given the same treatment — so every `writeConfig` / `materializeHermesEnv` / `setEnvVar` call on Windows is broken in the same way.
-
-### Why the LLM Config tab also says "No API key found"
-That tab reads the materialized `~/.hermes/.env` to verify the key is present. Since materialization silently fails on Windows, the file never contains the key the user just added → false "missing key" warning, even though it's correctly stored in the OS keychain.
+> Why Discord as the paid one: it's the second-most-requested but most users buying this app are non-technical and will not set up a Discord developer app on their own. It's substantial enough to charge for, but not so essential that gating it feels punitive (Telegram + WhatsApp + Email already cover the mass market).
 
 ---
 
-## The fix
+## Licensing model (reusable for future paid upgrades)
 
-### 1. Make `writeHermesFile` cmd-safe on Windows (the actual bug)
-In `src/lib/systemAPI/hermes.ts`, the Windows branch of `writeHermesFile` will be rewritten to base64-encode the entire bash script before passing it through cmd.exe — same pattern that already works for `runHermesShell`. cmd.exe then sees only safe characters (`echo <b64> | base64 -d | bash`), and bash receives the script intact with all its nested quotes preserved.
+A single, generic **"Upgrades"** system so Discord today and BRAID/other add-ons tomorrow all flow through the same code path.
 
-This single change unblocks: `materializeHermesEnv`, `writeConfig`, `setEnvVar`, `removeEnvVar`, and the install flow's first-time config write.
+- User buys on your website → receives a license key by email.
+- In-app: **Settings → Upgrades** (new card) shows a list of available upgrades. Each has:
+  - Title, one-line description, "Buy" button (opens your website in browser), "Enter license key" button.
+- License keys are stored locally (OS keychain via existing `secretsStore`, key name `LICENSE_<UPGRADE_ID>`).
+- Validation: offline signature check (Ed25519 public key embedded in the app, signature in the key). No phone-home, works offline forever, survives reinstall as long as the user keeps the key.
+- A tiny `licenses.ts` module exposes `isUpgradeUnlocked('discord')` used by the Channels page to gate the Discord card.
 
-### 2. Add a persistent, user-visible diagnostics layer
-Right now diagnostics only appear inline in failed chat bubbles. We will add:
-
-- **A "Diagnostics" page** (new route `/diagnostics`, sidebar entry under Settings) that shows:
-  - Last materialization attempt: timestamp, result, full stderr/stdout
-  - Current contents of `~/.hermes/.env` (key names + value lengths only — never the raw secret)
-  - Current `~/.hermes/config.yaml` model line
-  - Output of a one-click "Run hermes doctor" button
-  - Output of a one-click "Test chat round-trip" button (sends "ping", shows full raw stdout/stderr)
-- **A rolling in-memory log buffer** (`src/lib/diagnostics.ts`) that every shell call in `systemAPI` appends to: `{ timestamp, label, command, exitCode, stdout, stderr, durationMs }`. Capped at the last 200 entries. Viewable + copy-to-clipboard + download-as-text from the Diagnostics page.
-- **Toast on materialize failure** anywhere in the app (not just chat), with a "View diagnostics" action that deep-links to the page.
-
-### 3. Tighten the chat error path
-- When materialization fails, the chat bubble will show a hard error ("Failed to sync secrets to agent — open Diagnostics") instead of the misleading "No API key found" CTA.
-- Stop attempting to call `hermes chat` at all if materialization failed; the result is guaranteed wrong and the noisy banner only confuses things further.
-
-### 4. Defensive verification step
-After every materialize, immediately read `~/.hermes/.env` back and assert the expected keys are present (length > 0). If not, surface a clear error rather than letting the chat run against a stale/empty env.
+This means: no subscriptions, no server, no recurring billing infrastructure. You generate signed keys with a small offline tool and email them to buyers.
 
 ---
 
-## Files touched
+## UI plan
+
+### New page: `src/pages/Channels.tsx` (route `/channels`, sidebar entry between Agent Chat and Sub-Agents)
 
 ```text
-src/lib/systemAPI/hermes.ts          (fix writeHermesFile Windows path,
-                                      tighten chat materialize-fail handling,
-                                      add post-write verification)
-src/lib/diagnostics.ts               (new — in-memory log buffer + helpers)
-src/lib/systemAPI/core.ts            (hook runCommand/runCommandStream into
-                                      the diagnostics buffer)
-src/pages/Diagnostics.tsx            (new — diagnostics dashboard)
-src/components/layout/AppSidebar.tsx (add "Diagnostics" nav entry)
-src/App.tsx                          (register /diagnostics route)
-src/pages/AgentChat.tsx              (clearer error bubble + link to Diagnostics
-                                      when materialize fails)
+┌─ Channels ────────────────────────────────────────────────┐
+│ Free                                                       │
+│  ┌─────────┐ ┌────────┐ ┌──────────┐ ┌──────────┐         │
+│  │Telegram │ │ Slack  │ │  Email   │ │ WhatsApp │         │
+│  │ Set up  │ │Set up  │ │  Set up  │ │  Set up  │         │
+│  └─────────┘ └────────┘ └──────────┘ └──────────┘         │
+│                                                            │
+│ Premium upgrades (one-time, yours forever)                 │
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │ Discord channel · 🔒 Locked                         │  │
+│  │ One-time upgrade · lifetime access · free updates   │  │
+│  │ [Buy on website]   [I have a license key]           │  │
+│  └─────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
 ```
 
-## How you'll verify it worked
+Each card shows live status: *Not configured* / *Configured* / *Running* (green dot).
 
-1. Open the new **Diagnostics** page → click "Sync secrets now" → see "OK, wrote N keys to ~/.hermes/.env" with the file contents listed (key names only).
-2. Switch back to **Agent Chat** with OpenRouter selected → send "hi" → get a real reply.
-3. Switch model to your local Qwen → send "hi" → get a real reply (no key needed for local).
-4. If anything still fails, the Diagnostics page will show the exact shell command that ran, its exit code, and full stdout/stderr — so we can pinpoint any remaining issue in one screenshot.
+### Wizard: `src/components/channels/ChannelWizard.tsx`
+Reusable 4-step dialog used by all five channels:
+1. **What this does** — plain-English explainer + example screenshot.
+2. **Get your credentials** — numbered click-by-click steps, each with an "Open in browser" button.
+3. **Paste credentials** — validated fields (reuses prefix detection from `secretPresets.ts`).
+4. **Test & enable** — sends a test message, then flips the gateway on.
+
+### Sidebar
+Add **Channels** entry. Small green dot when ≥1 gateway is running.
+
+### Settings
+- **Upgrades** card listing all available paid upgrades, their unlock status, and a "Restore by entering license key" action.
+- "Install messaging extra" toggle in Behavior (one-time `pip install [messaging]`).
+
+---
+
+## Backend wiring
+
+Extend `src/lib/systemAPI/hermes.ts`:
+- `installMessagingExtra()` — runs the pip extra install, idempotent.
+- `startGateway(channel)` / `stopGateway(channel)` — writes the enabled list into `~/.hermes/config.yaml` `gateways:` section, then starts/stops.
+- `gatewayStatus()` — returns per-channel status object.
+
+Extend `src/lib/secretPresets.ts` with: `TELEGRAM_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN`, `DISCORD_BOT_TOKEN`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `IMAP_HOST`, `IMAP_USER`, `IMAP_PASS` — each with docs URLs and prefix detection where applicable.
+
+New `src/lib/licenses.ts`:
+- `UPGRADES` catalog (today: just `discord`).
+- `isUpgradeUnlocked(id)` — reads license key from secrets store, verifies Ed25519 signature against embedded public key.
+- `enterLicenseKey(id, key)` — validates + stores. Returns ok/error.
+- `buyUrl(id)` — returns your website URL for that upgrade.
+
+New `src/lib/channels.ts` — channel catalog (id, label, env-vars needed, docs link, paid?, upgradeId?).
+
+---
+
+## Files
+
+**New**
+- `src/pages/Channels.tsx`
+- `src/components/channels/ChannelCard.tsx`
+- `src/components/channels/ChannelWizard.tsx`
+- `src/components/channels/UpgradeCard.tsx`
+- `src/lib/channels.ts`
+- `src/lib/licenses.ts`
+
+**Edited**
+- `src/lib/systemAPI/hermes.ts` — gateway control + messaging extra
+- `src/lib/systemAPI/index.ts` — export new methods
+- `src/lib/secretPresets.ts` — new env vars
+- `src/App.tsx` — `/channels` route
+- `src/components/layout/AppSidebar.tsx` — Channels entry + status dot
+- `src/pages/SettingsPage.tsx` — Upgrades card
+
+---
+
+## What you'll need to provide later (not blocking this build)
+
+1. The website URL where Discord upgrade is sold (placeholder until you have one).
+2. An Ed25519 keypair — you keep the private key on your machine to sign license keys; the public key is embedded in the app. I'll generate placeholder keys and document how to swap them in.
 
