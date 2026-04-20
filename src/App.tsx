@@ -7,6 +7,7 @@ import AppLayout from "./components/layout/AppLayout";
 import { InstallProvider } from "./contexts/InstallContext";
 import { AgentConnectionProvider } from "./contexts/AgentConnectionContext";
 import { ChatProvider } from "./contexts/ChatContext";
+import { SettingsProvider } from "./contexts/SettingsContext";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import SubAgents from "./pages/SubAgents";
@@ -31,6 +32,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <HashRouter>
+        <SettingsProvider>
         <AgentConnectionProvider>
         <InstallProvider>
         <ChatProvider>
@@ -58,6 +60,7 @@ const App = () => (
         </ChatProvider>
         </InstallProvider>
         </AgentConnectionProvider>
+        </SettingsProvider>
       </HashRouter>
     </TooltipProvider>
   </QueryClientProvider>
