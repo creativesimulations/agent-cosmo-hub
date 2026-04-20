@@ -1044,6 +1044,7 @@ export const hermesAPI = {
       ...result,
       reply: finalReply,
       diagnostics: finalDiag,
+      sessionId,
       missingKey,
     };
   },
