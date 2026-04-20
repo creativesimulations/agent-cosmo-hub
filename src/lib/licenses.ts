@@ -68,13 +68,14 @@ const licenseKeyName = (id: string) => `LICENSE_${id.toUpperCase()}`;
  */
 const PUBLIC_KEY_B64URL = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
-const b64urlDecode = (s: string): Uint8Array => {
+const b64urlDecode = (s: string): ArrayBuffer => {
   const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
   const b64 = (s + pad).replace(/-/g, '+').replace(/_/g, '/');
   const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+  const buf = new ArrayBuffer(bin.length);
+  const view = new Uint8Array(buf);
+  for (let i = 0; i < bin.length; i++) view[i] = bin.charCodeAt(i);
+  return buf;
 };
 
 const isPlaceholderKey = (): boolean => /^A+$/.test(PUBLIC_KEY_B64URL);
@@ -128,7 +129,7 @@ export const parseLicenseKey = async (
   const ok = await verifyLicenseSignature(upgradeId, payloadB64, sigB64);
   if (!ok) return null;
   try {
-    const json = new TextDecoder().decode(b64urlDecode(payloadB64));
+    const json = new TextDecoder().decode(new Uint8Array(b64urlDecode(payloadB64)));
     return { upgradeId, payload: JSON.parse(json) };
   } catch {
     return null;
