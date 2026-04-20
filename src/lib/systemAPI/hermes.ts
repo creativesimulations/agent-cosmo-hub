@@ -1035,16 +1035,38 @@ export const hermesAPI = {
     };
   },
 
-  /** Write initial config for first-time setup */
+  /** Write initial config for first-time setup.
+   *  If `name` is provided, also writes a SOUL.md persona file so the agent
+   *  knows what to call itself across every conversation. */
   async writeInitialConfig(options: {
     model?: string;
+    name?: string;
   }): Promise<{ success: boolean }> {
     const configYaml = `# Ronbot — Hermes Agent Configuration
 # Managed by Ronbot Control Panel
 
 model: ${options.model || 'openrouter/auto'}
 `;
-    return this.writeConfig(configYaml);
+    const configResult = await this.writeConfig(configYaml);
+
+    if (options.name && options.name.trim()) {
+      const name = options.name.trim();
+      const soul = `# ${name}
+
+You are ${name}, the user's personal AI agent.
+
+Your name is **${name}**. When the user asks who you are or what your name is,
+respond as ${name} — not as "Hermes" or "an AI assistant". You were set up by
+the user with this name during installation, and they expect you to use it.
+
+You are still powered by the Hermes Agent framework (built by Nous Research)
+and have full access to its tools, skills, and memory — but your identity to
+the user is **${name}**.
+`;
+      await writeHermesFile('$HOME/.hermes/SOUL.md', soul, '600');
+    }
+
+    return configResult;
   },
 
   /** Check if hermes config directory exists */
