@@ -104,7 +104,7 @@ const Index = () => {
   };
 
   const handleSaveModel = async () => {
-    await systemAPI.writeInitialConfig({ model: selectedModel });
+    await systemAPI.writeInitialConfig({ model: selectedModel, name: agentName });
     await refreshConnection();
     setInstallStep(6);
   };
