@@ -911,30 +911,57 @@ export const hermesAPI = {
       .map((line) => line.trim().replace(/^\[hermes-diag\]\s*/, ''))
       .join('\n');
 
-    const cleaned = rawLines
-      .filter((line) => {
-        const t = line.trim();
-        if (!t) return false;
-        if (boxChars.test(t)) return false;
-        if (/^(hermes agent v|available tools|available skills|session:|tip:|warning:|⚠|✦|⚕|❯)/i.test(t)) return false;
-        if (/^\[hermes(-diag)?\]/.test(t)) return false;
-        if (/^\d+\s+tools\s+·\s+\d+\s+skills/i.test(t)) return false;
-        if (/^\/(exit|help)\b/.test(t)) return false;
-        if (/^query:\s/i.test(t)) return false;
-        if (/^goodbye/i.test(t)) return false;
-        // Strip the lifecycle/footer noise Hermes prints around every reply.
-        if (/^initializing agent\.{0,3}$/i.test(t)) return false;
-        if (/^resume this session( with)?:?$/i.test(t)) return false;
-        if (/^hermes\s+--resume\b/i.test(t)) return false;
-        if (/^duration:\s/i.test(t)) return false;
-        if (/^messages:\s/i.test(t)) return false;
-        if (/^tokens?:\s/i.test(t)) return false;
-        if (/^cost:\s/i.test(t)) return false;
-        if (/^\d+\s+(user|tool calls?|assistant)/i.test(t)) return false;
-        return true;
-      })
-      .join('\n')
-      .trim();
+    const cleaned = (() => {
+      const filtered = rawLines
+        .filter((line) => {
+          const t = line.trim();
+          if (!t) return false;
+          if (boxChars.test(t)) return false;
+          if (/^(hermes agent v|available tools|available skills|session:|tip:|warning:|⚠|✦|⚕|❯)/i.test(t)) return false;
+          if (/^\[hermes(-diag)?\]/.test(t)) return false;
+          if (/^\d+\s+tools\s+·\s+\d+\s+skills/i.test(t)) return false;
+          if (/^\/(exit|help)\b/.test(t)) return false;
+          if (/^query:\s/i.test(t)) return false;
+          if (/^goodbye/i.test(t)) return false;
+          // Strip the lifecycle/footer noise Hermes prints around every reply.
+          if (/^initializing agent\.{0,3}$/i.test(t)) return false;
+          if (/^resume this session( with)?:?$/i.test(t)) return false;
+          if (/^hermes\s+--resume\b/i.test(t)) return false;
+          if (/^duration:\s/i.test(t)) return false;
+          if (/^messages:\s/i.test(t)) return false;
+          if (/^tokens?:\s/i.test(t)) return false;
+          if (/^cost:\s/i.test(t)) return false;
+          if (/^\d+\s+(user|tool calls?|assistant)/i.test(t)) return false;
+          return true;
+        });
+
+      // Hermes sometimes echoes the user's prompt at the start of the reply
+      // (often wrapped/indented, sometimes only the tail). Detect and remove
+      // any leading lines that are a substring of, or fully contained within,
+      // the original prompt.
+      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+      const promptNorm = norm(prompt);
+      const promptWords = promptNorm.split(' ').filter(Boolean);
+      const isEchoLine = (line: string) => {
+        const ln = norm(line);
+        if (!ln) return false;
+        if (ln.length < 4) return false;
+        // Whole line is contained in the prompt.
+        if (promptNorm.includes(ln)) return true;
+        // Or the line is a tail/head of the prompt (≥3 consecutive words match).
+        const lnWords = ln.split(' ').filter(Boolean);
+        if (lnWords.length >= 3) {
+          const joined = lnWords.join(' ');
+          if (promptNorm.endsWith(joined) || promptNorm.startsWith(joined)) return true;
+        }
+        return false;
+      };
+      while (filtered.length > 0 && isEchoLine(filtered[0])) {
+        filtered.shift();
+      }
+
+      return filtered.join('\n').trim();
+    })();
 
     // Detect Hermes's "no inference provider" / "missing API key" error so the
     // UI can render an actionable CTA → Secrets tab.
@@ -1008,16 +1035,52 @@ export const hermesAPI = {
     };
   },
 
-  /** Write initial config for first-time setup */
+  /** Write the SOUL.md persona file so the agent knows its given name. */
+  async setAgentName(name: string): Promise<{ success: boolean }> {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return { success: false };
+    const soul = `# ${trimmed}
+
+You are ${trimmed}, the user's personal AI agent.
+
+Your name is **${trimmed}**. When the user asks who you are or what your name is,
+respond as ${trimmed} — not as "Hermes" or "an AI assistant". You were set up by
+the user with this name during installation, and they expect you to use it.
+
+You are still powered by the Hermes Agent framework (built by Nous Research)
+and have full access to its tools, skills, and memory — but your identity to
+the user is **${trimmed}**.
+`;
+    return writeHermesFile('$HOME/.hermes/SOUL.md', soul, '600');
+  },
+
+  /** Read the agent's name from SOUL.md (first H1), if any. */
+  async getAgentName(): Promise<string | null> {
+    const r = await readHermesFile('$HOME/.hermes/SOUL.md');
+    if (!r.success || !r.content) return null;
+    const m = r.content.match(/^#\s+(.+?)\s*$/m);
+    return m ? m[1].trim() : null;
+  },
+
+  /** Write initial config for first-time setup.
+   *  If `name` is provided, also writes a SOUL.md persona file so the agent
+   *  knows what to call itself across every conversation. */
   async writeInitialConfig(options: {
     model?: string;
+    name?: string;
   }): Promise<{ success: boolean }> {
     const configYaml = `# Ronbot — Hermes Agent Configuration
 # Managed by Ronbot Control Panel
 
 model: ${options.model || 'openrouter/auto'}
 `;
-    return this.writeConfig(configYaml);
+    const configResult = await this.writeConfig(configYaml);
+
+    if (options.name && options.name.trim()) {
+      await this.setAgentName(options.name);
+    }
+
+    return configResult;
   },
 
   /** Check if hermes config directory exists */
