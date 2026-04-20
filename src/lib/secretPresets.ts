@@ -45,6 +45,17 @@ export const SECRET_PRESETS: SecretPreset[] = [
   { envVar: 'TELEGRAM_BOT_TOKEN', label: 'Telegram Bot',   hint: 'Token from @BotFather.',                                       prefix: '',        docsUrl: 'https://core.telegram.org/bots#how-do-i-create-a-bot', category: 'Messaging' },
   { envVar: 'DISCORD_BOT_TOKEN',  label: 'Discord Bot',    hint: 'Token from the Developer Portal.',                             prefix: '',        docsUrl: 'https://discord.com/developers/applications', category: 'Messaging' },
   { envVar: 'SLACK_BOT_TOKEN',    label: 'Slack Bot',      hint: 'xoxb-… token from a Slack app.',                               prefix: 'xoxb-',   docsUrl: 'https://api.slack.com/apps',                  category: 'Messaging' },
+  { envVar: 'SLACK_APP_TOKEN',    label: 'Slack App-Level',hint: 'xapp-… token (Socket Mode).',                                  prefix: 'xapp-',   docsUrl: 'https://api.slack.com/apps',                  category: 'Messaging' },
+  { envVar: 'WHATSAPP_PHONE_NUMBER_ID', label: 'WhatsApp Phone ID', hint: 'Numeric ID from Meta API Setup.',                    prefix: '',        docsUrl: 'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started', category: 'Messaging' },
+  { envVar: 'WHATSAPP_ACCESS_TOKEN', label: 'WhatsApp Token', hint: 'EAA… access token from Meta.',                              prefix: 'EAA',     docsUrl: 'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started', category: 'Messaging' },
+  { envVar: 'WHATSAPP_VERIFY_TOKEN', label: 'WhatsApp Verify', hint: 'Random string you choose for webhook verification.',     prefix: '',        docsUrl: 'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started', category: 'Messaging' },
+  { envVar: 'SMTP_HOST',          label: 'SMTP Host',      hint: 'e.g. smtp.gmail.com',                                          prefix: '',        category: 'Messaging' },
+  { envVar: 'SMTP_PORT',          label: 'SMTP Port',      hint: 'Usually 587.',                                                 prefix: '',        category: 'Messaging' },
+  { envVar: 'SMTP_USER',          label: 'SMTP User',      hint: 'Email address used to send.',                                  prefix: '',        category: 'Messaging' },
+  { envVar: 'SMTP_PASS',          label: 'SMTP Password',  hint: 'App password (not your normal password).',                     prefix: '',        category: 'Messaging' },
+  { envVar: 'IMAP_HOST',          label: 'IMAP Host',      hint: 'e.g. imap.gmail.com',                                          prefix: '',        category: 'Messaging' },
+  { envVar: 'IMAP_USER',          label: 'IMAP User',      hint: 'Usually your email address.',                                  prefix: '',        category: 'Messaging' },
+  { envVar: 'IMAP_PASS',          label: 'IMAP Password',  hint: 'Usually same as SMTP password.',                               prefix: '',        category: 'Messaging' },
 ];
 
 /** Map env var → preset, for quick lookup when rendering existing secrets. */

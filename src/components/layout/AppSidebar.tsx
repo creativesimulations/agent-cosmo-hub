@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Archive,
   Activity,
+  Radio,
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
 import ronbotLogo from "@/assets/ronbot-logo.png";
@@ -29,6 +30,7 @@ const navGroups = [
       { path: "/agents", icon: Network, label: "Sub-Agents" },
       { path: "/logs", icon: FileText, label: "Logs" },
       { path: "/chat", icon: MessageSquare, label: "Agent Chat", showChatBadge: true },
+      { path: "/channels", icon: Radio, label: "Channels" },
     ],
   },
   {
