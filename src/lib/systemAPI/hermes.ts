@@ -813,7 +813,8 @@ export const hermesAPI = {
   async chat(
     prompt: string,
     onOutput?: CommandOutputHandler,
-  ): Promise<CommandResult & { reply?: string; diagnostics?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean }> {
+    resumeId?: string,
+  ): Promise<CommandResult & { reply?: string; diagnostics?: string; sessionId?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean }> {
     const startedAt = Date.now();
     agentLogs.push({
       source: 'chat',
@@ -886,7 +887,12 @@ export const hermesAPI = {
       `PROMPT="$(echo ${promptB64} | base64 -d)"`,
       // Run from ~/.hermes so any relative config lookups also work.
       'cd "$HOME/.hermes" 2>/dev/null || true',
-      'hermes chat -q "$PROMPT" </dev/null 2>&1',
+      // If we have a session id from a previous turn, resume it so the agent
+      // keeps full conversation context. Otherwise start fresh and we'll
+      // capture the new session id from the footer Hermes prints.
+      resumeId
+        ? `hermes chat --resume ${JSON.stringify(resumeId)} -q "$PROMPT" </dev/null 2>&1`
+        : 'hermes chat -q "$PROMPT" </dev/null 2>&1',
     ].join('\n');
 
     const result = await runHermesShell(script, { timeout: 180000 }, onOutput);
@@ -911,6 +917,13 @@ export const hermesAPI = {
       .map((line) => line.trim().replace(/^\[hermes-diag\]\s*/, ''))
       .join('\n');
 
+    // Capture the session id Hermes prints in its footer:
+    //   "Resume this session with:\n  hermes --resume 20260420_064718_7199c1"
+    // We need this so the next turn can call `hermes chat --resume <id>` and
+    // keep the conversation context — without it every turn is a fresh
+    // session and the agent has no memory of what we just said.
+    const sessionIdMatch = (result.stdout || '').match(/hermes\s+--resume\s+([A-Za-z0-9_\-:.]+)/);
+    const sessionId = sessionIdMatch?.[1] || resumeId;
     const cleaned = (() => {
       const filtered = rawLines
         .filter((line) => {
@@ -1031,6 +1044,7 @@ export const hermesAPI = {
       ...result,
       reply: finalReply,
       diagnostics: finalDiag,
+      sessionId,
       missingKey,
     };
   },

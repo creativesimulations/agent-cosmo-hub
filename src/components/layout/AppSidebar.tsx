@@ -19,6 +19,7 @@ import {
 import NotificationCenter from "@/components/NotificationCenter";
 import ronbotLogo from "@/assets/ronbot-logo.png";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
+import { useChat } from "@/contexts/ChatContext";
 
 const navGroups = [
   {
@@ -27,7 +28,7 @@ const navGroups = [
       { path: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
       { path: "/agents", icon: Network, label: "Sub-Agents" },
       { path: "/logs", icon: FileText, label: "Logs" },
-      { path: "/chat", icon: MessageSquare, label: "Agent Chat" },
+      { path: "/chat", icon: MessageSquare, label: "Agent Chat", showChatBadge: true },
     ],
   },
   {
@@ -54,6 +55,7 @@ const navGroups = [
 const AppSidebar = () => {
   const location = useLocation();
   const { connected, status } = useAgentConnection();
+  const { unreadCount, isStreaming } = useChat();
 
   return (
     <aside className="w-[220px] min-h-screen glass-strong flex flex-col border-r border-white/10">
@@ -78,6 +80,9 @@ const AppSidebar = () => {
             </p>
             {group.items.map((item) => {
               const isActive = location.pathname === item.path;
+              const isChatLink = item.path === "/chat";
+              const showUnread = isChatLink && unreadCount > 0 && !isActive;
+              const showWaiting = isChatLink && isStreaming && !showUnread;
               return (
                 <NavLink
                   key={item.path}
@@ -91,6 +96,20 @@ const AppSidebar = () => {
                 >
                   <item.icon className={cn("w-4 h-4", isActive && "text-primary")} />
                   <span className="font-medium">{item.label}</span>
+                  {showUnread && (
+                    <span
+                      className="ml-auto flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-[10px] font-semibold text-primary-foreground shadow-[0_0_8px_hsl(var(--primary)/0.6)]"
+                      aria-label={`${unreadCount} unread message${unreadCount === 1 ? "" : "s"}`}
+                    >
+                      {unreadCount > 9 ? "9+" : unreadCount}
+                    </span>
+                  )}
+                  {showWaiting && (
+                    <span
+                      className="ml-auto w-2 h-2 rounded-full bg-warning animate-pulse"
+                      aria-label="Agent is responding"
+                    />
+                  )}
                 </NavLink>
               );
             })}
