@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Network, AlertCircle, RefreshCw, Loader2, CheckCircle2, Activity, FileText } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import StatusBadge from "@/components/ui/StatusBadge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { systemAPI } from "@/lib/systemAPI";
@@ -170,9 +171,7 @@ const SubAgents = () => {
           <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <Activity className="w-4 h-4 text-primary" />
             Active
-            <StatusBadge status={active.length > 0 ? "active" : "neutral"}>
-              {active.length}
-            </StatusBadge>
+            <Badge variant="secondary" className="ml-1">{active.length}</Badge>
           </h2>
         </div>
         {active.length === 0 ? (
@@ -204,7 +203,7 @@ const SubAgents = () => {
                       </div>
                     </div>
                   </div>
-                  <StatusBadge status="active">running</StatusBadge>
+                  <StatusBadge status="busy" label="running" />
                 </div>
               </GlassCard>
             ))}
@@ -218,7 +217,7 @@ const SubAgents = () => {
           <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-primary" />
             Recently completed
-            <StatusBadge status="neutral">{recent.length}</StatusBadge>
+            <Badge variant="secondary" className="ml-1">{recent.length}</Badge>
           </h2>
         </div>
         {recent.length === 0 ? (
@@ -242,7 +241,7 @@ const SubAgents = () => {
                       </div>
                     </div>
                   </div>
-                  <StatusBadge status="success">done</StatusBadge>
+                  <StatusBadge status="online" label="done" />
                 </div>
               </GlassCard>
             ))}
@@ -259,9 +258,7 @@ const SubAgents = () => {
                 Sub-agent activity is parsed from <code>{logPath}</code>. If the agent has never
                 delegated a task, this view will be empty.
               </p>
-              <p className="opacity-70">
-                Auto-refreshing every 3 seconds.
-              </p>
+              <p className="opacity-70">Auto-refreshing every 3 seconds.</p>
             </div>
           </div>
         </GlassCard>
