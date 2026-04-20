@@ -813,7 +813,8 @@ export const hermesAPI = {
   async chat(
     prompt: string,
     onOutput?: CommandOutputHandler,
-  ): Promise<CommandResult & { reply?: string; diagnostics?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean }> {
+    resumeId?: string,
+  ): Promise<CommandResult & { reply?: string; diagnostics?: string; sessionId?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean }> {
     const startedAt = Date.now();
     agentLogs.push({
       source: 'chat',
