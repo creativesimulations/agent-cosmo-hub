@@ -917,7 +917,15 @@ export const hermesAPI = {
       .map((line) => line.trim().replace(/^\[hermes-diag\]\s*/, ''))
       .join('\n');
 
-    const cleaned = (() => {
+    // Capture the session id Hermes prints in its footer:
+    //   "Resume this session with:\n  hermes --resume 20260420_064718_7199c1"
+    // We need this so the next turn can call `hermes chat --resume <id>` and
+    // keep the conversation context — without it every turn is a fresh
+    // session and the agent has no memory of what we just said.
+    const sessionIdMatch = (result.stdout || '').match(/hermes\s+--resume\s+([A-Za-z0-9_\-:.]+)/);
+    const sessionId = sessionIdMatch?.[1] || resumeId;
+
+
       const filtered = rawLines
         .filter((line) => {
           const t = line.trim();
