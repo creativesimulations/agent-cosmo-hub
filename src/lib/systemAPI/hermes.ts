@@ -1224,4 +1224,167 @@ model: ${options.model || 'openrouter/auto'}
     );
     return { success: true, skills };
   },
+
+  /**
+   * Inspect the Hermes agent log to surface subagent (delegate_task) activity.
+   *
+   * Hermes does not expose a "list subagents" CLI — subagents are ephemeral
+   * threads spawned inside an active chat turn by the `delegate_task` tool.
+   * The only durable trace they leave is in `~/.hermes/logs/agent.log`, where
+   * the parent agent emits `subagent.start` / `subagent.complete` events plus
+   * the original `delegate_task` tool call (which carries the goal text).
+   *
+   * We tail the last ~24 h of agent.log, pair starts with completes, and
+   * return two buckets:
+   *   - `active`:   started but not yet completed
+   *   - `recent`:   completed within the window (newest first, capped to 25)
+   *
+   * Returns `{ success: false }` only if the log file genuinely can't be read;
+   * an empty install with no log yet returns `success: true` with empty arrays.
+   */
+  async listSubAgents(): Promise<{
+    success: boolean;
+    error?: string;
+    active: Array<{ id: string; goal: string; startedAt: string; lastActivity?: string; lastEvent?: string }>;
+    recent: Array<{ id: string; goal: string; startedAt: string; completedAt: string; durationMs: number; summary?: string }>;
+    logPath: string;
+  }> {
+    const logPath = '$HOME/.hermes/logs/agent.log';
+    // Read up to the last 4000 lines — generous enough to cover a long
+    // multi-delegation session, small enough to parse instantly.
+    const result = await runHermesShell([
+      `LOG="${logPath}"`,
+      'if [ ! -f "$LOG" ]; then exit 3; fi',
+      'tail -n 4000 "$LOG"',
+    ].join('\n'), { timeout: 10000 });
+
+    if (!result.success) {
+      // exit 3 = log doesn't exist yet (agent never ran). Treat as empty.
+      if (result.code === 3) {
+        return { success: true, active: [], recent: [], logPath: '~/.hermes/logs/agent.log' };
+      }
+      return {
+        success: false,
+        error: result.stderr || 'Failed to read agent log',
+        active: [],
+        recent: [],
+        logPath: '~/.hermes/logs/agent.log',
+      };
+    }
+
+    const lines = (result.stdout || '').split('\n');
+    // Python logging timestamp at line start: "2026-04-20 14:35:02,123 ..."
+    const tsRe = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})(?:[,.](\d{1,3}))?/;
+    const parseTs = (line: string): number | null => {
+      const m = line.match(tsRe);
+      if (!m) return null;
+      const ms = m[2] ? parseInt(m[2].padEnd(3, '0'), 10) : 0;
+      const t = Date.parse(m[1].replace(' ', 'T'));
+      return Number.isNaN(t) ? null : t + ms;
+    };
+
+    // A subagent is identified by the goal text it was launched with — that
+    // string is unique enough across a session and Hermes doesn't expose a
+    // numeric child id in the log. We extract it from the `delegate_task` tool
+    // call (`goal="..."` or `goal: "..."`) closest before each `subagent.start`.
+    type Pending = { id: string; goal: string; startedAt: number; lastActivity?: number; lastEvent?: string };
+    type Done = { id: string; goal: string; startedAt: number; completedAt: number; summary?: string };
+
+    const pending: Pending[] = [];
+    const completed: Done[] = [];
+    let lastDelegateGoal: string | null = null;
+
+    const goalFromLine = (line: string): string | null => {
+      // Try a few shapes: goal="...", goal: '...', or "task": "..."
+      const patterns = [
+        /goal\s*[:=]\s*"([^"]{1,400})"/,
+        /goal\s*[:=]\s*'([^']{1,400})'/,
+        /"task"\s*:\s*"([^"]{1,400})"/,
+        /preview\s*=\s*"([^"]{1,400})"/,
+      ];
+      for (const re of patterns) {
+        const m = line.match(re);
+        if (m) return m[1];
+      }
+      return null;
+    };
+
+    for (const line of lines) {
+      if (!line) continue;
+      const ts = parseTs(line);
+
+      // Capture the goal from a delegate_task invocation so a following
+      // subagent.start event can adopt it.
+      if (/delegate_task/i.test(line)) {
+        const g = goalFromLine(line);
+        if (g) lastDelegateGoal = g;
+      }
+
+      if (/subagent\.start/i.test(line) && ts !== null) {
+        const goal = goalFromLine(line) || lastDelegateGoal || '(no goal recorded)';
+        const id = `${ts}-${goal.slice(0, 40)}`;
+        pending.push({ id, goal, startedAt: ts, lastActivity: ts, lastEvent: 'started' });
+        lastDelegateGoal = null;
+        continue;
+      }
+
+      if (/subagent\.complete/i.test(line) && ts !== null && pending.length > 0) {
+        // Pair with the OLDEST pending (FIFO) — Hermes blocks the parent
+        // until children finish, so order is preserved per delegation batch.
+        const open = pending.shift()!;
+        const summary = goalFromLine(line) || undefined;
+        completed.push({
+          id: open.id,
+          goal: open.goal,
+          startedAt: open.startedAt,
+          completedAt: ts,
+          summary,
+        });
+        continue;
+      }
+
+      // Any subagent.* event updates the most recent active one's heartbeat.
+      if (/subagent\.(thinking|tool|progress)/i.test(line) && ts !== null && pending.length > 0) {
+        const last = pending[pending.length - 1];
+        last.lastActivity = ts;
+        if (/subagent\.thinking/i.test(line)) last.lastEvent = 'thinking';
+        else if (/subagent\.tool/i.test(line)) last.lastEvent = 'using a tool';
+        else last.lastEvent = 'working';
+      }
+    }
+
+    // Drop pending entries older than 1 hour with no recent activity — they
+    // almost certainly crashed without emitting a complete event, and showing
+    // a "still running for 9 days" subagent is misleading.
+    const STALE_AFTER_MS = 60 * 60 * 1000;
+    const now = Date.now();
+    const stillActive = pending.filter(
+      (p) => now - (p.lastActivity ?? p.startedAt) < STALE_AFTER_MS,
+    );
+
+    const toIso = (t: number) => new Date(t).toISOString();
+
+    return {
+      success: true,
+      logPath: '~/.hermes/logs/agent.log',
+      active: stillActive.map((p) => ({
+        id: p.id,
+        goal: p.goal,
+        startedAt: toIso(p.startedAt),
+        lastActivity: p.lastActivity ? toIso(p.lastActivity) : undefined,
+        lastEvent: p.lastEvent,
+      })),
+      recent: completed
+        .sort((a, b) => b.completedAt - a.completedAt)
+        .slice(0, 25)
+        .map((c) => ({
+          id: c.id,
+          goal: c.goal,
+          startedAt: toIso(c.startedAt),
+          completedAt: toIso(c.completedAt),
+          durationMs: c.completedAt - c.startedAt,
+          summary: c.summary,
+        })),
+    };
+  },
 };
