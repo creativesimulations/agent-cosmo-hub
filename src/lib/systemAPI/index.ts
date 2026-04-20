@@ -56,6 +56,7 @@ export const systemAPI = {
   hermesDoctor: hermesAPI.doctor.bind(hermesAPI),
   hermesStatus: hermesAPI.status.bind(hermesAPI),
   hermesUpdate: hermesAPI.update.bind(hermesAPI),
+  hermesUninstall: hermesAPI.uninstall.bind(hermesAPI),
   readEnvFile: hermesAPI.readEnvFile.bind(hermesAPI),
   setEnvVar: hermesAPI.setEnvVar.bind(hermesAPI),
   removeEnvVar: hermesAPI.removeEnvVar.bind(hermesAPI),

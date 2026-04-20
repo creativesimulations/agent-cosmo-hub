@@ -684,10 +684,43 @@ export const hermesAPI = {
       detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
       durationMs: Date.now() - start,
     });
-    return r;
   },
 
-  // ─── API Key / .env management ────────────────────────────
+  /**
+   * Completely remove the Hermes install: deletes ~/.hermes (config, venv,
+   * skills, logs, .env, state.db) and best-effort `pip uninstall hermes-agent`
+   * from the user pip. This is destructive — Settings page guards it behind
+   * a confirmation dialog.
+   */
+  async uninstall(onOutput?: CommandOutputHandler): Promise<CommandResult> {
+    const start = Date.now();
+    agentLogs.push({ source: 'system', level: 'warn', summary: 'Uninstalling Hermes…' });
+    const script = [
+      'set +e',
+      'echo "[uninstall] removing ~/.hermes (config, venv, skills, logs, state)"',
+      'rm -rf "$HOME/.hermes"',
+      'echo "[uninstall] removing ~/.local/bin/hermes symlink"',
+      'rm -f "$HOME/.local/bin/hermes"',
+      'echo "[uninstall] best-effort pip uninstall"',
+      'if command -v pip3 >/dev/null 2>&1; then',
+      '  pip3 uninstall -y hermes-agent 2>&1 | tail -3 || true',
+      'fi',
+      'if command -v pipx >/dev/null 2>&1; then',
+      '  pipx uninstall hermes-agent 2>&1 | tail -3 || true',
+      'fi',
+      'echo "[uninstall] done"',
+      'exit 0',
+    ].join('\n');
+    const r = await runHermesShell(script, { timeout: 120000 }, onOutput);
+    agentLogs.push({
+      source: 'system',
+      level: r.success ? 'info' : 'error',
+      summary: r.success ? 'Hermes uninstalled' : `Hermes uninstall failed (exit=${r.code})`,
+      detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
+      durationMs: Date.now() - start,
+    });
+    return r;
+  },
 
   /** Read the current ~/.hermes/.env file */
   async readEnvFile(): Promise<Record<string, string>> {
