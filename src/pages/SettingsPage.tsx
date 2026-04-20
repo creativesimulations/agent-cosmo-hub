@@ -461,6 +461,29 @@ const SettingsPage = () => {
         </div>
       </GlassCard>
 
+      {/* ─── Upgrades ──────────────────────────────────────────── */}
+      <GlassCard className="p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-primary" />
+          <h2 className="text-lg font-semibold text-foreground">Upgrades</h2>
+        </div>
+        <p className="text-sm text-muted-foreground -mt-2">
+          One-time purchases. Yours forever, including future updates. Buy on our website, then
+          paste the license key here.
+        </p>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {UPGRADES.map((u) => (
+            <UpgradeCard
+              key={u.id}
+              upgrade={u}
+              unlocked={!!unlocks[u.id]}
+              loading={unlocksLoading}
+              onChange={refreshUnlocks}
+            />
+          ))}
+        </div>
+      </GlassCard>
+
       {/* ─── Updates ───────────────────────────────────────────── */}
       <GlassCard className="p-6 space-y-4">
         <div className="flex items-center gap-2">
