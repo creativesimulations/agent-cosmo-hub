@@ -924,8 +924,7 @@ export const hermesAPI = {
     // session and the agent has no memory of what we just said.
     const sessionIdMatch = (result.stdout || '').match(/hermes\s+--resume\s+([A-Za-z0-9_\-:.]+)/);
     const sessionId = sessionIdMatch?.[1] || resumeId;
-
-
+    const cleaned = (() => {
       const filtered = rawLines
         .filter((line) => {
           const t = line.trim();
