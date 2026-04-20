@@ -88,6 +88,13 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     onChatPageRef.current = location.pathname === "/chat";
   }, [location.pathname]);
 
+  // Mirror settings into a ref so the long-lived sendMessage closure can
+  // read the latest sound/notification preferences without re-creating itself.
+  const settingsRef = useRef(settings);
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
   // Persist messages, capped to settings.maxStoredMessages (0 = unlimited).
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -192,7 +199,11 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         });
       }
 
-      // Bump unread count if the user isn't currently looking at the chat.
+      // Bump unread count if the user isn't currently looking at the chat,
+      // and fire the user's chosen alerts (chime / desktop notification).
+      if (result.success && !result.missingKey && !matFailed) {
+        handleAgentReplyArrived(settingsRef.current, reply);
+      }
       if (!onChatPageRef.current) {
         setUnreadCount((n) => n + 1);
       }
