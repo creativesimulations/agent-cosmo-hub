@@ -131,9 +131,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const ok = await saveCredentials();
       if (!ok) return;
     }
-    setStep((s) => Math.min(3, (s + 1) as Step));
+    setStep((s) => Math.min(3, s + 1) as Step);
   };
-  const back = () => setStep((s) => Math.max(0, (s - 1) as Step));
+  const back = () => setStep((s) => Math.max(0, s - 1) as Step);
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
