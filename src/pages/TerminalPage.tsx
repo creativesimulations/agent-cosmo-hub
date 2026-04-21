@@ -1,116 +1,249 @@
-import { useState, useRef, useEffect } from "react";
-import { Terminal as TerminalIcon, Send } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Terminal as TerminalIcon, Send, Loader2, Trash2 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { useAgentConnection } from "@/contexts/AgentConnectionContext";
+import { systemAPI } from "@/lib/systemAPI";
+import { isElectron } from "@/lib/systemAPI";
 
 interface TerminalLine {
   type: "input" | "output" | "error" | "system";
   content: string;
 }
 
-const initialLines: TerminalLine[] = [
-  { type: "system", content: "Ronbot Agent Terminal v1.0" },
-  { type: "system", content: "Type 'help' for available commands." },
-  { type: "system", content: "─".repeat(50) },
+const WELCOME: TerminalLine[] = [
+  { type: "system", content: "Ainoval Terminal — runs commands in your real shell." },
+  { type: "system", content: "Type 'help' for built-ins, or any shell command (e.g. 'hermes status', 'ls ~/.hermes')." },
+  { type: "system", content: "─".repeat(60) },
 ];
 
+const HELP_TEXT = `Built-in commands:
+  help              Show this help
+  clear             Clear terminal output
+  history           Show recent commands
+  cd <dir>          Change working directory for this session
+
+Anything else is run as a real shell command via the OS.
+Useful examples:
+  hermes status
+  hermes doctor
+  hermes update
+  ls ~/.hermes
+  cat ~/.hermes/config.yaml`;
+
 const TerminalPage = () => {
-  const [lines, setLines] = useState<TerminalLine[]>(initialLines);
+  const [lines, setLines] = useState<TerminalLine[]>(WELCOME);
   const [input, setInput] = useState("");
-  const { connected: agentConnected } = useAgentConnection();
+  const [running, setRunning] = useState(false);
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIdx, setHistoryIdx] = useState<number | null>(null);
+  const [cwd, setCwd] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Initialize cwd from platform homeDir.
+  useEffect(() => {
+    void (async () => {
+      const p = await systemAPI.getPlatform();
+      setCwd(p.homeDir);
+    })();
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
-  }, [lines]);
+  }, [lines, running]);
 
-  const handleCommand = () => {
-    if (!input.trim()) return;
-    const newLines: TerminalLine[] = [
-      ...lines,
-      { type: "input", content: `$ ${input}` },
-    ];
+  const append = useCallback((newLines: TerminalLine[]) => {
+    setLines((prev) => [...prev, ...newLines]);
+  }, []);
 
-    const cmd = input.trim().toLowerCase();
-    if (cmd === "help") {
-      newLines.push({
-        type: "output",
-        content: "Available: agent status | agent logs | agent restart | clear",
-      });
-    } else if (cmd === "clear") {
-      setLines([]);
-      setInput("");
-      return;
-    } else if (cmd === "agent status") {
-      newLines.push({ type: "output", content: agentConnected ? "Local agent install detected in ~/.hermes" : "No agent connected" });
-    } else if (cmd === "agent restart") {
-      newLines.push({ type: "output", content: agentConnected ? "Restart is not wired up yet in Terminal." : "No agent connected" });
-    } else {
-      newLines.push({ type: "output", content: `Unknown command: ${input}` });
-    }
+  const runCommand = useCallback(
+    async (raw: string) => {
+      const cmd = raw.trim();
+      if (!cmd) return;
 
-    setLines(newLines);
+      append([{ type: "input", content: `${cwd} $ ${cmd}` }]);
+      setHistory((h) => [...h, cmd]);
+      setHistoryIdx(null);
+
+      // Built-ins
+      if (cmd === "help") {
+        append([{ type: "output", content: HELP_TEXT }]);
+        return;
+      }
+      if (cmd === "clear") {
+        setLines([]);
+        return;
+      }
+      if (cmd === "history") {
+        append([
+          {
+            type: "output",
+            content: history.length ? history.map((h, i) => `  ${i + 1}  ${h}`).join("\n") : "(empty)",
+          },
+        ]);
+        return;
+      }
+      if (cmd.startsWith("cd ") || cmd === "cd") {
+        const target = cmd === "cd" ? "~" : cmd.slice(3).trim();
+        // Expand ~ via platform info.
+        const p = await systemAPI.getPlatform();
+        const expanded = target === "~" || target.startsWith("~/")
+          ? target.replace(/^~/, p.homeDir)
+          : target;
+        // Verify it exists by running a probe (pwd inside it).
+        const probe = await systemAPI.runCommand(`cd "${expanded}" && pwd`);
+        if (probe.exitCode === 0 && probe.stdout.trim()) {
+          setCwd(probe.stdout.trim());
+        } else {
+          append([{ type: "error", content: probe.stderr.trim() || `cd: no such directory: ${target}` }]);
+        }
+        return;
+      }
+
+      if (!isElectron()) {
+        append([
+          {
+            type: "error",
+            content: "Shell execution is only available in the desktop app. (Browser preview can't run real commands.)",
+          },
+        ]);
+        return;
+      }
+
+      setRunning(true);
+      try {
+        // Execute in current cwd by chaining. Use bash -lc on unix-like for PATH.
+        const result = await systemAPI.runCommand(cmd, { cwd });
+        if (result.stdout) {
+          append([{ type: "output", content: result.stdout.replace(/\n$/, "") }]);
+        }
+        if (result.stderr) {
+          append([{ type: "error", content: result.stderr.replace(/\n$/, "") }]);
+        }
+        if (!result.stdout && !result.stderr && result.exitCode === 0) {
+          append([{ type: "system", content: "(no output)" }]);
+        }
+        if (result.exitCode !== 0) {
+          append([{ type: "system", content: `[exit ${result.exitCode}]` }]);
+        }
+      } catch (e) {
+        append([{ type: "error", content: e instanceof Error ? e.message : String(e) }]);
+      } finally {
+        setRunning(false);
+      }
+    },
+    [append, cwd, history],
+  );
+
+  const handleSubmit = () => {
+    if (running) return;
+    const cmd = input;
     setInput("");
+    void runCommand(cmd);
+  };
+
+  const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      handleSubmit();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (history.length === 0) return;
+      const next = historyIdx === null ? history.length - 1 : Math.max(0, historyIdx - 1);
+      setHistoryIdx(next);
+      setInput(history[next]);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (historyIdx === null) return;
+      const next = historyIdx + 1;
+      if (next >= history.length) {
+        setHistoryIdx(null);
+        setInput("");
+      } else {
+        setHistoryIdx(next);
+        setInput(history[next]);
+      }
+    }
   };
 
   return (
-    <div className="p-6 space-y-6 h-[calc(100vh-0px)] flex flex-col">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-          <TerminalIcon className="w-6 h-6 text-primary" />
-          Terminal
-        </h1>
-        <p className="text-sm text-muted-foreground">Direct CLI access to your agent</p>
+    <div className="p-6 space-y-4 h-screen flex flex-col">
+      <div className="flex items-end justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            <TerminalIcon className="w-6 h-6 text-primary" />
+            Terminal
+          </h1>
+          <p className="text-sm text-muted-foreground">Direct shell access — run real commands on your system.</p>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setLines(WELCOME)}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <Trash2 className="w-4 h-4 mr-1" /> Clear
+        </Button>
       </div>
 
-      <GlassCard className="flex-1 flex flex-col overflow-hidden p-0">
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-white/5">
+      <GlassCard className="flex-1 flex flex-col overflow-hidden p-0 min-h-0">
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40 shrink-0">
           <div className="w-3 h-3 rounded-full bg-destructive/60" />
           <div className="w-3 h-3 rounded-full bg-warning/60" />
           <div className="w-3 h-3 rounded-full bg-success/60" />
-          <span className="text-xs text-muted-foreground ml-2 font-mono">ronbot-terminal</span>
+          <span className="text-xs text-muted-foreground ml-2 font-mono truncate">{cwd || "shell"}</span>
         </div>
 
         <div
           ref={scrollRef}
-          className="flex-1 overflow-y-auto p-4 font-mono text-sm space-y-1"
+          onClick={() => inputRef.current?.focus()}
+          className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-1 cursor-text"
         >
           {lines.map((line, i) => (
-            <div
+            <pre
               key={i}
               className={
-                line.type === "input"
+                "whitespace-pre-wrap break-words " +
+                (line.type === "input"
                   ? "text-accent"
                   : line.type === "error"
                   ? "text-destructive"
                   : line.type === "system"
                   ? "text-muted-foreground"
-                  : "text-foreground/80"
+                  : "text-foreground/85")
               }
             >
               {line.content}
-            </div>
+            </pre>
           ))}
+          {running && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="w-3 h-3 animate-spin" /> running…
+            </div>
+          )}
         </div>
 
-        <div className="border-t border-white/5 p-3 flex gap-2">
+        <div className="border-t border-border/40 p-3 flex gap-2 shrink-0">
           <span className="text-accent font-mono text-sm flex items-center">$</span>
           <Input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleCommand()}
-            placeholder="Type a command..."
+            onKeyDown={handleKey}
+            disabled={running}
+            placeholder={running ? "Running…" : "Type a command and press Enter"}
             className="bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 font-mono text-sm text-foreground placeholder:text-muted-foreground/50"
+            autoFocus
+            spellCheck={false}
           />
           <Button
             size="icon"
             variant="ghost"
-            onClick={handleCommand}
+            onClick={handleSubmit}
+            disabled={running || !input.trim()}
             className="text-muted-foreground hover:text-accent shrink-0"
           >
-            <Send className="w-4 h-4" />
+            {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </Button>
         </div>
       </GlassCard>

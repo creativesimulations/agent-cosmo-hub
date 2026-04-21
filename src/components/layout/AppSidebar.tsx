@@ -11,11 +11,12 @@ import {
   Home,
   MessageSquare,
   FileText,
-  FileCode,
+  
   RefreshCw,
   Archive,
   Activity,
   Radio,
+  Sparkles,
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
 import ronbotLogo from "@/assets/ronbot-logo.png";
@@ -39,7 +40,12 @@ const navGroups = [
       { path: "/models", icon: Cpu, label: "LLM Config" },
       { path: "/secrets", icon: KeyRound, label: "Secrets" },
       { path: "/skills", icon: Puzzle, label: "Skills" },
-      { path: "/config", icon: FileCode, label: "Config Editor" },
+    ],
+  },
+  {
+    label: "Store",
+    items: [
+      { path: "/upgrades", icon: Sparkles, label: "Upgrades" },
     ],
   },
   {
