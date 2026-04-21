@@ -1223,7 +1223,7 @@ model: ${options.model || 'openrouter/auto'}
     }
 
     const seen = new Set<string>();
-    const skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string }> = [];
+    const skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string; requiredSecrets?: string[] }> = [];
     const descPaths: Array<{ key: string; path: string }> = [];
 
     for (const line of (result.stdout || '').split('\n')) {
@@ -1243,24 +1243,36 @@ model: ${options.model || 'openrouter/auto'}
       if (descPath) descPaths.push({ key, path: descPath });
     }
 
-    // Pull the first non-empty markdown line as a short description for each
-    // skill that ships one. Done in one shell call to stay fast.
+    // Pull the first non-empty markdown line as a short description AND extract
+    // any UPPER_SNAKE_CASE env-var names mentioned in the SKILL.md so we can
+    // tell users exactly what secrets each skill needs.
     if (descPaths.length > 0) {
       const descScript = descPaths
-        .map(({ key, path }) => `printf "%s\\t" "${key}"; head -n 20 "${path}" 2>/dev/null | grep -m1 -E "^[A-Za-z]" | head -c 200; printf "\\n"`)
+        .map(({ key, path }) =>
+          `printf "DESC\\t%s\\t" "${key}"; head -n 20 "${path}" 2>/dev/null | grep -m1 -E "^[A-Za-z]" | head -c 200; printf "\\n"; ` +
+          `printf "ENV\\t%s\\t" "${key}"; cat "${path}" 2>/dev/null | grep -oE "[A-Z][A-Z0-9_]{3,}_(API_KEY|TOKEN|SECRET|PASSWORD|HOST|USER|PASS|ID|URL|BEARER_TOKEN|ACCESS_TOKEN|CLIENT_ID|CLIENT_SECRET|VERIFY_TOKEN|PHONE_NUMBER_ID)" | sort -u | tr "\\n" "," | head -c 500; printf "\\n"`,
+        )
         .join('\n');
-      const descResult = await runHermesShell(descScript, { timeout: 15000 });
+      const descResult = await runHermesShell(descScript, { timeout: 20000 });
       const descMap = new Map<string, string>();
+      const envMap = new Map<string, string[]>();
       for (const line of (descResult.stdout || '').split('\n')) {
-        const idx = line.indexOf('\t');
-        if (idx <= 0) continue;
-        const key = line.slice(0, idx);
-        const desc = line.slice(idx + 1).trim();
-        if (desc) descMap.set(key, desc);
+        const parts = line.split('\t');
+        if (parts.length < 3) continue;
+        const [tag, key, ...rest] = parts;
+        const value = rest.join('\t').trim();
+        if (tag === 'DESC' && value) descMap.set(key, value);
+        if (tag === 'ENV' && value) {
+          const vars = value.split(',').map((s) => s.trim()).filter(Boolean);
+          if (vars.length) envMap.set(key, Array.from(new Set(vars)));
+        }
       }
       for (const skill of skills) {
-        const d = descMap.get(`${skill.category}/${skill.name}`);
+        const k = `${skill.category}/${skill.name}`;
+        const d = descMap.get(k);
         if (d) skill.description = d;
+        const e = envMap.get(k);
+        if (e && e.length) skill.requiredSecrets = e;
       }
     }
 
@@ -1268,6 +1280,100 @@ model: ${options.model || 'openrouter/auto'}
       a.category.localeCompare(b.category) || a.name.localeCompare(b.name),
     );
     return { success: true, skills };
+  },
+
+  /** Read the `skills:` block from config.yaml and return enabled/disabled lists. */
+  async getSkillsConfig(): Promise<{ enabled: string[]; disabled: string[] }> {
+    const r = await this.readConfig();
+    if (!r.success || !r.content) return { enabled: [], disabled: [] };
+    const lines = r.content.split('\n');
+    const result = { enabled: [] as string[], disabled: [] as string[] };
+    let mode: 'enabled' | 'disabled' | null = null;
+    let inSkills = false;
+    for (const raw of lines) {
+      const line = raw.replace(/\s+$/, '');
+      if (/^skills:\s*$/.test(line)) { inSkills = true; continue; }
+      if (inSkills && /^[A-Za-z_][A-Za-z0-9_-]*:/.test(line)) {
+        // A new top-level key terminates the skills block.
+        if (!/^\s/.test(line)) { inSkills = false; mode = null; continue; }
+      }
+      if (!inSkills) continue;
+      const enabledMatch = line.match(/^\s+enabled:\s*(.*)$/);
+      const disabledMatch = line.match(/^\s+disabled:\s*(.*)$/);
+      if (enabledMatch) {
+        mode = 'enabled';
+        const inline = enabledMatch[1].trim();
+        if (inline.startsWith('[') && inline.endsWith(']')) {
+          result.enabled = inline.slice(1, -1).split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+          mode = null;
+        }
+        continue;
+      }
+      if (disabledMatch) {
+        mode = 'disabled';
+        const inline = disabledMatch[1].trim();
+        if (inline.startsWith('[') && inline.endsWith(']')) {
+          result.disabled = inline.slice(1, -1).split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+          mode = null;
+        }
+        continue;
+      }
+      const itemMatch = line.match(/^\s+-\s+(.+?)\s*$/);
+      if (itemMatch && mode) {
+        const v = itemMatch[1].replace(/^["']|["']$/g, '').trim();
+        if (v) result[mode].push(v);
+      }
+    }
+    return result;
+  },
+
+  /**
+   * Toggle a skill's enabled state in config.yaml. Persists the entire
+   * `skills:` block as a fresh YAML section, leaving the rest of the file
+   * untouched. Takes effect on the next agent restart.
+   */
+  async setSkillEnabled(name: string, enabled: boolean): Promise<{ success: boolean; error?: string }> {
+    const current = await this.getSkillsConfig();
+    const enabledSet = new Set(current.enabled);
+    const disabledSet = new Set(current.disabled);
+    if (enabled) {
+      disabledSet.delete(name);
+      // Most agent configs default-allow, so we don't need to add to enabled.
+      // But preserve if it was already explicitly enabled.
+    } else {
+      enabledSet.delete(name);
+      disabledSet.add(name);
+    }
+    const r = await this.readConfig();
+    const original = r.success && r.content ? r.content : 'model: openrouter/auto\n';
+    // Strip any existing skills: block (top-level only).
+    const lines = original.split('\n');
+    const out: string[] = [];
+    let skipping = false;
+    for (const line of lines) {
+      if (/^skills:\s*$/.test(line)) { skipping = true; continue; }
+      if (skipping) {
+        // End block on next top-level (non-indented, non-blank) line.
+        if (line.length > 0 && !/^\s/.test(line)) { skipping = false; out.push(line); continue; }
+        continue;
+      }
+      out.push(line);
+    }
+    let body = out.join('\n').replace(/\n+$/, '');
+    const enabledList = Array.from(enabledSet);
+    const disabledList = Array.from(disabledSet);
+    if (enabledList.length || disabledList.length) {
+      body += '\n\nskills:\n';
+      if (enabledList.length) {
+        body += '  enabled:\n' + enabledList.map((n) => `    - "${n}"`).join('\n') + '\n';
+      }
+      if (disabledList.length) {
+        body += '  disabled:\n' + disabledList.map((n) => `    - "${n}"`).join('\n') + '\n';
+      }
+    }
+    body += '\n';
+    const w = await this.writeConfig(body);
+    return { success: w.success, error: w.success ? undefined : 'Failed to write config.yaml' };
   },
 
   /**
