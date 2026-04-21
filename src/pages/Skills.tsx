@@ -1,25 +1,41 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Puzzle, AlertCircle, CheckCircle2, Loader2, RefreshCw, Search, Package, Wrench } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import {
+  Puzzle, AlertCircle, CheckCircle2, Loader2, RefreshCw, Search, Package, Wrench,
+  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal,
+} from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
-import { systemAPI } from "@/lib/systemAPI";
+import { systemAPI, secretsStore } from "@/lib/systemAPI";
+import { toast } from "sonner";
 
 type Skill = {
   name: string;
   category: string;
   source: "user" | "bundled";
   description?: string;
+  requiredSecrets?: string[];
 };
 
 const Skills = () => {
+  const navigate = useNavigate();
   const { connected: agentConnected } = useAgentConnection();
   const [loading, setLoading] = useState(true);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [disabledSet, setDisabledSet] = useState<Set<string>>(new Set());
+  const [secretKeys, setSecretKeys] = useState<Set<string>>(new Set());
+  const [savingToggle, setSavingToggle] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!agentConnected) {
@@ -28,19 +44,23 @@ const Skills = () => {
     }
     setLoading(true);
     setError(null);
-    const result = await systemAPI.listSkills();
+    const [result, cfg, sec] = await Promise.all([
+      systemAPI.listSkills(),
+      systemAPI.getSkillsConfig(),
+      secretsStore.list(),
+    ]);
     if (result.success) {
       setSkills(result.skills);
     } else {
       setError(result.error ?? "Failed to read skills.");
       setSkills([]);
     }
+    setDisabledSet(new Set(cfg.disabled));
+    setSecretKeys(new Set(sec.keys || []));
     setLoading(false);
   }, [agentConnected]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -66,13 +86,75 @@ const Skills = () => {
   const userCount = skills.filter((s) => s.source === "user").length;
   const bundledCount = skills.filter((s) => s.source === "bundled").length;
 
+  const toggleExpand = (key: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const handleToggle = async (skill: Skill, nextEnabled: boolean) => {
+    const key = `${skill.category}/${skill.name}`;
+    setSavingToggle(key);
+    // Optimistic
+    setDisabledSet((prev) => {
+      const n = new Set(prev);
+      if (nextEnabled) n.delete(skill.name); else n.add(skill.name);
+      return n;
+    });
+    const r = await systemAPI.setSkillEnabled(skill.name, nextEnabled);
+    setSavingToggle(null);
+    if (!r.success) {
+      toast.error("Couldn't save", { description: r.error || "Failed to update config" });
+      // Revert
+      setDisabledSet((prev) => {
+        const n = new Set(prev);
+        if (nextEnabled) n.add(skill.name); else n.delete(skill.name);
+        return n;
+      });
+      return;
+    }
+    toast.success(`${nextEnabled ? "Enabled" : "Disabled"} ${skill.name}`, {
+      description: "Takes effect the next time the agent restarts.",
+    });
+  };
+
+  const bulkAction = async (action: "enableAll" | "disableAll" | { enableOnly: string }) => {
+    const targets = action === "enableAll" || action === "disableAll"
+      ? skills
+      : skills.filter((s) => s.category === action.enableOnly);
+    if (action === "enableAll") {
+      for (const s of targets) await systemAPI.setSkillEnabled(s.name, true);
+    } else if (action === "disableAll") {
+      for (const s of targets) await systemAPI.setSkillEnabled(s.name, false);
+    } else {
+      // Enable only this category — disable everything else
+      for (const s of skills) {
+        const inCat = s.category === action.enableOnly;
+        await systemAPI.setSkillEnabled(s.name, inCat);
+      }
+    }
+    toast.success("Bulk update saved", {
+      description: "Takes effect the next time the agent restarts.",
+    });
+    void load();
+  };
+
+  const statusFor = (skill: Skill): { label: string; tone: "ready" | "needs" | "disabled" } => {
+    if (disabledSet.has(skill.name)) return { label: "Disabled", tone: "disabled" };
+    const missing = (skill.requiredSecrets ?? []).filter((k) => !secretKeys.has(k));
+    if (missing.length > 0) return { label: "Needs setup", tone: "needs" };
+    return { label: "Ready", tone: "ready" };
+  };
+
   if (!agentConnected) {
     return (
       <div className="p-6 space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <Puzzle className="w-6 h-6 text-primary" />
-            Skills
+            Skills & Tools
           </h1>
           <p className="text-sm text-muted-foreground">Capabilities the agent can use</p>
         </div>
@@ -89,33 +171,59 @@ const Skills = () => {
     );
   }
 
+  const categoryNames = Array.from(new Set(skills.map((s) => s.category))).sort();
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <Puzzle className="w-6 h-6 text-primary" />
-            Skills
+            Skills & Tools
           </h1>
           <p className="text-sm text-muted-foreground">
-            Capabilities currently available to the agent. Skills bundled with the install
-            ship out of the box; user skills come from <code className="text-foreground">~/.hermes/skills</code>.
+            Everything the agent can do. Toggle a skill off to stop the agent from using it.
+            Changes save to <code className="text-foreground">~/.hermes/config.yaml</code> and
+            take effect on the next agent restart.
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => void load()}
-          disabled={loading}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          {loading ? (
-            <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4 mr-1" />
-          )}
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="border-white/10">
+                <MoreHorizontal className="w-4 h-4 mr-1" /> Bulk
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Bulk actions</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => void bulkAction("enableAll")}>
+                Enable all
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void bulkAction("disableAll")}>
+                Disable all
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-[11px] text-muted-foreground">
+                Enable only category
+              </DropdownMenuLabel>
+              {categoryNames.map((c) => (
+                <DropdownMenuItem key={c} onClick={() => void bulkAction({ enableOnly: c })}>
+                  {c}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void load()}
+            disabled={loading}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            {loading ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -191,34 +299,117 @@ const Skills = () => {
                 <span className="text-xs text-muted-foreground">{items.length}</span>
               </div>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {items.map((skill) => (
-                  <GlassCard
-                    key={`${skill.category}/${skill.name}`}
-                    variant="subtle"
-                    className="space-y-2"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-medium text-foreground font-mono break-all">
-                        {skill.name}
-                      </p>
-                      <Badge
-                        variant="outline"
-                        className={
-                          skill.source === "user"
-                            ? "text-primary border-primary/30 bg-primary/5 shrink-0"
-                            : "text-muted-foreground border-white/10 shrink-0"
-                        }
-                      >
-                        {skill.source}
-                      </Badge>
-                    </div>
-                    {skill.description && (
-                      <p className="text-xs text-muted-foreground line-clamp-3">
-                        {skill.description}
-                      </p>
-                    )}
-                  </GlassCard>
-                ))}
+                {items.map((skill) => {
+                  const key = `${skill.category}/${skill.name}`;
+                  const isOpen = expanded.has(key);
+                  const isEnabled = !disabledSet.has(skill.name);
+                  const status = statusFor(skill);
+                  const missing = (skill.requiredSecrets ?? []).filter((k) => !secretKeys.has(k));
+                  const present = (skill.requiredSecrets ?? []).filter((k) => secretKeys.has(k));
+                  const toneClass =
+                    status.tone === "ready"
+                      ? "text-success border-success/30 bg-success/5"
+                      : status.tone === "needs"
+                      ? "text-warning border-warning/30 bg-warning/5"
+                      : "text-muted-foreground border-white/10 bg-white/5";
+
+                  return (
+                    <GlassCard
+                      key={key}
+                      variant="subtle"
+                      className="space-y-2"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleExpand(key)}
+                          className="flex items-center gap-1.5 text-left flex-1 min-w-0 hover:text-primary transition-colors"
+                        >
+                          {isOpen ? <ChevronDown className="w-3.5 h-3.5 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
+                          <span className="text-sm font-medium text-foreground font-mono break-all">
+                            {skill.name}
+                          </span>
+                        </button>
+                        <Switch
+                          checked={isEnabled}
+                          disabled={savingToggle === key}
+                          onCheckedChange={(v) => void handleToggle(skill, v)}
+                          aria-label={`${isEnabled ? "Disable" : "Enable"} ${skill.name}`}
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge variant="outline" className={toneClass}>
+                          {status.label}
+                        </Badge>
+                        <Badge
+                          variant="outline"
+                          className={
+                            skill.source === "user"
+                              ? "text-primary border-primary/30 bg-primary/5"
+                              : "text-muted-foreground border-white/10"
+                          }
+                        >
+                          {skill.source}
+                        </Badge>
+                        {(skill.requiredSecrets?.length ?? 0) > 0 && (
+                          <Badge variant="outline" className="text-muted-foreground border-white/10">
+                            <KeyRound className="w-3 h-3 mr-1" />
+                            {skill.requiredSecrets!.length} secret{skill.requiredSecrets!.length === 1 ? "" : "s"}
+                          </Badge>
+                        )}
+                      </div>
+                      {skill.description && !isOpen && (
+                        <p className="text-xs text-muted-foreground line-clamp-2">
+                          {skill.description}
+                        </p>
+                      )}
+                      {isOpen && (
+                        <div className="space-y-3 pt-2 border-t border-white/5">
+                          {skill.description && (
+                            <p className="text-xs text-muted-foreground">{skill.description}</p>
+                          )}
+                          {(skill.requiredSecrets?.length ?? 0) === 0 ? (
+                            <p className="text-[11px] text-muted-foreground/70 italic">
+                              No secrets required.
+                            </p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              <p className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                                Required secrets
+                              </p>
+                              {present.map((envVar) => (
+                                <div key={envVar} className="flex items-center justify-between gap-2 text-xs">
+                                  <span className="font-mono text-foreground">{envVar}</span>
+                                  <span className="flex items-center gap-1 text-success">
+                                    <CheckCircle2 className="w-3 h-3" /> Configured
+                                  </span>
+                                </div>
+                              ))}
+                              {missing.map((envVar) => (
+                                <div key={envVar} className="flex items-center justify-between gap-2 text-xs">
+                                  <span className="font-mono text-foreground">{envVar}</span>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 px-2 text-warning hover:text-warning hover:bg-warning/10"
+                                    onClick={() => navigate(`/secrets?addKey=${envVar}`)}
+                                  >
+                                    <KeyRound className="w-3 h-3 mr-1" /> Add
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {!isEnabled && (
+                            <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+                              <Power className="w-3 h-3" /> Disabled — agent will not call this skill.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </GlassCard>
+                  );
+                })}
               </div>
             </div>
           ))}
