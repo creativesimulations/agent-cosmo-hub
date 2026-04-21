@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  KeyRound, Eye, EyeOff, Plus, Trash2, Globe, Shield, Loader2, Lock, AlertTriangle, ArrowDownToLine, RefreshCw,
+  KeyRound, Eye, EyeOff, Plus, Trash2, Globe, Shield, Loader2, Lock, AlertTriangle, ArrowDownToLine, RefreshCw, Puzzle,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -45,6 +45,9 @@ const Secrets = () => {
   const [backend, setBackend] = useState<{ backend: SecretsBackend; label: string } | null>(null);
   const [migrating, setMigrating] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // env-var → list of skill names that reference it. Lets us show "Used by"
+  // chips so users can spot typos like `X` instead of `X_BEARER_TOKEN`.
+  const [skillUsage, setSkillUsage] = useState<Map<string, string[]>>(new Map());
 
   useEffect(() => {
     init();
@@ -66,6 +69,22 @@ const Secrets = () => {
     const info = await secretsStore.getBackend();
     setBackend(info);
     await loadKeys();
+    // Best-effort: build the secret→skills map. If listSkills fails (no agent),
+    // we silently skip — Secrets still works without it.
+    try {
+      const sk = await systemAPI.listSkills();
+      if (sk.success) {
+        const usage = new Map<string, string[]>();
+        for (const s of sk.skills) {
+          for (const env of s.requiredSecrets ?? []) {
+            const arr = usage.get(env) ?? [];
+            arr.push(s.name);
+            usage.set(env, arr);
+          }
+        }
+        setSkillUsage(usage);
+      }
+    } catch { /* ignore */ }
     setLoading(false);
   };
 
@@ -144,19 +163,26 @@ const Secrets = () => {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <KeyRound className="w-6 h-6 text-primary" />
             Secrets
           </h1>
-          <p className="text-sm text-muted-foreground">
-            API keys, tokens, and credentials your agents use — encrypted on your machine
+          <p className="text-sm text-muted-foreground max-w-2xl">
+            Anything the agent uses to log in — API keys, bot tokens, email passwords, app-specific
+            passwords. The <strong className="text-foreground">name</strong> matters: skills look for
+            exact environment-variable names like <code className="text-foreground">OPENAI_API_KEY</code>.
+            Open{" "}
+            <button onClick={() => navigate("/skills")} className="text-primary hover:underline inline-flex items-center gap-0.5">
+              <Puzzle className="w-3 h-3" /> Skills &amp; Tools
+            </button>{" "}
+            to see exactly what each skill expects.
           </p>
         </div>
         <Button
           size="sm"
-          className="gradient-primary text-primary-foreground"
+          className="gradient-primary text-primary-foreground shrink-0"
           onClick={() => setShowAddForm(!showAddForm)}
         >
           <Plus className="w-4 h-4 mr-1" /> Add Secret
@@ -253,9 +279,11 @@ const Secrets = () => {
         </GlassCard>
       ) : (
         <div className="space-y-3">
-          {keys.map((apiKey) => (
-            <GlassCard key={apiKey.envVar} className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
+          {keys.map((apiKey) => {
+            const usedBy = skillUsage.get(apiKey.envVar) ?? [];
+            return (
+            <GlassCard key={apiKey.envVar} className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-2">
                   <Globe className="w-4 h-4 text-primary" />
                   <span className="text-sm font-semibold text-foreground">{apiKey.provider}</span>
@@ -269,6 +297,24 @@ const Secrets = () => {
                     backend?.backend === "safestorage" ? "Encrypted" :
                     backend?.backend === "memory" ? "Memory" : "Plaintext"}
                 </span>
+                {usedBy.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate("/skills")}
+                    title={`Used by: ${usedBy.join(", ")}`}
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-success/10 text-success border border-success/20 flex items-center gap-1 hover:bg-success/15 transition-colors"
+                  >
+                    <Puzzle className="w-3 h-3" />
+                    Used by {usedBy.length === 1 ? usedBy[0] : `${usedBy.length} skills`}
+                  </button>
+                ) : skillUsage.size > 0 && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-muted-foreground/70 italic"
+                    title="No installed skill references this name. Check for typos like X vs X_BEARER_TOKEN."
+                  >
+                    Not used by any skill
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1">
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-muted-foreground font-mono">
@@ -292,7 +338,8 @@ const Secrets = () => {
                 </Button>
               </div>
             </GlassCard>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

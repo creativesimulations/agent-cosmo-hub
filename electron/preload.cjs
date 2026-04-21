@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Disk space on the drive holding the user's home directory
   getDiskSpace: () => ipcRenderer.invoke('get-disk-space'),
 
+  // Open or highlight a path in the OS file manager (Finder/Explorer/Nautilus)
+  revealInFolder: (targetPath) => ipcRenderer.invoke('reveal-in-folder', targetPath),
+
   // Secure secrets storage (OS keychain → safeStorage → plaintext fallback)
   secretsBackend: () => ipcRenderer.invoke('secrets-backend'),
   secretsList: () => ipcRenderer.invoke('secrets-list'),

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, safeStorage, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage, Tray, Menu, nativeImage, shell } = require('electron');
 const path = require('path');
 const { exec, spawn } = require('child_process');
 const fs = require('fs');
@@ -94,8 +94,25 @@ let isQuittingForReal = false;
 
 function ensureTray() {
   if (tray) return tray;
-  const empty = nativeImage.createEmpty();
-  tray = new Tray(empty);
+  // Platform-appropriate tray icon. On macOS the icon should be a small
+  // template image so it tints with the menu bar (light/dark). We render an
+  // empty image as a safe default; if a packaged icon is bundled, it will
+  // be used instead. On Win/Linux a full-color image is preferred but the
+  // empty placeholder still produces a working tray entry.
+  let icon = nativeImage.createEmpty();
+  try {
+    const iconPath = path.join(__dirname, '..', 'public', 'tray-icon.png');
+    if (fs.existsSync(iconPath)) {
+      icon = nativeImage.createFromPath(iconPath);
+      if (process.platform === 'darwin') {
+        // Resize for macOS menu bar (16-22pt). Mark as template so macOS
+        // tints it automatically based on the active menu bar theme.
+        icon = icon.resize({ width: 18, height: 18 });
+        icon.setTemplateImage(true);
+      }
+    }
+  } catch { /* fall back to empty image */ }
+  tray = new Tray(icon);
   tray.setToolTip('Ronbot — agent running in background');
   const menu = Menu.buildFromTemplate([
     { label: 'Open Ronbot', click: () => showMainWindow() },
@@ -141,7 +158,17 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 
   mainWindow.on('close', (event) => {
-    if (!isQuittingForReal && runInBackground) {
+    if (isQuittingForReal) return;
+    // macOS convention: closing the window keeps the app alive in the Dock,
+    // matching every other Mac app. Win/Linux only persist when the user
+    // has explicitly enabled "Run in background" so the tray icon appears.
+    if (process.platform === 'darwin') {
+      event.preventDefault();
+      mainWindow.hide();
+      if (runInBackground) ensureTray();
+      return;
+    }
+    if (runInBackground) {
       event.preventDefault();
       mainWindow.hide();
       ensureTray();
@@ -354,6 +381,33 @@ ipcMain.handle('get-disk-space', async () => {
       resolve({ success: false, error: e.message });
     }
   });
+});
+
+// Reveal a file or folder in the OS file manager. Cross-platform via
+// Electron's shell module: macOS = Finder, Windows = Explorer, Linux = the
+// distro's default file manager (Nautilus, Dolphin, etc.). If the path is a
+// directory we open it; if it's a file we highlight it inside its parent.
+ipcMain.handle('reveal-in-folder', async (_event, targetPath) => {
+  try {
+    if (!targetPath) return { success: false, error: 'No path supplied' };
+    const stat = await fs.promises.stat(targetPath).catch(() => null);
+    if (!stat) {
+      // Path doesn't exist — open the parent if we can.
+      const parent = path.dirname(targetPath);
+      const parentStat = await fs.promises.stat(parent).catch(() => null);
+      if (!parentStat) return { success: false, error: 'Path not found' };
+      const err = await shell.openPath(parent);
+      return err ? { success: false, error: err } : { success: true };
+    }
+    if (stat.isDirectory()) {
+      const err = await shell.openPath(targetPath);
+      return err ? { success: false, error: err } : { success: true };
+    }
+    shell.showItemInFolder(targetPath);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 // ─── Secrets storage ──────────────────────────────────────────

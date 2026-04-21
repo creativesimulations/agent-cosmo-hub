@@ -39,7 +39,7 @@ const navGroups = [
     items: [
       { path: "/models", icon: Cpu, label: "LLM Config" },
       { path: "/secrets", icon: KeyRound, label: "Secrets" },
-      { path: "/skills", icon: Puzzle, label: "Skills" },
+      { path: "/skills", icon: Puzzle, label: "Skills & Tools" },
     ],
   },
   {
