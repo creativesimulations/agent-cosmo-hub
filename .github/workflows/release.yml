@@ -1,0 +1,70 @@
+name: Build Ronbot Desktop
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            script: pack:linux
+            artifact_dir: Ronbot-linux-x64
+            archive_name: Ronbot-linux-x64.tar.gz
+            archive_cmd: tar czf Ronbot-linux-x64.tar.gz -C electron-release Ronbot-linux-x64
+          - os: macos-latest
+            script: pack:mac
+            artifact_dir: Ronbot-darwin-arm64
+            archive_name: Ronbot-darwin-arm64.zip
+            archive_cmd: cd electron-release && zip -r ../Ronbot-darwin-arm64.zip Ronbot-darwin-arm64
+          - os: macos-13
+            script: pack:mac-intel
+            artifact_dir: Ronbot-darwin-x64
+            archive_name: Ronbot-darwin-x64.zip
+            archive_cmd: cd electron-release && zip -r ../Ronbot-darwin-x64.zip Ronbot-darwin-x64
+          - os: windows-latest
+            script: pack:win
+            artifact_dir: Ronbot-win32-x64
+            archive_name: Ronbot-win32-x64.zip
+            archive_cmd: powershell Compress-Archive -Path electron-release/Ronbot-win32-x64 -DestinationPath Ronbot-win32-x64.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install Linux keychain headers
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Package app
+        run: npm run ${{ matrix.script }}
+
+      - name: Create archive
+        shell: bash
+        run: ${{ matrix.archive_cmd }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_dir }}
+          path: ${{ matrix.archive_name }}
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.archive_name }}
