@@ -2,7 +2,7 @@ import { useRef, useEffect, useState } from "react";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { useChat } from "@/contexts/ChatContext";
 import { motion } from "framer-motion";
-import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw } from "lucide-react";
+import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw, Square, Clock } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -25,8 +25,10 @@ const AgentChat = () => {
   const {
     messages,
     isStreaming,
+    queuedCount,
     sessionId,
     sendMessage,
+    stop,
     deleteMessage,
     clearAll,
     markChatViewed,
@@ -53,7 +55,9 @@ const AgentChat = () => {
   }, [input]);
 
   const handleSend = async () => {
-    if (!input.trim() || isStreaming || !agentConnected) return;
+    // Allow sending while a previous reply is in-flight — the ChatContext
+    // worker will queue prompts and process them in strict order.
+    if (!input.trim() || !agentConnected) return;
     const text = input;
     setInput("");
     await sendMessage(text);
