@@ -10,6 +10,7 @@ import {
   Loader2,
   AlertCircle,
   RefreshCw,
+  Check,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -63,8 +64,23 @@ const formatBytes = (b: number) => {
 const formatDate = (d: Date) =>
   d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-/** Quote a path for shell. */
+/** Quote a path for POSIX shell. */
 const sh = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
+
+/** Convert a Windows path (C:\Users\X\foo) to a WSL-mounted path (/mnt/c/Users/X/foo). */
+const toPosixPath = (p: string): string => {
+  const m = p.match(/^([A-Za-z]):[\\/](.*)$/);
+  if (!m) return p.replace(/\\/g, "/");
+  return `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, "/")}`;
+};
+
+/** Wrap a bash script so it runs through WSL on Windows, native bash elsewhere. */
+const wrapBash = (script: string, isWindows: boolean): string => {
+  // base64-encode to avoid every layer of quoting (cmd.exe, wsl, bash).
+  const b64 = btoa(unescape(encodeURIComponent(script)));
+  const decode = `echo ${b64} | base64 -d | bash`;
+  return isWindows ? `wsl bash -lc "${decode}"` : `bash -lc '${decode}'`;
+};
 
 const BackupRestore = () => {
   const [backups, setBackups] = useState<Backup[]>([]);
@@ -77,6 +93,9 @@ const BackupRestore = () => {
   const [selectedItems, setSelectedItems] = useState<string[]>(["config", "skills", "memory"]);
   const [homeDir, setHomeDir] = useState<string>("");
   const [backupDir, setBackupDir] = useState<string>("");
+  const [backupDirPosix, setBackupDirPosix] = useState<string>("");
+  const [homeDirPosix, setHomeDirPosix] = useState<string>("");
+  const [isWindows, setIsWindows] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const { connected: agentConnected } = useAgentConnection();
 
@@ -85,23 +104,28 @@ const BackupRestore = () => {
     void (async () => {
       const p = await systemAPI.getPlatform();
       setHomeDir(p.homeDir);
-      const dir = `${p.homeDir}/.ronbot-backups`;
+      setIsWindows(p.isWindows);
+      const dir = p.isWindows ? `${p.homeDir}\\.ronbot-backups` : `${p.homeDir}/.ronbot-backups`;
       setBackupDir(dir);
-      await systemAPI.mkdir(dir);
-      void loadBackups(dir);
+      const homePosix = p.isWindows ? toPosixPath(p.homeDir) : p.homeDir;
+      const dirPosix = `${homePosix}/.ronbot-backups`;
+      setHomeDirPosix(homePosix);
+      setBackupDirPosix(dirPosix);
+      // Create dir via bash (works cross-platform, including WSL on Windows).
+      await systemAPI.runCommand(wrapBash(`mkdir -p ${sh(dirPosix)}`, p.isWindows));
+      void loadBackupsFor(dirPosix, p.isWindows);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadBackups = useCallback(async (dir?: string) => {
-    const target = dir || backupDir;
-    if (!target) return;
+  const loadBackupsFor = useCallback(async (dirPosix: string, win: boolean) => {
+    if (!dirPosix) return;
     setRefreshing(true);
     try {
-      // List files: name, size in bytes, mtime epoch.
-      const cmd = `ls -1 ${sh(target)} 2>/dev/null | grep '\\.tar\\.gz$' | while read f; do stat -c "%n|%s|%Y" ${sh(target)}/"$f" 2>/dev/null || stat -f "%N|%z|%m" ${sh(target)}/"$f" 2>/dev/null; done`;
-      const result = await systemAPI.runCommand(cmd);
-      if (!result.success && !result.stdout) {
+      // List files: name, size in bytes, mtime epoch. Always run via bash.
+      const script = `cd ${sh(dirPosix)} 2>/dev/null && ls -1 2>/dev/null | grep '\\.tar\\.gz$' | while read f; do stat -c "%n|%s|%Y" "$f" 2>/dev/null || stat -f "%N|%z|%m" "$f" 2>/dev/null; done`;
+      const result = await systemAPI.runCommand(wrapBash(script, win));
+      if (!result.stdout) {
         setBackups([]);
         return;
       }
@@ -109,15 +133,14 @@ const BackupRestore = () => {
         .split("\n")
         .filter(Boolean)
         .map((line) => {
-          const [fullPath, sizeStr, mtimeStr] = line.split("|");
-          const filename = fullPath.split("/").pop() || fullPath;
+          const [filename, sizeStr, mtimeStr] = line.split("|");
           const id = filename.replace(/\.tar\.gz$/, "");
           const sizeBytes = parseInt(sizeStr, 10) || 0;
           const mtime = parseInt(mtimeStr, 10) || 0;
           return {
             id,
             name: id,
-            fullPath,
+            fullPath: `${dirPosix}/${filename}`,
             sizeBytes,
             date: mtime ? formatDate(new Date(mtime * 1000)) : "—",
           };
@@ -127,13 +150,17 @@ const BackupRestore = () => {
     } finally {
       setRefreshing(false);
     }
-  }, [backupDir]);
+  }, []);
+
+  const loadBackups = useCallback(async () => {
+    await loadBackupsFor(backupDirPosix, isWindows);
+  }, [loadBackupsFor, backupDirPosix, isWindows]);
 
   const toggleItem = (id: string) =>
     setSelectedItems((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
 
   const createBackup = async () => {
-    if (!agentConnected || !homeDir || !backupDir) return;
+    if (!agentConnected || !homeDirPosix || !backupDirPosix) return;
     if (selectedItems.length === 0) {
       toast.error("Pick at least one item to back up");
       return;
@@ -147,16 +174,17 @@ const BackupRestore = () => {
 
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const name = `ronbot-backup-${stamp}`;
-    const archive = `${backupDir}/${name}.tar.gz`;
+    const archivePosix = `${backupDirPosix}/${name}.tar.gz`;
 
     setCreateProgress(40);
-    // tar -czf <archive> -C ~/.hermes <files>  (skips missing files with --ignore-failed-read)
-    const cmd = `cd ${sh(homeDir)}/.hermes && tar --ignore-failed-read -czf ${sh(archive)} ${includes} 2>&1 || true`;
-    const result = await systemAPI.runCommand(cmd);
+    const script = `cd ${sh(homeDirPosix)}/.hermes && tar --ignore-failed-read -czf ${sh(archivePosix)} ${includes} 2>&1 || true`;
+    const result = await systemAPI.runCommand(wrapBash(script, isWindows));
     setCreateProgress(90);
 
-    // Verify file was created.
-    const exists = await systemAPI.fileExists(archive);
+    const verify = await systemAPI.runCommand(
+      wrapBash(`[ -f ${sh(archivePosix)} ] && echo OK || echo MISS`, isWindows),
+    );
+    const exists = verify.stdout.includes("OK");
     setCreateProgress(100);
     setCreating(false);
 
@@ -165,50 +193,56 @@ const BackupRestore = () => {
       void loadBackups();
     } else {
       toast.error("Backup failed", {
-        description: result.stderr.split("\n")[0] || "Could not create archive — check Diagnostics.",
+        description: (result.stderr || result.stdout).split("\n")[0] || "Could not create archive — check Diagnostics.",
       });
     }
     setCreateProgress(0);
   };
 
   const restoreBackup = async (backup: Backup) => {
-    if (!homeDir) return;
+    if (!homeDirPosix) return;
     setRestoring(backup.id);
     setConfirmRestore(null);
-    const cmd = `mkdir -p ${sh(homeDir)}/.hermes && tar -xzf ${sh(backup.fullPath)} -C ${sh(homeDir)}/.hermes 2>&1`;
-    const result = await systemAPI.runCommand(cmd);
+    const script = `mkdir -p ${sh(homeDirPosix)}/.hermes && tar -xzf ${sh(backup.fullPath)} -C ${sh(homeDirPosix)}/.hermes 2>&1`;
+    const result = await systemAPI.runCommand(wrapBash(script, isWindows));
     setRestoring(null);
-    if (result.exitCode === 0) {
+    if (result.success) {
       toast.success("Backup restored", {
         description: "Restart the agent for changes to take effect.",
       });
     } else {
-      toast.error("Restore failed", { description: result.stderr.split("\n")[0] || "Unknown error" });
+      toast.error("Restore failed", { description: (result.stderr || result.stdout).split("\n")[0] || "Unknown error" });
     }
   };
 
   const deleteBackup = async (backup: Backup) => {
     setDeleting(backup.id);
     setConfirmDelete(null);
-    const result = await systemAPI.runCommand(`rm -f ${sh(backup.fullPath)}`);
+    const result = await systemAPI.runCommand(wrapBash(`rm -f ${sh(backup.fullPath)}`, isWindows));
     setDeleting(null);
-    if (result.exitCode === 0) {
+    if (result.success) {
       toast.success("Backup deleted");
       void loadBackups();
     } else {
-      toast.error("Delete failed", { description: result.stderr.split("\n")[0] });
+      toast.error("Delete failed", { description: (result.stderr || result.stdout).split("\n")[0] });
     }
   };
 
   const exportBackup = async (backup: Backup) => {
     // Reveal in OS file manager — works on Win/Mac/Linux.
-    const cmd =
-      navigator.platform.startsWith("Win")
-        ? `explorer.exe /select,${sh(backup.fullPath.replace(/\//g, "\\"))}`
-        : navigator.platform.startsWith("Mac")
-        ? `open -R ${sh(backup.fullPath)}`
-        : `xdg-open ${sh(backupDir)}`;
-    await systemAPI.runCommand(cmd);
+    if (isWindows) {
+      // backup.fullPath is /mnt/c/... — convert back to C:\... for explorer.
+      const m = backup.fullPath.match(/^\/mnt\/([a-z])\/(.*)$/);
+      const winPath = m
+        ? `${m[1].toUpperCase()}:\\${m[2].replace(/\//g, "\\")}`
+        : backupDir;
+      const arg = backup.id ? `/select,${winPath}` : winPath;
+      await systemAPI.runCommand(`explorer.exe ${arg}`);
+    } else if (navigator.platform.startsWith("Mac")) {
+      await systemAPI.runCommand(wrapBash(`open -R ${sh(backup.fullPath || backupDirPosix)}`, false));
+    } else {
+      await systemAPI.runCommand(wrapBash(`xdg-open ${sh(backupDirPosix)}`, false));
+    }
     toast.info("Opened backup folder", { description: backupDir });
   };
 
@@ -254,21 +288,38 @@ const BackupRestore = () => {
         <GlassCard className="space-y-4 p-5">
           <h3 className="text-sm font-semibold text-foreground">Create Backup</h3>
           <div className="space-y-2">
-            {ITEMS.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => toggleItem(item.id)}
-                className={cn(
-                  "w-full text-left glass-subtle rounded-lg p-3 transition-all",
-                  selectedItems.includes(item.id)
-                    ? "border border-primary/30 bg-primary/5"
-                    : "border border-transparent hover:bg-background/40"
-                )}
-              >
-                <p className="text-sm text-foreground">{item.label}</p>
-                <p className="text-xs text-muted-foreground">{item.desc}</p>
-              </button>
-            ))}
+            {ITEMS.map((item) => {
+              const checked = selectedItems.includes(item.id);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => toggleItem(item.id)}
+                  aria-pressed={checked}
+                  className={cn(
+                    "w-full text-left glass-subtle rounded-lg p-3 transition-all flex items-start gap-3",
+                    checked
+                      ? "border border-primary/30 bg-primary/5"
+                      : "border border-transparent hover:bg-background/40"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
+                      checked
+                        ? "bg-primary border-primary text-primary-foreground"
+                        : "border-muted-foreground/40 bg-transparent"
+                    )}
+                  >
+                    {checked && <Check className="w-3 h-3" />}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm text-foreground">{item.label}</p>
+                    <p className="text-xs text-muted-foreground">{item.desc}</p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
           {creating && <Progress value={createProgress} className="h-1" />}
           <Button
