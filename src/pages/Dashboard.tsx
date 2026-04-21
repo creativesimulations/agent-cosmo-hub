@@ -167,7 +167,17 @@ const Dashboard = () => {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {[
           { label: "Status", value: metrics.status, icon: Activity, accent: "text-foreground" },
-          { label: "Uptime", value: metrics.uptime, icon: Clock, accent: "text-foreground" },
+          {
+            label: "Uptime",
+            value:
+              metrics.status === "Gateway running" && metrics.uptime !== "—"
+                ? metrics.uptime
+                : connectedSinceRef.current
+                  ? formatElapsed(Date.now() - connectedSinceRef.current)
+                  : "—",
+            icon: Clock,
+            accent: "text-foreground",
+          },
           { label: "Model", value: metrics.model, icon: Cpu, accent: "text-foreground" },
           { label: "Install Path", value: location ?? "~/.hermes", icon: HardDrive, accent: "text-foreground" },
         ].map((metric, i) => (
