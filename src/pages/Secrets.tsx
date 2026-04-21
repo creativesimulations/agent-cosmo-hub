@@ -279,9 +279,11 @@ const Secrets = () => {
         </GlassCard>
       ) : (
         <div className="space-y-3">
-          {keys.map((apiKey) => (
-            <GlassCard key={apiKey.envVar} className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
+          {keys.map((apiKey) => {
+            const usedBy = skillUsage.get(apiKey.envVar) ?? [];
+            return (
+            <GlassCard key={apiKey.envVar} className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-2">
                   <Globe className="w-4 h-4 text-primary" />
                   <span className="text-sm font-semibold text-foreground">{apiKey.provider}</span>
@@ -295,6 +297,24 @@ const Secrets = () => {
                     backend?.backend === "safestorage" ? "Encrypted" :
                     backend?.backend === "memory" ? "Memory" : "Plaintext"}
                 </span>
+                {usedBy.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate("/skills")}
+                    title={`Used by: ${usedBy.join(", ")}`}
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-success/10 text-success border border-success/20 flex items-center gap-1 hover:bg-success/15 transition-colors"
+                  >
+                    <Puzzle className="w-3 h-3" />
+                    Used by {usedBy.length === 1 ? usedBy[0] : `${usedBy.length} skills`}
+                  </button>
+                ) : skillUsage.size > 0 && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-muted-foreground/70 italic"
+                    title="No installed skill references this name. Check for typos like X vs X_BEARER_TOKEN."
+                  >
+                    Not used by any skill
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1">
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-muted-foreground font-mono">
@@ -318,7 +338,8 @@ const Secrets = () => {
                 </Button>
               </div>
             </GlassCard>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
