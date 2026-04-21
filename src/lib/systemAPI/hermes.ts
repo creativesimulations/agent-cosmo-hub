@@ -935,7 +935,7 @@ export const hermesAPI = {
         : 'hermes chat -q "$PROMPT" </dev/null 2>&1',
     ].join('\n');
 
-    const result = await runHermesShell(script, { timeout: 180000 }, onOutput);
+    const result = await runHermesShell(script, { timeout: 180000, onStreamId }, onOutput);
 
     // Clean the reply: strip ANSI codes and any leftover banner/status lines.
     const stripAnsi = (s: string) =>
