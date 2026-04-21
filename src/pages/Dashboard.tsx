@@ -48,9 +48,40 @@ const readConfiguredModel = (config: string) => {
   return match ? match[1].trim().replace(/^['"]|['"]$/g, "") : null;
 };
 
+/** Format ms as "1h 23m" / "12m 04s" / "45s". */
+const formatElapsed = (ms: number): string => {
+  if (ms < 0) return "—";
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${m.toString().padStart(2, "0")}m`;
+  if (m > 0) return `${m}m ${s.toString().padStart(2, "0")}s`;
+  return `${s}s`;
+};
+
 const Dashboard = () => {
   const { connected: agentConnected, location } = useAgentConnection();
   const [metrics, setMetrics] = useState({ status: "—", uptime: "—", model: "—" });
+  const connectedSinceRef = useRef<number | null>(null);
+  const [, forceTick] = useState(0);
+
+  // Track when this session's agent connection began so uptime is meaningful
+  // even when the optional messaging gateway isn't running.
+  useEffect(() => {
+    if (agentConnected && connectedSinceRef.current === null) {
+      connectedSinceRef.current = Date.now();
+    } else if (!agentConnected) {
+      connectedSinceRef.current = null;
+    }
+  }, [agentConnected]);
+
+  // Tick every second to keep the elapsed-time uptime fresh.
+  useEffect(() => {
+    if (!agentConnected) return;
+    const id = window.setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [agentConnected]);
 
   const loadStatus = useCallback(async () => {
     if (!agentConnected) return;
@@ -65,16 +96,16 @@ const Dashboard = () => {
 
     const raw = statusResult.success ? parseStatusOutput(statusResult.stdout) : {};
     const status = deriveDisplayStatus(raw, agentConnected);
-    // Uptime only makes sense when something is actually running.
-    const uptime = status === "Gateway running" ? raw.uptime || "—" : "—";
 
-    setMetrics({
+    setMetrics((prev) => ({
       status,
-      uptime,
+      // Gateway-reported uptime takes precedence; otherwise we show
+      // session uptime computed live from connectedSinceRef.
+      uptime: status === "Gateway running" && raw.uptime ? raw.uptime : prev.uptime,
       // Prefer the live config.yaml value so dashboard reflects /model
       // changes made from inside the agent itself.
       model: configuredModel || raw.model || "Configured",
-    });
+    }));
   }, [agentConnected]);
 
   useEffect(() => {
