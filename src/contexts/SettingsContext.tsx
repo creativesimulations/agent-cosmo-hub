@@ -24,6 +24,8 @@ export interface AppSettings {
   /** 0 = unlimited */
   maxStoredMessages: number;
   autoCheckUpdates: boolean;
+  /** Keep the agent running when the user closes the app window. */
+  runInBackground: boolean;
 }
 
 const STORAGE_KEY = "ronbot-settings-v1";
@@ -37,6 +39,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyOnSubAgentComplete: false,
   maxStoredMessages: 200,
   autoCheckUpdates: true,
+  runInBackground: false,
 };
 
 interface SettingsContextValue {
