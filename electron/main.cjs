@@ -383,6 +383,33 @@ ipcMain.handle('get-disk-space', async () => {
   });
 });
 
+// Reveal a file or folder in the OS file manager. Cross-platform via
+// Electron's shell module: macOS = Finder, Windows = Explorer, Linux = the
+// distro's default file manager (Nautilus, Dolphin, etc.). If the path is a
+// directory we open it; if it's a file we highlight it inside its parent.
+ipcMain.handle('reveal-in-folder', async (_event, targetPath) => {
+  try {
+    if (!targetPath) return { success: false, error: 'No path supplied' };
+    const stat = await fs.promises.stat(targetPath).catch(() => null);
+    if (!stat) {
+      // Path doesn't exist — open the parent if we can.
+      const parent = path.dirname(targetPath);
+      const parentStat = await fs.promises.stat(parent).catch(() => null);
+      if (!parentStat) return { success: false, error: 'Path not found' };
+      const err = await shell.openPath(parent);
+      return err ? { success: false, error: err } : { success: true };
+    }
+    if (stat.isDirectory()) {
+      const err = await shell.openPath(targetPath);
+      return err ? { success: false, error: err } : { success: true };
+    }
+    shell.showItemInFolder(targetPath);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // ─── Secrets storage ──────────────────────────────────────────
 // Three-tier storage with graceful degradation:
 //   1. OS keychain (keytar)        → preferred
