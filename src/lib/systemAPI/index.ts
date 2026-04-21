@@ -29,6 +29,9 @@ export const systemAPI = {
   writeFile: coreAPI.writeFile.bind(coreAPI),
   mkdir: coreAPI.mkdir.bind(coreAPI),
   getDiskSpace: coreAPI.getDiskSpace.bind(coreAPI),
+  killStream: coreAPI.killStream.bind(coreAPI),
+  setRunInBackground: coreAPI.setRunInBackground.bind(coreAPI),
+  quitApp: coreAPI.quitApp.bind(coreAPI),
 
   // Prerequisites
   detectOS: prereqAPI.detectOS.bind(prereqAPI),

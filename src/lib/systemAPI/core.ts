@@ -60,7 +60,7 @@ export const coreAPI = {
 
   async runCommandStream(
     cmd: string,
-    options?: Record<string, unknown>,
+    options?: Record<string, unknown> & { onStreamId?: (id: string) => void },
     onOutput?: (event: Omit<CommandOutputEvent, 'streamId'>) => void,
   ): Promise<CommandResult> {
     const start = Date.now();
@@ -80,6 +80,9 @@ export const coreAPI = {
     if (isElectron()) {
       return new Promise<CommandResult>((resolve) => {
         const { id, promise } = window.electronAPI!.runCommandStream(cmd, options);
+        // Surface the streamId so the caller (e.g. ChatContext) can hold it
+        // and use it to call killStream() if the user clicks Stop.
+        try { options?.onStreamId?.(id); } catch { /* swallow */ }
         let stdout = '';
         let stderr = '';
         let code = 0;
@@ -124,6 +127,27 @@ export const coreAPI = {
     if (result.stderr) onOutput?.({ type: 'stderr', data: result.stderr, code: result.code });
     onOutput?.({ type: 'exit', code: result.code });
     return finalize(result);
+  },
+
+  async killStream(streamId: string): Promise<{ success: boolean; error?: string }> {
+    if (isElectron() && window.electronAPI?.killStream) {
+      return window.electronAPI.killStream(streamId);
+    }
+    return { success: false, error: 'not in electron' };
+  },
+
+  async setRunInBackground(enabled: boolean): Promise<{ success: boolean }> {
+    if (isElectron() && window.electronAPI?.setRunInBackground) {
+      const r = await window.electronAPI.setRunInBackground(enabled);
+      return { success: r.success };
+    }
+    return { success: true };
+  },
+
+  async quitApp(): Promise<void> {
+    if (isElectron() && window.electronAPI?.quitApp) {
+      await window.electronAPI.quitApp();
+    }
   },
 
   async fileExists(path: string): Promise<boolean> {

@@ -18,6 +18,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('command-output', handler);
   },
 
+  // Kill an in-flight streamed command (used by chat "Stop")
+  killStream: (streamId) => ipcRenderer.invoke('kill-stream', streamId),
+
+  // Background mode + tray
+  setRunInBackground: (enabled) => ipcRenderer.invoke('set-run-in-background', enabled),
+  quitApp: () => ipcRenderer.invoke('quit-app'),
+
   // Platform detection
   getPlatform: () => ipcRenderer.invoke('get-platform'),
 

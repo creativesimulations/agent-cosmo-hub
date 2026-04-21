@@ -53,6 +53,11 @@ declare global {
       secretsMaterializeEnv: (envPath?: string) => Promise<{ success: boolean; count?: number; path?: string; error?: string }>;
       secretsMigrateFromEnv: (envPath?: string) => Promise<{ success: boolean; migrated?: number; keys?: string[]; error?: string }>;
 
+      // Process control + window lifecycle
+      killStream: (streamId: string) => Promise<{ success: boolean; error?: string }>;
+      setRunInBackground: (enabled: boolean) => Promise<{ success: boolean; runInBackground: boolean }>;
+      quitApp: () => Promise<{ success: boolean }>;
+
       isElectron: boolean;
     };
   }

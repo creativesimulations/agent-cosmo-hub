@@ -93,11 +93,16 @@ const buildHermesShellCommand = async (script: string): Promise<string> => {
 
 const runHermesShell = async (
   script: string,
-  options?: Record<string, unknown>,
+  options?: Record<string, unknown> & { onStreamId?: (id: string) => void },
   onOutput?: CommandOutputHandler,
 ): Promise<CommandResult> => {
   const cmd = await buildHermesShellCommand(script);
-  return onOutput ? coreAPI.runCommandStream(cmd, options, onOutput) : coreAPI.runCommand(cmd, options);
+  // If the caller wants a streamId (so it can kill the process later) we
+  // must use the streaming path even when there's no onOutput handler.
+  const needsStream = !!onOutput || !!options?.onStreamId;
+  return needsStream
+    ? coreAPI.runCommandStream(cmd, options, onOutput || (() => { /* sink */ }))
+    : coreAPI.runCommand(cmd, options);
 };
 
 const runHermesCli = async (
@@ -848,6 +853,7 @@ export const hermesAPI = {
     prompt: string,
     onOutput?: CommandOutputHandler,
     resumeId?: string,
+    onStreamId?: (id: string) => void,
   ): Promise<CommandResult & { reply?: string; diagnostics?: string; sessionId?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean }> {
     const startedAt = Date.now();
     agentLogs.push({
@@ -929,7 +935,7 @@ export const hermesAPI = {
         : 'hermes chat -q "$PROMPT" </dev/null 2>&1',
     ].join('\n');
 
-    const result = await runHermesShell(script, { timeout: 180000 }, onOutput);
+    const result = await runHermesShell(script, { timeout: 180000, onStreamId }, onOutput);
 
     // Clean the reply: strip ANSI codes and any leftover banner/status lines.
     const stripAnsi = (s: string) =>
@@ -974,6 +980,11 @@ export const hermesAPI = {
           if (/^initializing agent\.{0,3}$/i.test(t)) return false;
           if (/^resume this session( with)?:?$/i.test(t)) return false;
           if (/^hermes\s+--resume\b/i.test(t)) return false;
+          // "↻ Resumed session 20260421_171422_bdbc76 (3 user messages, 10 total messages)"
+          if (/^[↻⟳⭯⟲]?\s*resumed session\b/i.test(t)) return false;
+          // "▶ Starting new session ..." or similar lifecycle banners
+          if (/^[▶►▷]?\s*starting (a )?new session\b/i.test(t)) return false;
+          if (/^session id:\s/i.test(t)) return false;
           if (/^duration:\s/i.test(t)) return false;
           if (/^messages:\s/i.test(t)) return false;
           if (/^tokens?:\s/i.test(t)) return false;
