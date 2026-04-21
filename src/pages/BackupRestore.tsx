@@ -155,43 +155,12 @@ const BackupRestore = () => {
   const loadBackups = useCallback(async () => {
     await loadBackupsFor(backupDirPosix, isWindows);
   }, [loadBackupsFor, backupDirPosix, isWindows]);
-    try {
-      // List files: name, size in bytes, mtime epoch.
-      const cmd = `ls -1 ${sh(target)} 2>/dev/null | grep '\\.tar\\.gz$' | while read f; do stat -c "%n|%s|%Y" ${sh(target)}/"$f" 2>/dev/null || stat -f "%N|%z|%m" ${sh(target)}/"$f" 2>/dev/null; done`;
-      const result = await systemAPI.runCommand(cmd);
-      if (!result.success && !result.stdout) {
-        setBackups([]);
-        return;
-      }
-      const parsed: Backup[] = result.stdout
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => {
-          const [fullPath, sizeStr, mtimeStr] = line.split("|");
-          const filename = fullPath.split("/").pop() || fullPath;
-          const id = filename.replace(/\.tar\.gz$/, "");
-          const sizeBytes = parseInt(sizeStr, 10) || 0;
-          const mtime = parseInt(mtimeStr, 10) || 0;
-          return {
-            id,
-            name: id,
-            fullPath,
-            sizeBytes,
-            date: mtime ? formatDate(new Date(mtime * 1000)) : "—",
-          };
-        })
-        .sort((a, b) => (b.id > a.id ? 1 : -1));
-      setBackups(parsed);
-    } finally {
-      setRefreshing(false);
-    }
-  }, [backupDir]);
 
   const toggleItem = (id: string) =>
     setSelectedItems((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
 
   const createBackup = async () => {
-    if (!agentConnected || !homeDir || !backupDir) return;
+    if (!agentConnected || !homeDirPosix || !backupDirPosix) return;
     if (selectedItems.length === 0) {
       toast.error("Pick at least one item to back up");
       return;
@@ -205,16 +174,17 @@ const BackupRestore = () => {
 
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const name = `ronbot-backup-${stamp}`;
-    const archive = `${backupDir}/${name}.tar.gz`;
+    const archivePosix = `${backupDirPosix}/${name}.tar.gz`;
 
     setCreateProgress(40);
-    // tar -czf <archive> -C ~/.hermes <files>  (skips missing files with --ignore-failed-read)
-    const cmd = `cd ${sh(homeDir)}/.hermes && tar --ignore-failed-read -czf ${sh(archive)} ${includes} 2>&1 || true`;
-    const result = await systemAPI.runCommand(cmd);
+    const script = `cd ${sh(homeDirPosix)}/.hermes && tar --ignore-failed-read -czf ${sh(archivePosix)} ${includes} 2>&1 || true`;
+    const result = await systemAPI.runCommand(wrapBash(script, isWindows));
     setCreateProgress(90);
 
-    // Verify file was created.
-    const exists = await systemAPI.fileExists(archive);
+    const verify = await systemAPI.runCommand(
+      wrapBash(`[ -f ${sh(archivePosix)} ] && echo OK || echo MISS`, isWindows),
+    );
+    const exists = verify.stdout.includes("OK");
     setCreateProgress(100);
     setCreating(false);
 
@@ -223,38 +193,38 @@ const BackupRestore = () => {
       void loadBackups();
     } else {
       toast.error("Backup failed", {
-        description: result.stderr.split("\n")[0] || "Could not create archive — check Diagnostics.",
+        description: (result.stderr || result.stdout).split("\n")[0] || "Could not create archive — check Diagnostics.",
       });
     }
     setCreateProgress(0);
   };
 
   const restoreBackup = async (backup: Backup) => {
-    if (!homeDir) return;
+    if (!homeDirPosix) return;
     setRestoring(backup.id);
     setConfirmRestore(null);
-    const cmd = `mkdir -p ${sh(homeDir)}/.hermes && tar -xzf ${sh(backup.fullPath)} -C ${sh(homeDir)}/.hermes 2>&1`;
-    const result = await systemAPI.runCommand(cmd);
+    const script = `mkdir -p ${sh(homeDirPosix)}/.hermes && tar -xzf ${sh(backup.fullPath)} -C ${sh(homeDirPosix)}/.hermes 2>&1`;
+    const result = await systemAPI.runCommand(wrapBash(script, isWindows));
     setRestoring(null);
-    if (result.exitCode === 0) {
+    if (result.success) {
       toast.success("Backup restored", {
         description: "Restart the agent for changes to take effect.",
       });
     } else {
-      toast.error("Restore failed", { description: result.stderr.split("\n")[0] || "Unknown error" });
+      toast.error("Restore failed", { description: (result.stderr || result.stdout).split("\n")[0] || "Unknown error" });
     }
   };
 
   const deleteBackup = async (backup: Backup) => {
     setDeleting(backup.id);
     setConfirmDelete(null);
-    const result = await systemAPI.runCommand(`rm -f ${sh(backup.fullPath)}`);
+    const result = await systemAPI.runCommand(wrapBash(`rm -f ${sh(backup.fullPath)}`, isWindows));
     setDeleting(null);
-    if (result.exitCode === 0) {
+    if (result.success) {
       toast.success("Backup deleted");
       void loadBackups();
     } else {
-      toast.error("Delete failed", { description: result.stderr.split("\n")[0] });
+      toast.error("Delete failed", { description: (result.stderr || result.stdout).split("\n")[0] });
     }
   };
 
