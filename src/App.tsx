@@ -19,10 +19,10 @@ import TerminalPage from "./pages/TerminalPage";
 import AgentChat from "./pages/AgentChat";
 import Channels from "./pages/Channels";
 import LogViewer from "./pages/LogViewer";
-import ConfigEditor from "./pages/ConfigEditor";
 import UpdateManager from "./pages/UpdateManager";
 import BackupRestore from "./pages/BackupRestore";
 import Diagnostics from "./pages/Diagnostics";
+import Upgrades from "./pages/Upgrades";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -52,7 +52,7 @@ const App = () => (
             <Route path="/chat" element={<AgentChat />} />
             <Route path="/channels" element={<Channels />} />
             <Route path="/logs" element={<LogViewer />} />
-            <Route path="/config" element={<ConfigEditor />} />
+            <Route path="/upgrades" element={<Upgrades />} />
             <Route path="/updates" element={<UpdateManager />} />
             <Route path="/backups" element={<BackupRestore />} />
             <Route path="/diagnostics" element={<Diagnostics />} />

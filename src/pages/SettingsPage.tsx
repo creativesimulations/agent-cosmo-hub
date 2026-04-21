@@ -47,8 +47,6 @@ import {
 } from "@/lib/notify";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import UpgradeCard from "@/components/channels/UpgradeCard";
-import { UPGRADES, isUpgradeUnlocked } from "@/lib/licenses";
 
 /** A labelled toggle row — keeps the page readable when there are 8+ settings. */
 const ToggleRow = ({
@@ -124,17 +122,6 @@ const SettingsPage = () => {
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
-
-  // Upgrade unlock state, refreshed when license keys change.
-  const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
-  const [unlocksLoading, setUnlocksLoading] = useState(true);
-  const refreshUnlocks = async () => {
-    const map: Record<string, boolean> = {};
-    for (const u of UPGRADES) map[u.id] = await isUpgradeUnlocked(u.id);
-    setUnlocks(map);
-    setUnlocksLoading(false);
-  };
-  useEffect(() => { void refreshUnlocks(); }, []);
 
   useEffect(() => {
     if (!agentConnected) {
@@ -458,29 +445,6 @@ const SettingsPage = () => {
             Wiping the session ID forces your next message to start a fresh Hermes session.
             Clearing history just empties this app's local copy of the conversation.
           </p>
-        </div>
-      </GlassCard>
-
-      {/* ─── Upgrades ──────────────────────────────────────────── */}
-      <GlassCard className="p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Upgrades</h2>
-        </div>
-        <p className="text-sm text-muted-foreground -mt-2">
-          One-time purchases. Yours forever, including future updates. Buy on our website, then
-          paste the license key here.
-        </p>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {UPGRADES.map((u) => (
-            <UpgradeCard
-              key={u.id}
-              upgrade={u}
-              unlocked={!!unlocks[u.id]}
-              loading={unlocksLoading}
-              onChange={refreshUnlocks}
-            />
-          ))}
         </div>
       </GlassCard>
 
