@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from "react";
+import { systemAPI } from "@/lib/systemAPI";
 
 /**
  * App-wide user preferences. Persisted to localStorage, applied immediately
@@ -95,6 +96,12 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
     mq.addEventListener?.("change", handler);
     return () => mq.removeEventListener?.("change", handler);
   }, [settings.theme]);
+
+  // Mirror runInBackground to the Electron main process so closing the
+  // window hides to tray (instead of quitting and killing the agent).
+  useEffect(() => {
+    void systemAPI.setRunInBackground(settings.runInBackground);
+  }, [settings.runInBackground]);
 
   const update = useCallback((patch: Partial<AppSettings>) => {
     setSettings((prev) => ({ ...prev, ...patch }));
