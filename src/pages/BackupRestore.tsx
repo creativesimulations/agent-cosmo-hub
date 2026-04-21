@@ -93,6 +93,9 @@ const BackupRestore = () => {
   const [selectedItems, setSelectedItems] = useState<string[]>(["config", "skills", "memory"]);
   const [homeDir, setHomeDir] = useState<string>("");
   const [backupDir, setBackupDir] = useState<string>("");
+  const [backupDirPosix, setBackupDirPosix] = useState<string>("");
+  const [homeDirPosix, setHomeDirPosix] = useState<string>("");
+  const [isWindows, setIsWindows] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const { connected: agentConnected } = useAgentConnection();
 
@@ -101,18 +104,57 @@ const BackupRestore = () => {
     void (async () => {
       const p = await systemAPI.getPlatform();
       setHomeDir(p.homeDir);
-      const dir = `${p.homeDir}/.ronbot-backups`;
+      setIsWindows(p.isWindows);
+      const dir = p.isWindows ? `${p.homeDir}\\.ronbot-backups` : `${p.homeDir}/.ronbot-backups`;
       setBackupDir(dir);
-      await systemAPI.mkdir(dir);
-      void loadBackups(dir);
+      const homePosix = p.isWindows ? toPosixPath(p.homeDir) : p.homeDir;
+      const dirPosix = `${homePosix}/.ronbot-backups`;
+      setHomeDirPosix(homePosix);
+      setBackupDirPosix(dirPosix);
+      // Create dir via bash (works cross-platform, including WSL on Windows).
+      await systemAPI.runCommand(wrapBash(`mkdir -p ${sh(dirPosix)}`, p.isWindows));
+      void loadBackupsFor(dirPosix, p.isWindows);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadBackups = useCallback(async (dir?: string) => {
-    const target = dir || backupDir;
-    if (!target) return;
+  const loadBackupsFor = useCallback(async (dirPosix: string, win: boolean) => {
+    if (!dirPosix) return;
     setRefreshing(true);
+    try {
+      // List files: name, size in bytes, mtime epoch. Always run via bash.
+      const script = `cd ${sh(dirPosix)} 2>/dev/null && ls -1 2>/dev/null | grep '\\.tar\\.gz$' | while read f; do stat -c "%n|%s|%Y" "$f" 2>/dev/null || stat -f "%N|%z|%m" "$f" 2>/dev/null; done`;
+      const result = await systemAPI.runCommand(wrapBash(script, win));
+      if (!result.stdout) {
+        setBackups([]);
+        return;
+      }
+      const parsed: Backup[] = result.stdout
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const [filename, sizeStr, mtimeStr] = line.split("|");
+          const id = filename.replace(/\.tar\.gz$/, "");
+          const sizeBytes = parseInt(sizeStr, 10) || 0;
+          const mtime = parseInt(mtimeStr, 10) || 0;
+          return {
+            id,
+            name: id,
+            fullPath: `${dirPosix}/${filename}`,
+            sizeBytes,
+            date: mtime ? formatDate(new Date(mtime * 1000)) : "—",
+          };
+        })
+        .sort((a, b) => (b.id > a.id ? 1 : -1));
+      setBackups(parsed);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  const loadBackups = useCallback(async () => {
+    await loadBackupsFor(backupDirPosix, isWindows);
+  }, [loadBackupsFor, backupDirPosix, isWindows]);
     try {
       // List files: name, size in bytes, mtime epoch.
       const cmd = `ls -1 ${sh(target)} 2>/dev/null | grep '\\.tar\\.gz$' | while read f; do stat -c "%n|%s|%Y" ${sh(target)}/"$f" 2>/dev/null || stat -f "%N|%z|%m" ${sh(target)}/"$f" 2>/dev/null; done`;
