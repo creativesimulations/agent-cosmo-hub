@@ -52,7 +52,18 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
     updatePrereq("os", { status: "checking", description: "Detecting platform..." });
     try {
       const osInfo = await systemAPI.detectOS();
-      updatePrereq("os", { status: "found", version: osInfo.name, description: "Platform detected" });
+      // Add macOS codename for friendlier label (Sonoma, Ventura, etc.).
+      const macCodename = (v: string): string => {
+        const major = parseInt(v.split(".")[0] || "0", 10);
+        const map: Record<number, string> = {
+          15: "Sequoia", 14: "Sonoma", 13: "Ventura", 12: "Monterey", 11: "Big Sur",
+        };
+        return map[major] ? ` ${map[major]}` : "";
+      };
+      const friendly = osInfo.name.startsWith("macOS")
+        ? `${osInfo.name}${macCodename(osInfo.version)} ${osInfo.version}`
+        : osInfo.name;
+      updatePrereq("os", { status: "found", version: friendly, description: "Platform detected" });
     } catch {
       updatePrereq("os", { status: "error", description: "Failed to detect OS" });
     }
@@ -71,7 +82,9 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
         updatePrereq("wsl2", { status: "missing", description: "WSL2 required — native Windows is not supported" });
       }
     } else {
-      updatePrereq("wsl2", { status: "found", description: "Not required on this platform", version: "N/A" });
+      // Hide the WSL2 row entirely on macOS/Linux — it's confusing to see a
+      // green check next to "Not required". Filter it out of state.
+      setPrereqs((prev) => prev.filter((p) => p.id !== "wsl2"));
     }
 
     updatePrereq("python", { status: "checking", description: "Searching for Python 3.11+..." });

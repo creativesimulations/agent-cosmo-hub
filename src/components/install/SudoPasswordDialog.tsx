@@ -44,7 +44,17 @@ export default function SudoPasswordDialog({ open, reason, onCancel, onPassword,
     setConfirm("");
     setProbing(true);
     sudoAPI.probe().then((s) => {
-      setState(s);
+      // The "no-password-set" branch is only meaningful on fresh WSL where the
+      // default user has passwordless sudo + no Linux password yet. On real
+      // Linux and macOS users always have a password — coerce to "needs-password"
+      // so we just show the password prompt instead of a confusing "set one" UI.
+      const isElectronWSL =
+        typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);
+      if (s.kind === "no-password-set" && !isElectronWSL) {
+        setState({ kind: "needs-password" });
+      } else {
+        setState(s);
+      }
       setProbing(false);
       if (s.kind === "passwordless") {
         onPasswordless();

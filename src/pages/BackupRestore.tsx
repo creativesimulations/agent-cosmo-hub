@@ -74,12 +74,15 @@ const toPosixPath = (p: string): string => {
   return `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, "/")}`;
 };
 
-/** Wrap a bash script so it runs through WSL on Windows, native bash elsewhere. */
+/** Wrap a bash script so it runs through WSL on Windows, native bash elsewhere.
+ *  We use double quotes + base64 on every platform so the script survives any
+ *  user shell (zsh on macOS, fish on Linux) — the outer shell only sees safe
+ *  alphanumerics.
+ */
 const wrapBash = (script: string, isWindows: boolean): string => {
-  // base64-encode to avoid every layer of quoting (cmd.exe, wsl, bash).
   const b64 = btoa(unescape(encodeURIComponent(script)));
   const decode = `echo ${b64} | base64 -d | bash`;
-  return isWindows ? `wsl bash -lc "${decode}"` : `bash -lc '${decode}'`;
+  return isWindows ? `wsl bash -lc "${decode}"` : `bash -lc "${decode}"`;
 };
 
 const BackupRestore = () => {

@@ -1,6 +1,6 @@
 import { createContext, useContext, useRef, useState, ReactNode, useCallback } from "react";
 import { systemAPI } from "@/lib/systemAPI";
-import { sudoAPI } from "@/lib/systemAPI/sudo";
+import { sudoAPI, promptForPasswordMac } from "@/lib/systemAPI/sudo";
 import { useAgentConnection } from "./AgentConnectionContext";
 import { toast } from "sonner";
 
@@ -199,7 +199,23 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
             : aptPackages.includes("ffmpeg")
             ? "install ffmpeg (needed for Voice / TTS)"
             : `install ${pythonVenvPackage} (needed to set up the agent)`;
-        password = await requestSudoPassword(reason);
+
+        // macOS: try the native osascript GUI prompt first — feels native and
+        // keeps the password out of any renderer field. Fall back to the in-app
+        // dialog if the user dismisses it or osascript is missing.
+        const platform = await systemAPI.getPlatform();
+        if (platform.isMac) {
+          const macPw = await promptForPasswordMac(`Ronbot needs to ${reason}.`);
+          if (installIdRef.current !== myInstallId) return;
+          if (macPw) {
+            password = macPw;
+          } else {
+            password = await requestSudoPassword(reason);
+          }
+        } else {
+          password = await requestSudoPassword(reason);
+        }
+
         if (installIdRef.current !== myInstallId) return;
         if (password === null) {
           setInstallOutput((prev) => [...prev, "✗ Cancelled — system packages not installed."]);
