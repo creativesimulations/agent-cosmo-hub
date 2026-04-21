@@ -848,6 +848,7 @@ export const hermesAPI = {
     prompt: string,
     onOutput?: CommandOutputHandler,
     resumeId?: string,
+    onStreamId?: (id: string) => void,
   ): Promise<CommandResult & { reply?: string; diagnostics?: string; sessionId?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean }> {
     const startedAt = Date.now();
     agentLogs.push({
