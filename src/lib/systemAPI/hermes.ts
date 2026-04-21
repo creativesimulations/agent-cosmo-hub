@@ -93,11 +93,16 @@ const buildHermesShellCommand = async (script: string): Promise<string> => {
 
 const runHermesShell = async (
   script: string,
-  options?: Record<string, unknown>,
+  options?: Record<string, unknown> & { onStreamId?: (id: string) => void },
   onOutput?: CommandOutputHandler,
 ): Promise<CommandResult> => {
   const cmd = await buildHermesShellCommand(script);
-  return onOutput ? coreAPI.runCommandStream(cmd, options, onOutput) : coreAPI.runCommand(cmd, options);
+  // If the caller wants a streamId (so it can kill the process later) we
+  // must use the streaming path even when there's no onOutput handler.
+  const needsStream = !!onOutput || !!options?.onStreamId;
+  return needsStream
+    ? coreAPI.runCommandStream(cmd, options, onOutput || (() => { /* sink */ }))
+    : coreAPI.runCommand(cmd, options);
 };
 
 const runHermesCli = async (
