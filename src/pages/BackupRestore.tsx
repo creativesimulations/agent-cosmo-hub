@@ -288,21 +288,38 @@ const BackupRestore = () => {
         <GlassCard className="space-y-4 p-5">
           <h3 className="text-sm font-semibold text-foreground">Create Backup</h3>
           <div className="space-y-2">
-            {ITEMS.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => toggleItem(item.id)}
-                className={cn(
-                  "w-full text-left glass-subtle rounded-lg p-3 transition-all",
-                  selectedItems.includes(item.id)
-                    ? "border border-primary/30 bg-primary/5"
-                    : "border border-transparent hover:bg-background/40"
-                )}
-              >
-                <p className="text-sm text-foreground">{item.label}</p>
-                <p className="text-xs text-muted-foreground">{item.desc}</p>
-              </button>
-            ))}
+            {ITEMS.map((item) => {
+              const checked = selectedItems.includes(item.id);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => toggleItem(item.id)}
+                  aria-pressed={checked}
+                  className={cn(
+                    "w-full text-left glass-subtle rounded-lg p-3 transition-all flex items-start gap-3",
+                    checked
+                      ? "border border-primary/30 bg-primary/5"
+                      : "border border-transparent hover:bg-background/40"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
+                      checked
+                        ? "bg-primary border-primary text-primary-foreground"
+                        : "border-muted-foreground/40 bg-transparent"
+                    )}
+                  >
+                    {checked && <Check className="w-3 h-3" />}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm text-foreground">{item.label}</p>
+                    <p className="text-xs text-muted-foreground">{item.desc}</p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
           {creating && <Progress value={createProgress} className="h-1" />}
           <Button
