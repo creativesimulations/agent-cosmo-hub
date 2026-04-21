@@ -82,8 +82,49 @@ function buildCommandEnv(extraEnv = {}) {
   return env;
 }
 
+// ─── App-wide state for run-in-background / tray ───────────
+// `runInBackground` is toggled by the renderer via IPC whenever the user
+// flips the Settings switch. When true, closing the main window hides it
+// to a tray icon instead of quitting — that way `hermes chat`/gateways
+// (and queued chat replies) keep running in the background.
+let runInBackground = false;
+let mainWindow = null;
+let tray = null;
+let isQuittingForReal = false;
+
+function ensureTray() {
+  if (tray) return tray;
+  const empty = nativeImage.createEmpty();
+  tray = new Tray(empty);
+  tray.setToolTip('Ronbot — agent running in background');
+  const menu = Menu.buildFromTemplate([
+    { label: 'Open Ronbot', click: () => showMainWindow() },
+    { type: 'separator' },
+    {
+      label: 'Quit Ronbot (stops the agent)',
+      click: () => {
+        isQuittingForReal = true;
+        app.quit();
+      },
+    },
+  ]);
+  tray.setContextMenu(menu);
+  tray.on('click', () => showMainWindow());
+  return tray;
+}
+
+function showMainWindow() {
+  if (!mainWindow) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
 function createWindow() {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1024,
@@ -98,6 +139,18 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+
+  mainWindow.on('close', (event) => {
+    if (!isQuittingForReal && runInBackground) {
+      event.preventDefault();
+      mainWindow.hide();
+      ensureTray();
+    }
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
 }
 
 // ─── IPC Handlers ─────────────────────────────────────────────
