@@ -153,18 +153,58 @@ const SecretForm = ({ initialEnvVar = "", initialValue = "", saving, onSave, onC
           </PopoverContent>
         </Popover>
         {preset && (
-          <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
-            <span>{preset.hint}</span>
-            {preset.docsUrl && (
-              <a
-                href={preset.docsUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-0.5 text-primary hover:underline"
-              >
-                Get key <ExternalLink className="w-3 h-3" />
-              </a>
-            )}
+          <div className="space-y-1">
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+              <span>{preset.hint}</span>
+              {preset.docsUrl && (
+                <a
+                  href={preset.docsUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-0.5 text-primary hover:underline"
+                >
+                  Get key <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+            </p>
+            {(() => {
+              // Multi-field credential helpers — most users don't realize SMTP
+              // needs four entries together, not one. Surface companions inline.
+              const companions: Record<string, string[]> = {
+                SMTP_HOST: ["SMTP_PORT", "SMTP_USER", "SMTP_PASS"],
+                SMTP_PORT: ["SMTP_HOST", "SMTP_USER", "SMTP_PASS"],
+                SMTP_USER: ["SMTP_HOST", "SMTP_PORT", "SMTP_PASS"],
+                SMTP_PASS: ["SMTP_HOST", "SMTP_PORT", "SMTP_USER"],
+                IMAP_HOST: ["IMAP_USER", "IMAP_PASS"],
+                IMAP_USER: ["IMAP_HOST", "IMAP_PASS"],
+                IMAP_PASS: ["IMAP_HOST", "IMAP_USER"],
+                WHATSAPP_PHONE_NUMBER_ID: ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_VERIFY_TOKEN"],
+                WHATSAPP_ACCESS_TOKEN: ["WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_VERIFY_TOKEN"],
+                WHATSAPP_VERIFY_TOKEN: ["WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN"],
+                SLACK_BOT_TOKEN: ["SLACK_APP_TOKEN"],
+              };
+              const c = companions[preset.envVar];
+              if (!c) return null;
+              return (
+                <p className="text-[11px] text-warning/90 bg-warning/5 border border-warning/20 rounded px-2 py-1.5">
+                  This service also needs:{" "}
+                  {c.map((v, i) => (
+                    <span key={v}>
+                      <code className="text-foreground">{v}</code>
+                      {i < c.length - 1 ? ", " : ""}
+                    </span>
+                  ))}
+                  . Add each one as a separate secret.
+                </p>
+              );
+            })()}
+          </div>
+        )}
+        {!preset && (
+          <p className="text-[11px] text-muted-foreground/80">
+            Don't see your service? Skills look for very specific names — open the{" "}
+            <strong className="text-foreground">Skills &amp; Tools</strong> tab to see exactly
+            what name a skill expects, then come back here to add it.
           </p>
         )}
       </div>
