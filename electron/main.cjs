@@ -112,7 +112,17 @@ function ensureTray() {
       }
     }
   } catch { /* fall back to empty image */ }
-  tray = new Tray(icon);
+
+  // Tray creation can fail on Linux compositors without an AppIndicator
+  // (some Wayland/GNOME setups). If it throws, fall back to keeping the
+  // window visible — better than silently making the app unreachable.
+  try {
+    tray = new Tray(icon);
+  } catch (e) {
+    console.warn('[tray] failed to create tray icon:', e.message);
+    tray = null;
+    return null;
+  }
   tray.setToolTip('Ronbot — agent running in background');
   const menu = Menu.buildFromTemplate([
     { label: 'Open Ronbot', click: () => showMainWindow() },
@@ -171,7 +181,12 @@ function createWindow() {
     if (runInBackground) {
       event.preventDefault();
       mainWindow.hide();
-      ensureTray();
+      const t = ensureTray();
+      // Linux without a system tray (some Wayland/GNOME setups): keep the
+      // window visible so the user isn't stranded with no way back.
+      if (!t && process.platform === 'linux') {
+        mainWindow.show();
+      }
     }
   });
 
@@ -186,10 +201,14 @@ function createWindow() {
 ipcMain.handle('run-command', async (_event, cmd, options = {}) => {
   return new Promise((resolve) => {
     const env = buildCommandEnv(options.env || {});
+    // On macOS/Linux force `/bin/bash` so we don't pick up the user's
+    // exotic shell (fish/zsh/csh) which mangles single-quoted base64 payloads.
+    // Windows keeps the default cmd.exe so existing `wsl …` and winget work.
+    const shellOverride = process.platform === 'win32' ? true : '/bin/bash';
     const opts = {
       timeout: options.timeout || 60000,
       cwd: options.cwd || os.homedir(),
-      shell: true,
+      shell: shellOverride,
       env,
     };
     exec(cmd, opts, (error, stdout, stderr) => {
@@ -208,9 +227,10 @@ ipcMain.handle('run-command-stream', async (event, cmd, options = {}) => {
   return new Promise((resolve) => {
     const streamId = options.streamId;
     const timeoutMs = options.timeout || 60000;
+    const shellOverride = process.platform === 'win32' ? true : '/bin/bash';
     const opts = {
       cwd: options.cwd || os.homedir(),
-      shell: true,
+      shell: shellOverride,
       env: buildCommandEnv(options.env || {}),
       windowsHide: true,
     };

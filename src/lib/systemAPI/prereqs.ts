@@ -63,7 +63,12 @@ export const prereqAPI = {
     return { installed: false };
   },
 
-  /** Check pip — also auto-upgrades to latest if outdated */
+  /**
+   * Check pip. On Windows we auto-upgrade pip; on macOS/Linux modern systems
+   * mark the system Python as PEP 668 "externally-managed" and `pip install
+   * --upgrade pip` fails with a scary error — we skip the upgrade there since
+   * the Hermes installer creates its own venv anyway.
+   */
   async checkPip(): Promise<{ installed: boolean; version?: string }> {
     const platform = await coreAPI.getPlatform();
     const cmds = platform.isWindows
@@ -85,14 +90,17 @@ export const prereqAPI = {
 
     if (!foundCmd) return { installed: false };
 
-    // Auto-upgrade pip to latest so agent install doesn't fail later.
-    // Use the SAME interpreter that worked above to avoid prefix mismatch.
-    const upgradeCmd = foundCmd.replace(/--version$/, 'install --upgrade pip');
-    const upgrade = await coreAPI.runCommand(upgradeCmd, { timeout: 180000 });
-    if (upgrade.success) {
-      const recheck = await coreAPI.runCommand(foundCmd);
-      const v = recheck.stdout.match(/(\d+\.\d+[\.\d]*)/);
-      if (v) foundVersion = v[1];
+    // Only auto-upgrade pip on Windows. On macOS/Linux the system Python is
+    // typically PEP 668-managed (externally-managed-environment error) and the
+    // upgrade isn't needed anyway because Hermes installs into its own venv.
+    if (platform.isWindows) {
+      const upgradeCmd = foundCmd.replace(/--version$/, 'install --upgrade pip');
+      const upgrade = await coreAPI.runCommand(upgradeCmd, { timeout: 180000 });
+      if (upgrade.success) {
+        const recheck = await coreAPI.runCommand(foundCmd);
+        const v = recheck.stdout.match(/(\d+\.\d+[\.\d]*)/);
+        if (v) foundVersion = v[1];
+      }
     }
 
     return { installed: true, version: foundVersion };
@@ -135,16 +143,49 @@ export const prereqAPI = {
     return coreAPI.runCommand('wsl --install', { timeout: 300000 });
   },
 
-  /** Install Python via winget/apt/brew */
+  // Helper: detect Homebrew presence on macOS. We don't auto-install brew
+  // (large scope, requires root). If missing, return a friendly message
+  // pointing the user at https://brew.sh.
+  async _brewMissingResult(pkg: string): Promise<CommandResult> {
+    const probe = await coreAPI.runCommand('command -v brew');
+    if (probe.success && probe.stdout.trim()) {
+      return coreAPI.runCommand(`brew install ${pkg}`, { timeout: 600000 });
+    }
+    return {
+      success: false,
+      stdout: '',
+      stderr:
+        `Homebrew is not installed. Install it once with:\n\n` +
+        `  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"\n\n` +
+        `Then click Install again to install ${pkg}.`,
+      code: 127,
+    };
+  },
+
+  /**
+   * Install Python.
+   * - Windows: winget
+   * - macOS:   brew (if installed) — but skipped entirely if system Python 3.11+ already exists.
+   * - Linux:   delegated to the in-app sudo dialog (caller must use sudoAPI.aptInstall).
+   */
   async installPython(): Promise<CommandResult> {
     const platform = await coreAPI.getPlatform();
     if (platform.isWindows) {
       return coreAPI.runCommand('winget install Python.Python.3.11 --accept-package-agreements --accept-source-agreements', { timeout: 300000 });
     }
     if (platform.isMac) {
-      return coreAPI.runCommand('brew install python@3.11', { timeout: 300000 });
+      return this._brewMissingResult('python@3.11');
     }
-    return coreAPI.runCommand('sudo apt-get install -y python3.11 python3.11-venv python3-pip', { timeout: 300000 });
+    // Linux: don't shell out to `sudo` directly — would hang with no TTY.
+    // The PrerequisiteCheck UI will route through the sudo dialog instead.
+    return {
+      success: false,
+      stdout: '',
+      stderr:
+        'Python install on Linux requires administrator access. ' +
+        'Open a terminal and run:\n  sudo apt-get install -y python3.11 python3.11-venv python3-pip',
+      code: 1,
+    };
   },
 
   /** Install Git */
@@ -154,9 +195,33 @@ export const prereqAPI = {
       return coreAPI.runCommand('winget install Git.Git --accept-package-agreements --accept-source-agreements', { timeout: 300000 });
     }
     if (platform.isMac) {
-      return coreAPI.runCommand('brew install git', { timeout: 300000 });
+      // macOS ships git via Xcode CLT — trigger the system installer prompt.
+      const probe = await coreAPI.runCommand('command -v git');
+      if (probe.success && probe.stdout.trim()) {
+        return { success: true, stdout: 'git already installed', stderr: '', code: 0 };
+      }
+      const brewProbe = await coreAPI.runCommand('command -v brew');
+      if (brewProbe.success && brewProbe.stdout.trim()) {
+        return coreAPI.runCommand('brew install git', { timeout: 300000 });
+      }
+      return {
+        success: false,
+        stdout: '',
+        stderr:
+          'Git is provided by Apple\'s Xcode Command Line Tools. Run this once in Terminal:\n\n' +
+          '  xcode-select --install\n\n' +
+          'A system dialog will appear — click "Install" and wait for it to finish.',
+        code: 1,
+      };
     }
-    return coreAPI.runCommand('sudo apt-get install -y git', { timeout: 300000 });
+    return {
+      success: false,
+      stdout: '',
+      stderr:
+        'Git install on Linux requires administrator access. Open a terminal and run:\n' +
+        '  sudo apt-get install -y git',
+      code: 1,
+    };
   },
 
   /** Install curl */
@@ -168,7 +233,14 @@ export const prereqAPI = {
     if (platform.isMac) {
       return { success: true, stdout: 'curl is pre-installed on macOS', stderr: '', code: 0 };
     }
-    return coreAPI.runCommand('sudo apt-get install -y curl', { timeout: 300000 });
+    return {
+      success: false,
+      stdout: '',
+      stderr:
+        'curl install on Linux requires administrator access. Open a terminal and run:\n' +
+        '  sudo apt-get install -y curl',
+      code: 1,
+    };
   },
 
   /** Install pip (uses ensurepip or get-pip.py) */
@@ -188,9 +260,19 @@ export const prereqAPI = {
       );
     }
     if (platform.isMac) {
+      // macOS: ensurepip may fail under PEP 668; try --user fallback.
+      const r = await coreAPI.runCommand('python3 -m ensurepip --upgrade --user', { timeout: 120000 });
+      if (r.success) return r;
       return coreAPI.runCommand('python3 -m ensurepip --upgrade', { timeout: 120000 });
     }
-    return coreAPI.runCommand('sudo apt-get install -y python3-pip', { timeout: 300000 });
+    return {
+      success: false,
+      stdout: '',
+      stderr:
+        'pip install on Linux requires administrator access. Open a terminal and run:\n' +
+        '  sudo apt-get install -y python3-pip',
+      code: 1,
+    };
   },
 
   // ─── Optional system packages used by Hermes extras ───────
@@ -202,9 +284,12 @@ export const prereqAPI = {
     // ffmpeg.exe installed via winget on the host appears at /mnt/c/... and is
     // automatically on the WSL PATH thanks to WSL interop, so checking from
     // inside WSL is the most accurate test.
+    const inner = 'command -v ffmpeg && ffmpeg -version 2>/dev/null | head -1';
+    const b64 = btoa(unescape(encodeURIComponent(inner)));
+    const decode = `echo ${b64} | base64 -d | bash`;
     const cmd = platform.isWindows
-      ? 'wsl bash -lc "command -v ffmpeg && ffmpeg -version 2>/dev/null | head -1"'
-      : 'command -v ffmpeg && ffmpeg -version 2>/dev/null | head -1';
+      ? `wsl bash -lc "${decode}"`
+      : `bash -lc "${decode}"`;
     const result = await coreAPI.runCommand(cmd, { timeout: 10000 });
     if (!result.success || !result.stdout?.trim()) return { found: false };
     const lines = result.stdout.trim().split('\n');
@@ -225,10 +310,14 @@ export const prereqAPI = {
   /** Check if Python can actually create venvs with pip/ensurepip available. */
   async checkPythonVenv(): Promise<{ installed: boolean; packageName?: string }> {
     const platform = await coreAPI.getPlatform();
-    const inner = "python3 -c 'import sys; pkg=f\"python{sys.version_info.major}.{sys.version_info.minor}-venv\"; import venv, ensurepip; print(\"OK:\" + pkg)' 2>/dev/null || python3 -c 'import sys; print(\"NO:\" + f\"python{sys.version_info.major}.{sys.version_info.minor}-venv\")'";
+    // Base64-encode the inner script so it survives any host shell quoting
+    // (cmd.exe → wsl, zsh on macOS, fish on Linux, etc.). bash -lc decodes it.
+    const inner = `python3 -c 'import sys; pkg=f"python{sys.version_info.major}.{sys.version_info.minor}-venv"; import venv, ensurepip; print("OK:" + pkg)' 2>/dev/null || python3 -c 'import sys; print("NO:" + f"python{sys.version_info.major}.{sys.version_info.minor}-venv")'`;
+    const b64 = btoa(unescape(encodeURIComponent(inner)));
+    const decode = `echo ${b64} | base64 -d | bash`;
     const cmd = platform.isWindows
-      ? `wsl bash -lc "${inner}"`
-      : `bash -lc "${inner}"`;
+      ? `wsl bash -lc "${decode}"`
+      : `bash -lc "${decode}"`;
     const result = await coreAPI.runCommand(cmd, { timeout: 10000 });
     const output = (result.stdout || '').trim();
     const match = output.match(/^(OK|NO):(.+)$/);
@@ -287,9 +376,10 @@ export const prereqAPI = {
       };
     }
     if (platform.isMac) {
-      return coreAPI.runCommand('brew install ffmpeg', { timeout: 600000 });
+      return this._brewMissingResult('ffmpeg');
     }
     // Native Linux / WSL session — try passwordless apt, then surface manual cmd.
+    // Caller (InstallContext) routes through the sudo dialog if this path is needed.
     return installInsideWSL((inner) => `bash -lc "${inner}"`);
   },
 };

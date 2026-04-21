@@ -113,8 +113,16 @@ const TerminalPage = () => {
 
       setRunning(true);
       try {
-        // Execute in current cwd by chaining. Use bash -lc on unix-like for PATH.
-        const result = await systemAPI.runCommand(cmd, { cwd });
+        // Wrap in a login shell on macOS/Linux so PATH includes ~/.local/bin
+        // (where `hermes` lives) and shell built-ins like `source` work.
+        // On Windows we still go through cmd.exe via the default shell:true.
+        const platform = await systemAPI.getPlatform();
+        let toRun = cmd;
+        if (!platform.isWindows) {
+          const b64 = btoa(unescape(encodeURIComponent(cmd)));
+          toRun = `bash -lc "echo ${b64} | base64 -d | bash"`;
+        }
+        const result = await systemAPI.runCommand(toRun, { cwd });
         if (result.stdout) {
           append([{ type: "output", content: result.stdout.replace(/\n$/, "") }]);
         }

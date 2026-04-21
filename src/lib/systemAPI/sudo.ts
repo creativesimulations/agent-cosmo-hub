@@ -39,6 +39,20 @@ export async function promptForPasswordMac(reason: string): Promise<string | nul
   return pw || null;
 }
 
+/**
+ * Linux GUI fallback: if pkexec is available we can run a single privileged
+ * command (e.g. `apt-get install -y ffmpeg`) and the desktop environment
+ * (GNOME/KDE/XFCE) will pop its native polkit prompt. Returns null if
+ * pkexec isn't installed; otherwise returns the CommandResult of running
+ * the privileged command.
+ */
+export async function pkexecAvailable(): Promise<boolean> {
+  const platform = await coreAPI.getPlatform();
+  if (platform.isWindows || platform.isMac) return false;
+  const probe = await coreAPI.runCommand('command -v pkexec', { timeout: 5000 });
+  return probe.success && !!probe.stdout.trim();
+}
+
 const toB64 = (s: string) => btoa(unescape(encodeURIComponent(s)));
 
 /** Run a script as the current user (no sudo). */
