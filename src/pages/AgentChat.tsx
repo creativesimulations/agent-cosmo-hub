@@ -79,11 +79,17 @@ const AgentChat = () => {
             <MessageSquare className="w-6 h-6 text-primary" />
             Agent Chat
           </h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground flex items-center gap-2">
             {sessionId ? (
               <>Resuming session <span className="font-mono text-[11px] text-muted-foreground/80">{sessionId}</span></>
             ) : (
               "Interact directly with your AI agent"
+            )}
+            {queuedCount > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/15 border border-primary/30 text-primary text-[11px]">
+                <Clock className="w-3 h-3" />
+                {queuedCount} queued
+              </span>
             )}
           </p>
         </div>
@@ -166,9 +172,12 @@ const AgentChat = () => {
                 <div
                   className={cn(
                     "relative max-w-[70%] rounded-xl px-4 py-3",
-                    msg.role === "assistant"
-                      ? "glass-subtle text-foreground"
-                      : "bg-primary/15 border border-primary/20 text-foreground"
+                    msg.cancelled
+                      ? "glass-subtle text-muted-foreground italic border border-dashed border-white/10"
+                      : msg.role === "assistant"
+                        ? "glass-subtle text-foreground"
+                        : "bg-primary/15 border border-primary/20 text-foreground",
+                    msg.queued && "opacity-60",
                   )}
                 >
                   {!msg.streaming && (
@@ -183,7 +192,14 @@ const AgentChat = () => {
                       <X className="w-3 h-3" />
                     </button>
                   )}
-                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  {msg.queued && msg.role === "assistant" && !msg.content && (
+                    <p className="text-xs text-muted-foreground italic flex items-center gap-1.5">
+                      <Clock className="w-3 h-3" /> Queued — waiting for previous reply…
+                    </p>
+                  )}
+                  {(!msg.queued || msg.role === "user" || msg.content) && (
+                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  )}
                   {msg.streaming && (
                     <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
                   )}
@@ -236,15 +252,34 @@ const AgentChat = () => {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={agentConnected ? "Message your agent…  (Shift+Enter for newline)" : "Agent not connected"}
+              placeholder={
+                agentConnected
+                  ? isStreaming || queuedCount > 0
+                    ? "Type to queue another message…  (Shift+Enter for newline)"
+                    : "Message your agent…  (Shift+Enter for newline)"
+                  : "Agent not connected"
+              }
               className="bg-background/50 border-white/10 focus:border-primary/50 flex-1 min-h-[44px] max-h-[200px] resize-none py-2.5"
               rows={1}
-              disabled={isStreaming || !agentConnected}
+              disabled={!agentConnected}
             />
+            {(isStreaming || queuedCount > 0) && (
+              <Button
+                type="button"
+                onClick={() => { void stop(); }}
+                variant="destructive"
+                className="shrink-0 h-[44px]"
+                title="Interrupt the agent and discard any queued messages"
+              >
+                <Square className="w-4 h-4 mr-1.5" />
+                Stop
+              </Button>
+            )}
             <Button
               type="submit"
-              disabled={!input.trim() || isStreaming || !agentConnected}
+              disabled={!input.trim() || !agentConnected}
               className="gradient-primary text-primary-foreground shrink-0 h-[44px]"
+              title={isStreaming || queuedCount > 0 ? "Queue this message — it will be sent after the current reply" : "Send"}
             >
               {isStreaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </Button>
