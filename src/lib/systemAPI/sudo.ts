@@ -13,7 +13,30 @@ type ShellWrapper = (inner: string) => string;
 async function getWrapper(): Promise<ShellWrapper> {
   const platform = await coreAPI.getPlatform();
   if (platform.isWindows) return (inner) => `wsl bash -lc "${inner}"`;
+  // macOS and Linux both use a native bash login shell. macOS additionally
+  // has osascript for GUI password prompts when sudo is unavailable — see
+  // promptForPasswordMac() below.
   return (inner) => `bash -lc "${inner}"`;
+}
+
+/**
+ * macOS-only: pop a native GUI password prompt via osascript so the user
+ * doesn't have to type their admin password into a renderer text field.
+ * Returns the password string, or null if the user cancelled. Linux/WSL
+ * users still go through the in-app SudoPasswordDialog because there's no
+ * universal GUI prompt.
+ */
+export async function promptForPasswordMac(reason: string): Promise<string | null> {
+  const platform = await coreAPI.getPlatform();
+  if (!platform.isMac) return null;
+  const safeReason = reason.replace(/"/g, '\\"');
+  const script =
+    `osascript -e 'display dialog "${safeReason}" default answer "" with hidden answer with title "Ronbot needs your password"' ` +
+    `2>/dev/null | sed -n 's/.*text returned:\\(.*\\)$/\\1/p'`;
+  const result = await coreAPI.runCommand(script, { timeout: 120000 });
+  if (!result.success) return null;
+  const pw = (result.stdout || '').trim();
+  return pw || null;
 }
 
 const toB64 = (s: string) => btoa(unescape(encodeURIComponent(s)));
