@@ -347,6 +347,12 @@ const SettingsPage = () => {
             checked={settings.autoResumeSession}
             onCheckedChange={(v) => update({ autoResumeSession: v })}
           />
+          <ToggleRow
+            title="Keep agent running when window is closed"
+            description="Closing the app window minimizes Ronbot to your system tray instead of quitting. The agent keeps running in the background, so messaging gateways (WhatsApp, Telegram, Slack…) and any in-flight reply continue. Right-click the tray icon to fully quit."
+            checked={settings.runInBackground}
+            onCheckedChange={(v) => update({ runInBackground: v })}
+          />
         </div>
       </GlassCard>
 
