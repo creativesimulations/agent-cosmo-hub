@@ -1,38 +1,215 @@
-import { useState } from "react";
-import { Archive, Download, Upload, Trash2, Clock, CheckCircle2, FolderArchive, Loader2, AlertCircle } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  Archive,
+  Download,
+  Upload,
+  Trash2,
+  Clock,
+  CheckCircle2,
+  FolderArchive,
+  Loader2,
+  AlertCircle,
+  RefreshCw,
+} from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
+import { systemAPI } from "@/lib/systemAPI";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface Backup {
-  id: string;
+  id: string; // filename (no ext)
   name: string;
   date: string;
-  size: string;
-  includes: string[];
+  sizeBytes: number;
+  fullPath: string;
 }
+
+interface BackupItem {
+  id: "config" | "secrets" | "skills" | "memory" | "logs";
+  label: string;
+  desc: string;
+  /** Path glob relative to ~/.hermes that the tar should include. */
+  include: string;
+}
+
+const ITEMS: BackupItem[] = [
+  { id: "config", label: "Agent Config", desc: "config.yaml, .env, SOUL.md", include: "config.yaml .env SOUL.md" },
+  { id: "secrets", label: "Secrets snapshot", desc: ".env file (keychain secrets are managed separately)", include: ".env" },
+  { id: "skills", label: "Skills", desc: "Installed skills folder", include: "skills" },
+  { id: "memory", label: "Memory & state", desc: "state.db and persistent memory", include: "state.db memory" },
+  { id: "logs", label: "Logs", desc: "Recent agent logs", include: "logs" },
+];
+
+const formatBytes = (b: number) => {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 ** 2) return `${(b / 1024).toFixed(1)} KB`;
+  if (b < 1024 ** 3) return `${(b / 1024 ** 2).toFixed(1)} MB`;
+  return `${(b / 1024 ** 3).toFixed(2)} GB`;
+};
+
+const formatDate = (d: Date) =>
+  d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+/** Quote a path for shell. */
+const sh = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
 
 const BackupRestore = () => {
   const [backups, setBackups] = useState<Backup[]>([]);
   const [creating, setCreating] = useState(false);
   const [createProgress, setCreateProgress] = useState(0);
-  const [selectedItems, setSelectedItems] = useState(["config", "keys", "skills", "schedules"]);
+  const [restoring, setRestoring] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [confirmRestore, setConfirmRestore] = useState<Backup | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Backup | null>(null);
+  const [selectedItems, setSelectedItems] = useState<string[]>(["config", "skills", "memory"]);
+  const [homeDir, setHomeDir] = useState<string>("");
+  const [backupDir, setBackupDir] = useState<string>("");
+  const [refreshing, setRefreshing] = useState(false);
   const { connected: agentConnected } = useAgentConnection();
 
-  const toggleItem = (item: string) => {
-    setSelectedItems((prev) =>
-      prev.includes(item) ? prev.filter((i) => i !== item) : [...prev, item]
-    );
-  };
+  // Resolve home + backup dir on mount.
+  useEffect(() => {
+    void (async () => {
+      const p = await systemAPI.getPlatform();
+      setHomeDir(p.homeDir);
+      const dir = `${p.homeDir}/.ainoval-backups`;
+      setBackupDir(dir);
+      await systemAPI.mkdir(dir);
+      void loadBackups(dir);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadBackups = useCallback(async (dir?: string) => {
+    const target = dir || backupDir;
+    if (!target) return;
+    setRefreshing(true);
+    try {
+      // List files: name, size in bytes, mtime epoch.
+      const cmd = `ls -1 ${sh(target)} 2>/dev/null | grep '\\.tar\\.gz$' | while read f; do stat -c "%n|%s|%Y" ${sh(target)}/"$f" 2>/dev/null || stat -f "%N|%z|%m" ${sh(target)}/"$f" 2>/dev/null; done`;
+      const result = await systemAPI.runCommand(cmd);
+      if (!result.success && !result.stdout) {
+        setBackups([]);
+        return;
+      }
+      const parsed: Backup[] = result.stdout
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const [fullPath, sizeStr, mtimeStr] = line.split("|");
+          const filename = fullPath.split("/").pop() || fullPath;
+          const id = filename.replace(/\.tar\.gz$/, "");
+          const sizeBytes = parseInt(sizeStr, 10) || 0;
+          const mtime = parseInt(mtimeStr, 10) || 0;
+          return {
+            id,
+            name: id,
+            fullPath,
+            sizeBytes,
+            date: mtime ? formatDate(new Date(mtime * 1000)) : "—",
+          };
+        })
+        .sort((a, b) => (b.id > a.id ? 1 : -1));
+      setBackups(parsed);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [backupDir]);
+
+  const toggleItem = (id: string) =>
+    setSelectedItems((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
 
   const createBackup = async () => {
-    if (!agentConnected) return;
+    if (!agentConnected || !homeDir || !backupDir) return;
+    if (selectedItems.length === 0) {
+      toast.error("Pick at least one item to back up");
+      return;
+    }
     setCreating(true);
-    setCreateProgress(0);
-    // TODO: implement real backup via systemAPI
+    setCreateProgress(10);
+
+    const includes = ITEMS.filter((i) => selectedItems.includes(i.id))
+      .map((i) => i.include)
+      .join(" ");
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const name = `ainoval-backup-${stamp}`;
+    const archive = `${backupDir}/${name}.tar.gz`;
+
+    setCreateProgress(40);
+    // tar -czf <archive> -C ~/.hermes <files>  (skips missing files with --ignore-failed-read)
+    const cmd = `cd ${sh(homeDir)}/.hermes && tar --ignore-failed-read -czf ${sh(archive)} ${includes} 2>&1 || true`;
+    const result = await systemAPI.runCommand(cmd);
+    setCreateProgress(90);
+
+    // Verify file was created.
+    const exists = await systemAPI.fileExists(archive);
+    setCreateProgress(100);
     setCreating(false);
+
+    if (exists) {
+      toast.success("Backup created", { description: `${name}.tar.gz` });
+      void loadBackups();
+    } else {
+      toast.error("Backup failed", {
+        description: result.stderr.split("\n")[0] || "Could not create archive — check Diagnostics.",
+      });
+    }
+    setCreateProgress(0);
+  };
+
+  const restoreBackup = async (backup: Backup) => {
+    if (!homeDir) return;
+    setRestoring(backup.id);
+    setConfirmRestore(null);
+    const cmd = `mkdir -p ${sh(homeDir)}/.hermes && tar -xzf ${sh(backup.fullPath)} -C ${sh(homeDir)}/.hermes 2>&1`;
+    const result = await systemAPI.runCommand(cmd);
+    setRestoring(null);
+    if (result.exitCode === 0) {
+      toast.success("Backup restored", {
+        description: "Restart the agent for changes to take effect.",
+      });
+    } else {
+      toast.error("Restore failed", { description: result.stderr.split("\n")[0] || "Unknown error" });
+    }
+  };
+
+  const deleteBackup = async (backup: Backup) => {
+    setDeleting(backup.id);
+    setConfirmDelete(null);
+    const result = await systemAPI.runCommand(`rm -f ${sh(backup.fullPath)}`);
+    setDeleting(null);
+    if (result.exitCode === 0) {
+      toast.success("Backup deleted");
+      void loadBackups();
+    } else {
+      toast.error("Delete failed", { description: result.stderr.split("\n")[0] });
+    }
+  };
+
+  const exportBackup = async (backup: Backup) => {
+    // Reveal in OS file manager — works on Win/Mac/Linux.
+    const cmd =
+      navigator.platform.startsWith("Win")
+        ? `explorer.exe /select,${sh(backup.fullPath.replace(/\//g, "\\"))}`
+        : navigator.platform.startsWith("Mac")
+        ? `open -R ${sh(backup.fullPath)}`
+        : `xdg-open ${sh(backupDir)}`;
+    await systemAPI.runCommand(cmd);
+    toast.info("Opened backup folder", { description: backupDir });
   };
 
   if (!agentConnected) {
@@ -58,32 +235,34 @@ const BackupRestore = () => {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-          <Archive className="w-6 h-6 text-primary" />
-          Backup & Restore
-        </h1>
-        <p className="text-sm text-muted-foreground">Export and import your agent configuration</p>
+      <div className="flex items-end justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            <Archive className="w-6 h-6 text-primary" />
+            Backup & Restore
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Snapshots of <code className="text-xs">~/.hermes</code> stored in <code className="text-xs">{backupDir || "~/.ainoval-backups"}</code>
+          </p>
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => loadBackups()} disabled={refreshing}>
+          <RefreshCw className={cn("w-4 h-4 mr-1", refreshing && "animate-spin")} /> Refresh
+        </Button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <GlassCard className="space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <GlassCard className="space-y-4 p-5">
           <h3 className="text-sm font-semibold text-foreground">Create Backup</h3>
           <div className="space-y-2">
-            {[
-              { id: "config", label: "Agent Config", desc: "config.yaml and settings" },
-              { id: "keys", label: "API Keys", desc: "Encrypted provider credentials" },
-              { id: "skills", label: "Skills", desc: "Installed skills and preferences" },
-              { id: "schedules", label: "Schedules", desc: "Cron jobs and automations" },
-            ].map((item) => (
+            {ITEMS.map((item) => (
               <button
                 key={item.id}
                 onClick={() => toggleItem(item.id)}
                 className={cn(
                   "w-full text-left glass-subtle rounded-lg p-3 transition-all",
                   selectedItems.includes(item.id)
-                    ? "border border-primary/20 bg-primary/5"
-                    : "border border-transparent"
+                    ? "border border-primary/30 bg-primary/5"
+                    : "border border-transparent hover:bg-background/40"
                 )}
               >
                 <p className="text-sm text-foreground">{item.label}</p>
@@ -102,53 +281,127 @@ const BackupRestore = () => {
           </Button>
         </GlassCard>
 
-        <GlassCard className="space-y-4">
+        <GlassCard className="space-y-4 p-5">
           <h3 className="text-sm font-semibold text-foreground">Import Backup</h3>
-          <div className="border-2 border-dashed border-white/10 rounded-xl p-8 text-center space-y-3 hover:border-primary/30 transition-colors cursor-pointer">
+          <div className="border-2 border-dashed border-border rounded-xl p-8 text-center space-y-3">
             <Upload className="w-8 h-8 text-muted-foreground mx-auto" />
             <div>
-              <p className="text-sm text-foreground">Drop backup file here</p>
-              <p className="text-xs text-muted-foreground">or click to browse</p>
+              <p className="text-sm text-foreground">Drop a <code>.tar.gz</code> backup into</p>
+              <code className="text-xs text-muted-foreground block mt-1 break-all">{backupDir}</code>
+              <p className="text-xs text-muted-foreground/70 mt-2">then click Refresh — it'll appear below for restore.</p>
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportBackup({ id: "", name: "", date: "", sizeBytes: 0, fullPath: backupDir })}
+            >
+              Open backup folder
+            </Button>
           </div>
         </GlassCard>
       </div>
 
       <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-foreground">Backup History</h3>
+        <h3 className="text-sm font-semibold text-foreground">
+          Backup History {backups.length > 0 && <span className="text-muted-foreground font-normal">({backups.length})</span>}
+        </h3>
         {backups.length === 0 ? (
           <GlassCard variant="subtle" className="text-center py-8">
-            <p className="text-sm text-muted-foreground/60">No backups yet</p>
+            <p className="text-sm text-muted-foreground/60">No backups yet — create your first one above.</p>
           </GlassCard>
         ) : (
           backups.map((backup) => (
-            <GlassCard key={backup.id} variant="subtle" className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <FolderArchive className="w-5 h-5 text-primary" />
-                <div>
-                  <p className="text-sm font-medium text-foreground">{backup.name}</p>
+            <GlassCard key={backup.id} variant="subtle" className="flex items-center justify-between p-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <FolderArchive className="w-5 h-5 text-primary shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">{backup.name}</p>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <Clock className="w-3 h-3" /> {backup.date}
                     <span>•</span>
-                    <span>{backup.size}</span>
+                    <span>{formatBytes(backup.sizeBytes)}</span>
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
-                  <Download className="w-4 h-4 mr-1" /> Export
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => exportBackup(backup)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <Download className="w-4 h-4 mr-1" /> Reveal
                 </Button>
-                <Button variant="ghost" size="sm" className="text-primary hover:text-primary">
-                  <CheckCircle2 className="w-4 h-4 mr-1" /> Restore
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfirmRestore(backup)}
+                  disabled={!!restoring}
+                  className="text-primary hover:text-primary"
+                >
+                  {restoring === backup.id ? (
+                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 mr-1" />
+                  )}
+                  Restore
                 </Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive">
-                  <Trash2 className="w-4 h-4" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setConfirmDelete(backup)}
+                  disabled={deleting === backup.id}
+                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                >
+                  {deleting === backup.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
                 </Button>
               </div>
             </GlassCard>
           ))
         )}
       </div>
+
+      <AlertDialog open={!!confirmRestore} onOpenChange={(o) => !o && setConfirmRestore(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restore this backup?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Files inside the archive will overwrite their counterparts in <code>~/.hermes</code>.
+              Other files (not in the backup) are kept. Restart the agent afterwards.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => confirmRestore && restoreBackup(confirmRestore)}>
+              Restore
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this backup?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The archive file will be permanently removed. This can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => confirmDelete && deleteBackup(confirmDelete)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
