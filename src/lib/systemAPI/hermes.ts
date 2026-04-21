@@ -1162,7 +1162,7 @@ model: ${options.model || 'openrouter/auto'}
    */
   async listSkills(): Promise<{
     success: boolean;
-    skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string }>;
+    skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string; requiredSecrets?: string[] }>;
     error?: string;
   }> {
     const script = [
