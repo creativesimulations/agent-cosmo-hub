@@ -974,6 +974,11 @@ export const hermesAPI = {
           if (/^initializing agent\.{0,3}$/i.test(t)) return false;
           if (/^resume this session( with)?:?$/i.test(t)) return false;
           if (/^hermes\s+--resume\b/i.test(t)) return false;
+          // "↻ Resumed session 20260421_171422_bdbc76 (3 user messages, 10 total messages)"
+          if (/^[↻⟳⭯⟲]?\s*resumed session\b/i.test(t)) return false;
+          // "▶ Starting new session ..." or similar lifecycle banners
+          if (/^[▶►▷]?\s*starting (a )?new session\b/i.test(t)) return false;
+          if (/^session id:\s/i.test(t)) return false;
           if (/^duration:\s/i.test(t)) return false;
           if (/^messages:\s/i.test(t)) return false;
           if (/^tokens?:\s/i.test(t)) return false;
