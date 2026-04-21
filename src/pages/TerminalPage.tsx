@@ -12,7 +12,7 @@ interface TerminalLine {
 }
 
 const WELCOME: TerminalLine[] = [
-  { type: "system", content: "Ainoval Terminal — runs commands in your real shell." },
+  { type: "system", content: "Ronbot Terminal — runs commands in your real shell." },
   { type: "system", content: "Type 'help' for built-ins, or any shell command (e.g. 'hermes status', 'ls ~/.hermes')." },
   { type: "system", content: "─".repeat(60) },
 ];

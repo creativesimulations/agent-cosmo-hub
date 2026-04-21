@@ -13,9 +13,9 @@ try {
   console.warn('[secrets] keytar unavailable, falling back to safeStorage:', e.message);
 }
 
-const KEYCHAIN_SERVICE = 'Ainoval';
+const KEYCHAIN_SERVICE = 'Ronbot';
 // Encrypted secrets store (used when keytar is unavailable)
-const SAFESTORAGE_FILE = path.join(os.homedir(), '.ainoval', 'secrets.enc');
+const SAFESTORAGE_FILE = path.join(os.homedir(), '.ronbot', 'secrets.enc');
 
 // Dedupe a PATH-style string while preserving order. Windows PATHs grow
 // huge over time (especially when this app is restarted), and Node's spawn
@@ -466,7 +466,7 @@ ipcMain.handle('secrets-materialize-env', async (_event, envPath) => {
 
     const content =
       (preserved ? preserved + '\n' : '') +
-      '# ─── Managed by Ainoval (do not edit by hand) ───\n' +
+      '# ─── Managed by Ronbot (do not edit by hand) ───\n' +
       managed + '\n';
 
     await fs.promises.writeFile(target, content, 'utf-8');

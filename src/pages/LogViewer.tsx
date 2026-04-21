@@ -100,7 +100,7 @@ const LogViewer = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `ainoval-agent-logs-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`;
+    a.download = `ronbot-agent-logs-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
