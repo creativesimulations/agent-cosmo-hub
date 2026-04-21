@@ -569,15 +569,41 @@ ipcMain.handle('secrets-migrate-from-env', async (_event, envPath) => {
   }
 });
 
+// Renderer toggles "Keep agent running when window is closed" — when ON we
+// hide to tray on close instead of quitting. When OFF, we destroy the tray
+// and quit on the next window close.
+ipcMain.handle('set-run-in-background', async (_event, enabled) => {
+  runInBackground = !!enabled;
+  if (!runInBackground && tray) {
+    try { tray.destroy(); } catch { /* best effort */ }
+    tray = null;
+  }
+  return { success: true, runInBackground };
+});
+
+// Force-quit from the renderer (used by the "Quit Ronbot" Settings button).
+ipcMain.handle('quit-app', async () => {
+  isQuittingForReal = true;
+  app.quit();
+  return { success: true };
+});
+
 // ─── App Lifecycle ────────────────────────────────────────────
+
+app.on('before-quit', () => { isQuittingForReal = true; });
 
 app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    else showMainWindow();
   });
 });
 
 app.on('window-all-closed', () => {
+  // When run-in-background is on, the main window only ever hides — so this
+  // handler won't fire. If the user explicitly closed everything (e.g. tray
+  // "Quit"), respect platform conventions.
+  if (runInBackground && !isQuittingForReal) return;
   if (process.platform !== 'darwin') app.quit();
 });
