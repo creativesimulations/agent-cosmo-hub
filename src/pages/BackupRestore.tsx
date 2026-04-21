@@ -230,13 +230,19 @@ const BackupRestore = () => {
 
   const exportBackup = async (backup: Backup) => {
     // Reveal in OS file manager — works on Win/Mac/Linux.
-    const cmd =
-      navigator.platform.startsWith("Win")
-        ? `explorer.exe /select,${sh(backup.fullPath.replace(/\//g, "\\"))}`
-        : navigator.platform.startsWith("Mac")
-        ? `open -R ${sh(backup.fullPath)}`
-        : `xdg-open ${sh(backupDir)}`;
-    await systemAPI.runCommand(cmd);
+    if (isWindows) {
+      // backup.fullPath is /mnt/c/... — convert back to C:\... for explorer.
+      const m = backup.fullPath.match(/^\/mnt\/([a-z])\/(.*)$/);
+      const winPath = m
+        ? `${m[1].toUpperCase()}:\\${m[2].replace(/\//g, "\\")}`
+        : backupDir;
+      const arg = backup.id ? `/select,${winPath}` : winPath;
+      await systemAPI.runCommand(`explorer.exe ${arg}`);
+    } else if (navigator.platform.startsWith("Mac")) {
+      await systemAPI.runCommand(wrapBash(`open -R ${sh(backup.fullPath || backupDirPosix)}`, false));
+    } else {
+      await systemAPI.runCommand(wrapBash(`xdg-open ${sh(backupDirPosix)}`, false));
+    }
     toast.info("Opened backup folder", { description: backupDir });
   };
 
