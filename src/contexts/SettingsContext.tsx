@@ -26,7 +26,7 @@ export interface AppSettings {
   autoCheckUpdates: boolean;
 }
 
-const STORAGE_KEY = "ainoval-settings-v1";
+const STORAGE_KEY = "ronbot-settings-v1";
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: "dark",

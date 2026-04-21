@@ -35,11 +35,11 @@ const stageScript = async (
   if (!isElectron()) return null;
   const platform = await coreAPI.getPlatform();
   const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  const fileName = `ainoval-${tag}-${stamp}.sh`;
+  const fileName = `ronbot-${tag}-${stamp}.sh`;
 
   if (platform.isWindows) {
-    // Write under %USERPROFILE%\.ainoval\tmp, then translate to /mnt/<drive>/...
-    const dir = `${platform.homeDir}\\.ainoval\\tmp`;
+    // Write under %USERPROFILE%\.ronbot\tmp, then translate to /mnt/<drive>/...
+    const dir = `${platform.homeDir}\\.ronbot\\tmp`;
     const writePath = `${dir}\\${fileName}`;
     await coreAPI.mkdir(dir);
     const wrote = await coreAPI.writeFile(writePath, script);
@@ -150,7 +150,7 @@ const writeHermesFile = async (
   // that just copies it into place and chmods.
   if (platform.isWindows) {
     const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    const winTmpDir = `${platform.homeDir}\\.ainoval\\tmp`;
+    const winTmpDir = `${platform.homeDir}\\.ronbot\\tmp`;
     const winTmpFile = `${winTmpDir}\\write-${stamp}.dat`;
     await coreAPI.mkdir(winTmpDir);
     const wrote = await coreAPI.writeFile(winTmpFile, content);
@@ -409,7 +409,7 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
   const managed = secretEntries.map(([key, value]) => `${key}=${quoteEnvValue(value)}`).join('\n');
   const sections = [
     preserved,
-    managed ? '# ─── Managed by Ainoval (do not edit by hand) ───' : '',
+    managed ? '# ─── Managed by Ronbot (do not edit by hand) ───' : '',
     managed,
   ].filter(Boolean);
 

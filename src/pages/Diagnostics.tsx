@@ -152,7 +152,7 @@ const Diagnostics = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `ainoval-diagnostics-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`;
+    a.download = `ronbot-diagnostics-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };

@@ -85,7 +85,7 @@ const BackupRestore = () => {
     void (async () => {
       const p = await systemAPI.getPlatform();
       setHomeDir(p.homeDir);
-      const dir = `${p.homeDir}/.ainoval-backups`;
+      const dir = `${p.homeDir}/.ronbot-backups`;
       setBackupDir(dir);
       await systemAPI.mkdir(dir);
       void loadBackups(dir);
@@ -146,7 +146,7 @@ const BackupRestore = () => {
       .join(" ");
 
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const name = `ainoval-backup-${stamp}`;
+    const name = `ronbot-backup-${stamp}`;
     const archive = `${backupDir}/${name}.tar.gz`;
 
     setCreateProgress(40);
@@ -242,7 +242,7 @@ const BackupRestore = () => {
             Backup & Restore
           </h1>
           <p className="text-sm text-muted-foreground">
-            Snapshots of <code className="text-xs">~/.hermes</code> stored in <code className="text-xs">{backupDir || "~/.ainoval-backups"}</code>
+            Snapshots of <code className="text-xs">~/.hermes</code> stored in <code className="text-xs">{backupDir || "~/.ronbot-backups"}</code>
           </p>
         </div>
         <Button variant="ghost" size="sm" onClick={() => loadBackups()} disabled={refreshing}>

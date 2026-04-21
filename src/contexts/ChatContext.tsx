@@ -17,8 +17,8 @@ import { handleAgentReplyArrived } from "@/lib/notify";
  *      whenever a reply lands while the user is viewing another route.
  */
 
-const CHAT_STORAGE_KEY = "ainoval-agent-chat-history-v2";
-const SESSION_STORAGE_KEY = "ainoval-agent-chat-session-id-v1";
+const CHAT_STORAGE_KEY = "ronbot-agent-chat-history-v2";
+const SESSION_STORAGE_KEY = "ronbot-agent-chat-session-id-v1";
 
 export interface ChatMessage {
   id: string;

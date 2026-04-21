@@ -164,7 +164,7 @@ export const secretsStore = {
         if (!t) { preservedLines.push(line); continue; }
         if (t.startsWith('#')) {
           // Skip our own managed-block marker so it doesn't accumulate.
-          if (/Managed by Ainoval/i.test(t)) continue;
+          if (/Managed by Ronbot/i.test(t)) continue;
           preservedLines.push(line);
           continue;
         }
@@ -183,14 +183,14 @@ export const secretsStore = {
       .join('\n');
     const content =
       (preservedLines.length ? preservedLines.join('\n').replace(/\n+$/, '') + '\n' : '') +
-      '# ─── Managed by Ainoval (do not edit by hand) ───\n' +
+      '# ─── Managed by Ronbot (do not edit by hand) ───\n' +
       managedBlock + '\n';
 
     // 4. Write the content. On Windows, stage via Windows temp + `wsl cp`
     //    to sidestep cmd.exe quoting bugs entirely.
     if (platform.isWindows) {
       const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-      const winTmpDir = `${platform.homeDir}\\.ainoval\\tmp`;
+      const winTmpDir = `${platform.homeDir}\\.ronbot\\tmp`;
       const winTmpFile = `${winTmpDir}\\env-${stamp}.dat`;
       await coreAPI.mkdir(winTmpDir);
       const wrote = await coreAPI.writeFile(winTmpFile, content);

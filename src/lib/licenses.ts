@@ -47,7 +47,7 @@ export const UPGRADES: Upgrade[] = [
     tagline: 'Talk to your agent from any Discord server or DM.',
     description:
       "Discord setup requires creating a developer application, configuring intents, and inviting a bot — fiddly for non-technical users. This upgrade unlocks a guided wizard that does it in under 5 minutes, plus lifetime updates.",
-    buyUrl: 'https://ainoval.com/upgrades/discord', // TODO: replace with real URL
+    buyUrl: 'https://ronbot.com/upgrades/discord', // TODO: replace with real URL
     priceLabel: 'One-time · $19',
   },
 ];
@@ -167,4 +167,4 @@ export const removeLicenseKey = async (upgradeId: string): Promise<boolean> =>
 
 /** Convenience for the "Buy" button. */
 export const buyUrl = (upgradeId: string): string =>
-  getUpgrade(upgradeId)?.buyUrl ?? 'https://ainoval.com';
+  getUpgrade(upgradeId)?.buyUrl ?? 'https://ronbot.com';

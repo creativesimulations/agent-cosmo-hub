@@ -7,7 +7,7 @@ import { useSettings } from "@/contexts/SettingsContext";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
 
-const LAST_CHECK_KEY = "ainoval-update-last-check-v1";
+const LAST_CHECK_KEY = "ronbot-update-last-check-v1";
 const AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 h
 
 const UpdateManager = () => {
