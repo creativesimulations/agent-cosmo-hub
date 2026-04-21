@@ -64,8 +64,23 @@ const formatBytes = (b: number) => {
 const formatDate = (d: Date) =>
   d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-/** Quote a path for shell. */
+/** Quote a path for POSIX shell. */
 const sh = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
+
+/** Convert a Windows path (C:\Users\X\foo) to a WSL-mounted path (/mnt/c/Users/X/foo). */
+const toPosixPath = (p: string): string => {
+  const m = p.match(/^([A-Za-z]):[\\/](.*)$/);
+  if (!m) return p.replace(/\\/g, "/");
+  return `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, "/")}`;
+};
+
+/** Wrap a bash script so it runs through WSL on Windows, native bash elsewhere. */
+const wrapBash = (script: string, isWindows: boolean): string => {
+  // base64-encode to avoid every layer of quoting (cmd.exe, wsl, bash).
+  const b64 = btoa(unescape(encodeURIComponent(script)));
+  const decode = `echo ${b64} | base64 -d | bash`;
+  return isWindows ? `wsl bash -lc "${decode}"` : `bash -lc '${decode}'`;
+};
 
 const BackupRestore = () => {
   const [backups, setBackups] = useState<Backup[]>([]);
