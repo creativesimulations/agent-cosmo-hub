@@ -11,7 +11,7 @@ import {
   Home,
   MessageSquare,
   FileText,
-  FileCode,
+  
   RefreshCw,
   Archive,
   Activity,

@@ -18,7 +18,7 @@ import {
   Play,
   History,
   Network,
-  Sparkles,
+  
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Input } from "@/components/ui/input";
