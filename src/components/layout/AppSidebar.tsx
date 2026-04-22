@@ -66,7 +66,7 @@ const AppSidebar = () => {
   const { unreadCount, isStreaming } = useChat();
 
   return (
-    <aside className="w-[220px] min-h-screen glass-strong flex flex-col border-r border-white/10">
+    <aside className="w-[220px] min-h-screen glass-strong flex flex-col border-r border-white/10 relative z-30">
       {/* Logo */}
       <div className="p-5 border-b border-white/5 flex items-center justify-between">
         <NavLink to="/" className="flex items-center gap-2.5">
