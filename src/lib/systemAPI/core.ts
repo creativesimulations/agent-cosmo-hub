@@ -79,7 +79,11 @@ export const coreAPI = {
 
     if (isElectron()) {
       return new Promise<CommandResult>((resolve) => {
-        const { id, promise } = window.electronAPI!.runCommandStream(cmd, options);
+      // Strip non-serializable keys (functions) before sending across IPC —
+      // Electron's structured-clone will throw "An object could not be cloned"
+      // if any value is a function.
+      const { onStreamId: _stripped, ...ipcOptions } = options ?? {};
+      const { id, promise } = window.electronAPI!.runCommandStream(cmd, ipcOptions);
         // Surface the streamId so the caller (e.g. ChatContext) can hold it
         // and use it to call killStream() if the user clicks Stop.
         try { options?.onStreamId?.(id); } catch { /* swallow */ }
