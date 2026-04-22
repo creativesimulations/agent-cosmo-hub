@@ -180,6 +180,10 @@ const AgentChat = () => {
             {messages.map((msg) => (
               <motion.div
                 key={msg.id}
+                ref={(el) => {
+                  if (el) messageRefs.current.set(msg.id, el);
+                  else messageRefs.current.delete(msg.id);
+                }}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 className={cn("flex gap-3 group", msg.role === "user" && "flex-row-reverse")}
