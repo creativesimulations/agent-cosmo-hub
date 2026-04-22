@@ -22,7 +22,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   killStream: (streamId) => ipcRenderer.invoke('kill-stream', streamId),
 
   // Background mode + tray
-  setRunInBackground: (enabled)
+  setRunInBackground: (enabled) => ipcRenderer.invoke('set-run-in-background', enabled),
+  setAgentRunningState: (running) => ipcRenderer.invoke('set-agent-running-state', running),
+  quitApp: () => ipcRenderer.invoke('quit-app'),
 
   // Platform detection
   getPlatform: () => ipcRenderer.invoke('get-platform'),
