@@ -14,6 +14,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { systemAPI } from "@/lib/systemAPI";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
+import AgentPowerCard from "@/components/dashboard/AgentPowerCard";
 
 /** Parse `hermes status` output into a flat key/value map. */
 const parseStatusOutput = (stdout: string) => {
@@ -164,7 +165,10 @@ const Dashboard = () => {
         </div>
       </div>
 
+      <AgentPowerCard />
+
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+
         {[
           { label: "Status", value: metrics.status, icon: Activity, accent: "text-foreground" },
           {
