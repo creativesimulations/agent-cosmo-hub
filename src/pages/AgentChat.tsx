@@ -2,7 +2,7 @@ import { useRef, useEffect, useState } from "react";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { useChat } from "@/contexts/ChatContext";
 import { motion } from "framer-motion";
-import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw, Square, Clock } from "lucide-react";
+import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw, Square, Clock, Network, ShieldAlert } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -27,6 +27,7 @@ const AgentChat = () => {
     queuedCount,
     unreadCount,
     sessionId,
+    liveSubAgentCount,
     sendMessage,
     stop,
     deleteMessage,
@@ -120,6 +121,17 @@ const AgentChat = () => {
                 <Clock className="w-3 h-3" />
                 {queuedCount} queued
               </span>
+            )}
+            {liveSubAgentCount > 0 && (
+              <button
+                type="button"
+                onClick={() => { window.location.hash = "#/subagents"; }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/15 border border-accent/30 text-accent text-[11px] hover:bg-accent/25 transition-colors"
+                title="Click to open the Sub-agents tab"
+              >
+                <Network className="w-3 h-3" />
+                {liveSubAgentCount} sub-agent{liveSubAgentCount === 1 ? "" : "s"} working…
+              </button>
             )}
           </p>
         </div>
@@ -258,6 +270,27 @@ const AgentChat = () => {
                       <AlertCircle className="w-3 h-3 mr-1" />
                       Open Diagnostics
                     </Button>
+                  )}
+                  {msg.permissionMismatch && (
+                    <div className="mt-2 p-2 rounded-md border border-warning/40 bg-warning/10 text-[11px] flex items-start gap-2">
+                      <ShieldAlert className="w-3.5 h-3.5 text-warning shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="text-foreground/90">
+                          The agent reported a {msg.permissionMismatch.kind === "internet" ? "no-internet" : "no-permission"} error,
+                          but Ronbot's permission for{" "}
+                          <span className="font-semibold capitalize">{msg.permissionMismatch.kind}</span> is set to{" "}
+                          <span className="font-semibold">{msg.permissionMismatch.agentSetting}</span>.
+                          The permissions block may not have been applied to the agent.
+                        </p>
+                        <button
+                          type="button"
+                          className="text-warning hover:underline"
+                          onClick={() => { window.location.hash = "#/diagnostics"; }}
+                        >
+                          Open Diagnostics →
+                        </button>
+                      </div>
+                    </div>
                   )}
                   {msg.diagnostics && (msg.missingKey || msg.materializeFailed || msg.content.startsWith("Error") || msg.content.startsWith("Failed")) && (
                     <details className="mt-2 text-[11px] text-muted-foreground/70">
