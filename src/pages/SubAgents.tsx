@@ -279,6 +279,38 @@ const SubAgents = () => {
         )}
       </section>
 
+      {/* Failed */}
+      {failed.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <XCircle className="w-4 h-4 text-destructive" />
+            Failed / denied
+            <Badge variant="destructive" className="ml-1">{failed.length}</Badge>
+          </h2>
+          <div className="grid gap-3">
+            {failed.map((sa) => (
+              <GlassCard key={sa.id} className="space-y-2 border-destructive/30">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <XCircle className="w-4 h-4 text-destructive mt-1 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-foreground break-words">{sa.goal}</p>
+                      {sa.reason && (
+                        <p className="text-xs text-destructive/80 mt-1 break-words">{sa.reason}</p>
+                      )}
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
+                        <span>Failed {formatRelative(sa.failedAt)}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <StatusBadge status="offline" label="failed" />
+                </div>
+              </GlassCard>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Recent */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
