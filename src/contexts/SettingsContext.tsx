@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { systemAPI } from "@/lib/systemAPI";
 
 /**
@@ -80,13 +80,78 @@ const applyTheme = (mode: ThemeMode) => {
   root.style.colorScheme = resolved;
 };
 
+// Disk mirror — packaged Electron's file:// localStorage can get wiped on
+// upgrades/rebuilds, so we also persist settings to ~/.ronbot/settings.json
+// and re-hydrate from there on launch when localStorage is empty.
+const DISK_SETTINGS_PATH = ".ronbot/settings.json";
+
+const resolveSettingsDiskPath = async (): Promise<string | null> => {
+  if (typeof window === "undefined" || !window.electronAPI) return null;
+  try {
+    const platform = await window.electronAPI.getPlatform();
+    const sep = platform.isWindows ? "\\" : "/";
+    return `${platform.homeDir}${sep}${DISK_SETTINGS_PATH.replace(/\//g, sep)}`;
+  } catch {
+    return null;
+  }
+};
+
 export const SettingsProvider = ({ children }: { children: ReactNode }) => {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
+  // Tracks whether we've finished the one-shot disk hydration so we don't
+  // overwrite the disk file with localStorage defaults before we've checked
+  // for a richer disk copy.
+  const hydratedFromDiskRef = useRef(false);
 
-  // Persist + apply theme on every change.
+  // One-shot disk hydration: if localStorage was empty/missing and disk has a
+  // saved copy, restore it. Runs once on mount.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.electronAPI) {
+      hydratedFromDiskRef.current = true;
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const fullPath = await resolveSettingsDiskPath();
+      if (!fullPath) { hydratedFromDiskRef.current = true; return; }
+      const result = await window.electronAPI!.readFile(fullPath).catch(() => null);
+      if (!cancelled && result?.success && result.content) {
+        try {
+          const parsed = JSON.parse(result.content);
+          if (parsed && typeof parsed === "object") {
+            const raw = window.localStorage.getItem(STORAGE_KEY);
+            // localStorage already has a saved copy → it was written by this
+            // same session, prefer it. Otherwise restore from disk and merge
+            // over defaults so newly-added keys still get a value.
+            if (!raw) setSettings({ ...DEFAULT_SETTINGS, ...parsed });
+          }
+        } catch { /* corrupt file — ignore */ }
+      }
+      hydratedFromDiskRef.current = true;
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Persist on every change to BOTH localStorage and the disk mirror.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    const serialized = JSON.stringify(settings);
+    try { window.localStorage.setItem(STORAGE_KEY, serialized); } catch { /* */ }
+
+    // Skip the disk write until we've checked for an existing disk copy,
+    // otherwise we'd clobber it with defaults on first paint.
+    if (window.electronAPI && hydratedFromDiskRef.current) {
+      void (async () => {
+        const fullPath = await resolveSettingsDiskPath();
+        if (!fullPath) return;
+        try {
+          const sep = fullPath.includes("\\") ? "\\" : "/";
+          const parent = fullPath.substring(0, fullPath.lastIndexOf(sep));
+          if (parent) await window.electronAPI!.mkdir(parent);
+        } catch { /* best effort */ }
+        await window.electronAPI!.writeFile(fullPath, serialized).catch(() => { /* best effort */ });
+      })();
+    }
   }, [settings]);
 
   useEffect(() => {
