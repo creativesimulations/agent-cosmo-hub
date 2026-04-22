@@ -80,6 +80,9 @@ export const systemAPI = {
   setSkillEnabled: hermesAPI.setSkillEnabled.bind(hermesAPI),
   listSubAgents: hermesAPI.listSubAgents.bind(hermesAPI),
   materializeEnv: hermesAPI.materializeEnv.bind(hermesAPI),
+  syncPermissions: hermesAPI.syncPermissions.bind(hermesAPI),
+  enableHermesFileLogging: hermesAPI.enableFileLogging.bind(hermesAPI),
+  readPermissionsBlock: hermesAPI.readPermissionsBlock.bind(hermesAPI),
 };
 
 export default systemAPI;
