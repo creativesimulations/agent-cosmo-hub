@@ -48,9 +48,7 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
       window.localStorage.setItem(AGENT_RUNNING_KEY, String(on));
     } catch { /* best effort */ }
     // Update tray tooltip to reflect agent state
-    if (window.electronAPI?.setAgentRunningState) {
-      window.electronAPI.setAgentRunningState(on).catch(() => {});
-    }
+    void systemAPI.setAgentRunningState(on);
   }, []);
 
   const refresh = useCallback(async () => {
