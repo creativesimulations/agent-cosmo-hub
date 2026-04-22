@@ -127,7 +127,7 @@ const SubAgents = () => {
     return () => window.clearInterval(id);
   }, [agentConnected, refresh]);
 
-  const totalCount = useMemo(() => active.length + recent.length, [active, recent]);
+  const totalCount = useMemo(() => active.length + recent.length + failed.length, [active, recent, failed]);
 
   if (!agentConnected) {
     return (
