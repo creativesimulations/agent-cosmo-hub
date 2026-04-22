@@ -3,24 +3,19 @@ import { systemAPI } from "@/lib/systemAPI";
 import { useSettings } from "./SettingsContext";
 
 const AGENT_RUNNING_KEY = "ronbot-agent-running-v1";
+const CONNECTED_SINCE_KEY = "ronbot-connected-since-v1";
 
 interface AgentConnectionValue {
-  /** True when we've verified the agent is installed and configured locally. */
   connected: boolean;
-  /** Friendly status string for UI display. */
   status: "unknown" | "checking" | "connected" | "disconnected";
-  /** Last detection error, if any. */
   error: string | null;
-  /** Path / location where the local agent lives. */
   location: string | null;
-  /** Whether the agent is "turned on" — chat commands are accepted. */
   agentRunning: boolean;
-  /** Toggle the agent on/off. */
   setAgentRunning: (on: boolean) => void;
-  /** Re-run detection on demand. */
   refresh: () => Promise<boolean>;
-  /** Mark connected immediately (used right after a successful install). */
   markConnected: (location?: string) => void;
+  /** Epoch ms when the current connection began (null if not connected). */
+  connectedSince: number | null;
 }
 
 const AgentConnectionContext = createContext<AgentConnectionValue | null>(null);
@@ -39,8 +34,36 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
       return true;
     }
   });
+  const [connectedSince, setConnectedSince] = useState<number | null>(() => {
+    try {
+      const raw = window.localStorage.getItem(CONNECTED_SINCE_KEY);
+      const n = raw ? parseInt(raw, 10) : NaN;
+      return Number.isFinite(n) ? n : null;
+    } catch {
+      return null;
+    }
+  });
   const inFlight = useRef(false);
   const autoStartedRef = useRef(false);
+
+  // Stamp / clear the connection start time so uptime survives tab switches
+  // and route changes. Lives at the app-wide context level (not inside
+  // Dashboard) so the timer keeps ticking even when the Dashboard tab has
+  // never been opened in this session.
+  useEffect(() => {
+    if (connected) {
+      if (connectedSince === null) {
+        const now = Date.now();
+        try { window.localStorage.setItem(CONNECTED_SINCE_KEY, String(now)); } catch { /* ignore */ }
+        setConnectedSince(now);
+      }
+    } else {
+      if (connectedSince !== null) {
+        try { window.localStorage.removeItem(CONNECTED_SINCE_KEY); } catch { /* ignore */ }
+        setConnectedSince(null);
+      }
+    }
+  }, [connected, connectedSince]);
 
   const setAgentRunning = useCallback((on: boolean) => {
     setAgentRunningState(on);
@@ -118,7 +141,7 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
   }, []);
 
   return (
-    <AgentConnectionContext.Provider value={{ connected, status, error, location, agentRunning, setAgentRunning, refresh, markConnected }}>
+    <AgentConnectionContext.Provider value={{ connected, status, error, location, agentRunning, setAgentRunning, refresh, markConnected, connectedSince }}>
       {children}
     </AgentConnectionContext.Provider>
   );
