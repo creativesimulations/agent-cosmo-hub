@@ -83,49 +83,39 @@ function buildCommandEnv(extraEnv = {}) {
 }
 
 // ─── App-wide state for run-in-background / tray ───────────
-// `runInBackground` is toggled by the renderer via IPC whenever the user
-// flips the Settings switch. When true, closing the main window hides it
-// to a tray icon instead of quitting — that way `hermes chat`/gateways
-// (and queued chat replies) keep running in the background.
+// `runInBackground` toggles whether closing the window hides to tray vs
+// quits. `agentRunning` mirrors the renderer's Dashboard ON/OFF switch so
+// the tray menu can both reflect and control that state from anywhere.
 let runInBackground = false;
+let agentRunning = true;
 let mainWindow = null;
 let tray = null;
 let isQuittingForReal = false;
 
-function ensureTray() {
-  if (tray) return tray;
-  // Platform-appropriate tray icon. On macOS the icon should be a small
-  // template image so it tints with the menu bar (light/dark). We render an
-  // empty image as a safe default; if a packaged icon is bundled, it will
-  // be used instead. On Win/Linux a full-color image is preferred but the
-  // empty placeholder still produces a working tray entry.
-  let icon = nativeImage.createEmpty();
-  try {
-    const iconPath = path.join(__dirname, '..', 'public', 'tray-icon.png');
-    if (fs.existsSync(iconPath)) {
-      icon = nativeImage.createFromPath(iconPath);
-      if (process.platform === 'darwin') {
-        // Resize for macOS menu bar (16-22pt). Mark as template so macOS
-        // tints it automatically based on the active menu bar theme.
-        icon = icon.resize({ width: 18, height: 18 });
-        icon.setTemplateImage(true);
-      }
-    }
-  } catch { /* fall back to empty image */ }
-
-  // Tray creation can fail on Linux compositors without an AppIndicator
-  // (some Wayland/GNOME setups). If it throws, fall back to keeping the
-  // window visible — better than silently making the app unreachable.
-  try {
-    tray = new Tray(icon);
-  } catch (e) {
-    console.warn('[tray] failed to create tray icon:', e.message);
-    tray = null;
-    return null;
-  }
-  tray.setToolTip('Ronbot — agent running in background');
+function rebuildTrayMenu() {
+  if (!tray) return;
+  const statusLabel = agentRunning ? '● Agent: ON' : '○ Agent: OFF';
+  const toggleLabel = agentRunning ? 'Turn Agent Off' : 'Turn Agent On';
   const menu = Menu.buildFromTemplate([
+    { label: statusLabel, enabled: false },
+    { type: 'separator' },
     { label: 'Open Ronbot', click: () => showMainWindow() },
+    {
+      label: toggleLabel,
+      click: () => {
+        agentRunning = !agentRunning;
+        // Notify renderer so the Dashboard switch updates in lockstep.
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('agent-running-changed', agentRunning);
+        }
+        rebuildTrayMenu();
+        try {
+          tray.setToolTip(agentRunning
+            ? 'Ronbot — agent ON (running in background)'
+            : 'Ronbot — agent OFF (idle)');
+        } catch { /* best effort */ }
+      },
+    },
     { type: 'separator' },
     {
       label: 'Quit Ronbot (stops the agent)',
@@ -136,6 +126,33 @@ function ensureTray() {
     },
   ]);
   tray.setContextMenu(menu);
+}
+
+function ensureTray() {
+  if (tray) return tray;
+  let icon = nativeImage.createEmpty();
+  try {
+    const iconPath = path.join(__dirname, '..', 'public', 'tray-icon.png');
+    if (fs.existsSync(iconPath)) {
+      icon = nativeImage.createFromPath(iconPath);
+      if (process.platform === 'darwin') {
+        icon = icon.resize({ width: 18, height: 18 });
+        icon.setTemplateImage(true);
+      }
+    }
+  } catch { /* fall back to empty image */ }
+
+  try {
+    tray = new Tray(icon);
+  } catch (e) {
+    console.warn('[tray] failed to create tray icon:', e.message);
+    tray = null;
+    return null;
+  }
+  tray.setToolTip(agentRunning
+    ? 'Ronbot — agent ON (running in background)'
+    : 'Ronbot — agent OFF (idle)');
+  rebuildTrayMenu();
   tray.on('click', () => showMainWindow());
   return tray;
 }
