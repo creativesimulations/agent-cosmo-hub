@@ -27,6 +27,13 @@ export interface AppSettings {
   autoCheckUpdates: boolean;
   /** Keep the agent running when the user closes the app window. */
   runInBackground: boolean;
+  /**
+   * Per-prompt timeout (in seconds) for `hermes chat`. Long agent runs
+   * (sub-agents, multi-tool turns, file generation) can easily exceed the
+   * default 3 min, so we expose this as a user-tunable setting. Range is
+   * enforced in the UI: 60–1800 seconds.
+   */
+  chatTimeoutSec: number;
 }
 
 const STORAGE_KEY = "ronbot-settings-v1";
