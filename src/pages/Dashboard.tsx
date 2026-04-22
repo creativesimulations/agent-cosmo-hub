@@ -62,16 +62,18 @@ const formatElapsed = (ms: number): string => {
 };
 
 const Dashboard = () => {
-  const { connected: agentConnected, location, connectedSince } = useAgentConnection();
+  const { connected: agentConnected, agentRunning, location, connectedSince, frozenUptimeMs } = useAgentConnection();
   const [metrics, setMetrics] = useState({ status: "—", uptime: "—", model: "—" });
   const [, forceTick] = useState(0);
 
   // Tick every second to keep the elapsed-time uptime fresh.
+  // Only tick while the agent is actively running — once it's off the
+  // displayed value should freeze at the last reading.
   useEffect(() => {
-    if (!agentConnected) return;
+    if (!agentConnected || !agentRunning) return;
     const id = window.setInterval(() => forceTick((n) => n + 1), 1000);
     return () => window.clearInterval(id);
-  }, [agentConnected]);
+  }, [agentConnected, agentRunning]);
 
   const loadStatus = useCallback(async () => {
     if (!agentConnected) return;
@@ -160,7 +162,9 @@ const Dashboard = () => {
                 ? metrics.uptime
                 : connectedSince
                   ? formatElapsed(Date.now() - connectedSince)
-                  : "—",
+                  : frozenUptimeMs !== null
+                    ? formatElapsed(frozenUptimeMs)
+                    : "—",
             icon: Clock,
             accent: "text-foreground",
           },

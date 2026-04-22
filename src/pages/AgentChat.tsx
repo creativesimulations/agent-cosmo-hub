@@ -26,6 +26,7 @@ const AgentChat = () => {
     messages,
     isStreaming,
     queuedCount,
+    unreadCount,
     sessionId,
     sendMessage,
     stop,
@@ -36,9 +37,35 @@ const AgentChat = () => {
   } = useChat();
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const didInitialScrollRef = useRef(false);
 
+  // On first mount, jump (no smooth) to the first unread message — or the
+  // last message if everything is already read. After that initial jump,
+  // any new message smoothly scrolls the view to the bottom.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    if (didInitialScrollRef.current) {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+      return;
+    }
+    if (messages.length === 0) return;
+    didInitialScrollRef.current = true;
+    // unreadCount is captured at mount time; markChatViewed runs in the next
+    // effect and will reset it, so read it synchronously here.
+    const targetIndex =
+      unreadCount > 0 && unreadCount <= messages.length
+        ? messages.length - unreadCount
+        : messages.length - 1;
+    const target = messages[targetIndex];
+    const el = target ? messageRefs.current.get(target.id) : null;
+    if (el) {
+      el.scrollIntoView({ behavior: "auto", block: "start" });
+    } else {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "auto" });
+    }
+    // We intentionally only react to messages.length so the initial jump
+    // happens once, even if `unreadCount` updates as a side effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages]);
 
   // The page itself is the "viewed" signal — clear unread badge on mount.
@@ -153,6 +180,10 @@ const AgentChat = () => {
             {messages.map((msg) => (
               <motion.div
                 key={msg.id}
+                ref={(el) => {
+                  if (el) messageRefs.current.set(msg.id, el);
+                  else messageRefs.current.delete(msg.id);
+                }}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 className={cn("flex gap-3 group", msg.role === "user" && "flex-row-reverse")}

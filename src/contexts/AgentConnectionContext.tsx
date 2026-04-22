@@ -4,6 +4,7 @@ import { useSettings } from "./SettingsContext";
 
 const AGENT_RUNNING_KEY = "ronbot-agent-running-v1";
 const CONNECTED_SINCE_KEY = "ronbot-connected-since-v1";
+const FROZEN_UPTIME_KEY = "ronbot-frozen-uptime-v1";
 
 interface AgentConnectionValue {
   connected: boolean;
@@ -14,8 +15,10 @@ interface AgentConnectionValue {
   setAgentRunning: (on: boolean) => void;
   refresh: () => Promise<boolean>;
   markConnected: (location?: string) => void;
-  /** Epoch ms when the current connection began (null if not connected). */
+  /** Epoch ms when the current uptime period began (null if agent is off). */
   connectedSince: number | null;
+  /** Frozen elapsed ms from the last run, shown while agent is off. */
+  frozenUptimeMs: number | null;
 }
 
 const AgentConnectionContext = createContext<AgentConnectionValue | null>(null);
@@ -43,27 +46,44 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
       return null;
     }
   });
+  const [frozenUptimeMs, setFrozenUptimeMs] = useState<number | null>(() => {
+    try {
+      const raw = window.localStorage.getItem(FROZEN_UPTIME_KEY);
+      const n = raw ? parseInt(raw, 10) : NaN;
+      return Number.isFinite(n) ? n : null;
+    } catch {
+      return null;
+    }
+  });
   const inFlight = useRef(false);
   const autoStartedRef = useRef(false);
 
-  // Stamp / clear the connection start time so uptime survives tab switches
-  // and route changes. Lives at the app-wide context level (not inside
-  // Dashboard) so the timer keeps ticking even when the Dashboard tab has
-  // never been opened in this session.
+  // Stamp / clear the uptime start time. The timer should only run while
+  // BOTH the agent is connected (configured) AND the user hasn't switched
+  // the agent off via the Dashboard / tray. When the user turns the agent
+  // off we freeze the elapsed time so the Dashboard can keep showing the
+  // last known uptime instead of resetting to zero.
   useEffect(() => {
-    if (connected) {
+    const shouldRun = connected && agentRunning;
+    if (shouldRun) {
       if (connectedSince === null) {
         const now = Date.now();
         try { window.localStorage.setItem(CONNECTED_SINCE_KEY, String(now)); } catch { /* ignore */ }
         setConnectedSince(now);
+        // Clear any frozen value — we're running fresh now.
+        try { window.localStorage.removeItem(FROZEN_UPTIME_KEY); } catch { /* ignore */ }
+        setFrozenUptimeMs(null);
       }
     } else {
       if (connectedSince !== null) {
+        const elapsed = Date.now() - connectedSince;
+        try { window.localStorage.setItem(FROZEN_UPTIME_KEY, String(elapsed)); } catch { /* ignore */ }
         try { window.localStorage.removeItem(CONNECTED_SINCE_KEY); } catch { /* ignore */ }
+        setFrozenUptimeMs(elapsed);
         setConnectedSince(null);
       }
     }
-  }, [connected, connectedSince]);
+  }, [connected, agentRunning, connectedSince]);
 
   const setAgentRunning = useCallback((on: boolean) => {
     setAgentRunningState(on);
@@ -141,7 +161,7 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
   }, []);
 
   return (
-    <AgentConnectionContext.Provider value={{ connected, status, error, location, agentRunning, setAgentRunning, refresh, markConnected, connectedSince }}>
+    <AgentConnectionContext.Provider value={{ connected, status, error, location, agentRunning, setAgentRunning, refresh, markConnected, connectedSince, frozenUptimeMs }}>
       {children}
     </AgentConnectionContext.Provider>
   );
