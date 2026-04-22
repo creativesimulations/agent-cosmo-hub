@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, Re
 import { systemAPI } from "@/lib/systemAPI";
 import { useSettings } from "./SettingsContext";
 
+const AGENT_RUNNING_KEY = "ronbot-agent-running-v1";
+
 interface AgentConnectionValue {
   /** True when we've verified the agent is installed and configured locally. */
   connected: boolean;
@@ -11,6 +13,10 @@ interface AgentConnectionValue {
   error: string | null;
   /** Path / location where the local agent lives. */
   location: string | null;
+  /** Whether the agent is "turned on" — chat commands are accepted. */
+  agentRunning: boolean;
+  /** Toggle the agent on/off. */
+  setAgentRunning: (on: boolean) => void;
   /** Re-run detection on demand. */
   refresh: () => Promise<boolean>;
   /** Mark connected immediately (used right after a successful install). */
@@ -25,8 +31,27 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
   const [status, setStatus] = useState<AgentConnectionValue["status"]>("unknown");
   const [error, setError] = useState<string | null>(null);
   const [location, setLocation] = useState<string | null>(null);
+  const [agentRunning, setAgentRunningState] = useState<boolean>(() => {
+    try {
+      const stored = window.localStorage.getItem(AGENT_RUNNING_KEY);
+      return stored === null ? true : stored === "true";
+    } catch {
+      return true;
+    }
+  });
   const inFlight = useRef(false);
   const autoStartedRef = useRef(false);
+
+  const setAgentRunning = useCallback((on: boolean) => {
+    setAgentRunningState(on);
+    try {
+      window.localStorage.setItem(AGENT_RUNNING_KEY, String(on));
+    } catch { /* best effort */ }
+    // Notify Electron tray of new state
+    if (window.electronAPI?.isElectron) {
+      window.electronAPI.runCommand?.("echo noop").catch(() => {});
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     if (inFlight.current) return connected;
@@ -34,9 +59,6 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
     setStatus("checking");
     setError(null);
     try {
-      // The local agent is "connected" if its config dir exists. We don't
-      // require a running HTTP server because Hermes is a local CLI, not a
-      // web service.
       const configured = await systemAPI.isConfigured();
       if (configured) {
         setConnected(true);
@@ -72,20 +94,15 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
   }, []);
 
   // Auto-start the agent (background hermes status warm-up) once after
-  // detection if the user enabled it. Hermes is a CLI, not a daemon — there
-  // is no long-running service to launch — but `hermes status` triggers
-  // venv activation and any first-run state migrations so the very first
-  // chat reply isn't slow.
+  // detection if the user enabled it.
   useEffect(() => {
     if (!settings.autoStartAgent || !connected || autoStartedRef.current) return;
     autoStartedRef.current = true;
-    void systemAPI.hermesStatus().catch(() => {
-      /* best-effort warm-up; failures don't affect the UI */
-    });
+    void systemAPI.hermesStatus().catch(() => {});
   }, [settings.autoStartAgent, connected]);
 
   return (
-    <AgentConnectionContext.Provider value={{ connected, status, error, location, refresh, markConnected }}>
+    <AgentConnectionContext.Provider value={{ connected, status, error, location, agentRunning, setAgentRunning, refresh, markConnected }}>
       {children}
     </AgentConnectionContext.Provider>
   );
