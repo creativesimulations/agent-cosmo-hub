@@ -481,12 +481,138 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
   return { success: true, count: secretEntries.length };
 };
 
+// ─── Permissions YAML mirror ──────────────────────────────────────
+// Hermes has its own permission engine. Sub-agents (and many parent
+// actions) consult it directly without ever emitting a Choice prompt to
+// stdout, so intercepting prompts in the parent stream is not enough — we
+// also have to write the user's choices into ~/.hermes/config.yaml so
+// every Hermes process honors them.
+//
+// We splice a managed `permissions:` block into config.yaml between two
+// sentinel comments (same pattern we use for the .env managed block). The
+// rest of the file is left untouched.
+
+const PERMS_BEGIN = '# ─── Managed by Ronbot: permissions (do not edit) ───';
+const PERMS_END = '# ─── End Ronbot permissions ───';
+const LOG_BEGIN = '# ─── Managed by Ronbot: logging (do not edit) ───';
+const LOG_END = '# ─── End Ronbot logging ───';
+
+const stripManagedBlock = (yaml: string, begin: string, end: string): string => {
+  const startIdx = yaml.indexOf(begin);
+  if (startIdx === -1) return yaml;
+  const endIdx = yaml.indexOf(end, startIdx);
+  if (endIdx === -1) return yaml;
+  const after = yaml.slice(endIdx + end.length);
+  // Trim the leading newline of `after` so we don't accumulate blank lines
+  // each time we re-write.
+  return (yaml.slice(0, startIdx).replace(/\n+$/, '') + after.replace(/^\n+/, '\n')).replace(/\n{3,}/g, '\n\n');
+};
+
+const yamlList = (items: string[]): string => {
+  if (!items.length) return '[]';
+  return '\n' + items.map((p) => `    - "${p.replace(/"/g, '\\"')}"`).join('\n');
+};
+
+/** Write the current PermissionsConfig into ~/.hermes/config.yaml.
+ *  Idempotent: only the managed block is touched. */
+export const writeHermesPermissions = async (
+  perms: PermissionsConfig,
+): Promise<{ success: boolean; error?: string }> => {
+  const cfg = await readHermesFile(HERMES_CONFIG);
+  const existing = cfg.success && cfg.content ? cfg.content : 'model: openrouter/auto\n';
+  const stripped = stripManagedBlock(existing, PERMS_BEGIN, PERMS_END).replace(/\n+$/, '');
+
+  const block = [
+    PERMS_BEGIN,
+    'permissions:',
+    `  shell: ${perms.shell}`,
+    `  shell_allow_readonly: ${perms.shellAllowReadOnly ? 'true' : 'false'}`,
+    `  file_read: ${perms.fileRead}`,
+    `  file_write: ${perms.fileWrite}`,
+    `  file_read_scope: ${perms.fileReadScope}`,
+    `  file_write_scope: ${perms.fileWriteScope}`,
+    `  internet: ${perms.internet}`,
+    `  script: ${perms.script}`,
+    `  subagent: ${perms.subAgent}`,
+    `  default: ${perms.fallback}`,
+    `  allowed_paths:${yamlList(perms.allowedFolders)}`,
+    `  blocked_paths:${yamlList(perms.blockedFolders)}`,
+    PERMS_END,
+  ].join('\n');
+
+  const next = `${stripped}\n\n${block}\n`;
+  const w = await writeHermesFile(HERMES_CONFIG, next, '600');
+  agentLogs.push({
+    source: 'system',
+    level: w.success ? 'info' : 'error',
+    summary: w.success
+      ? `permissions synced to ~/.hermes/config.yaml (shell=${perms.shell}, internet=${perms.internet}, subagent=${perms.subAgent})`
+      : 'failed to sync permissions to ~/.hermes/config.yaml',
+  });
+  return w.success
+    ? { success: true }
+    : { success: false, error: 'Failed to write config.yaml permissions block' };
+};
+
+/** Enable file logging in Hermes config so the SubAgents tab can read events. */
+export const enableHermesFileLogging = async (): Promise<{ success: boolean }> => {
+  const cfg = await readHermesFile(HERMES_CONFIG);
+  const existing = cfg.success && cfg.content ? cfg.content : 'model: openrouter/auto\n';
+  const stripped = stripManagedBlock(existing, LOG_BEGIN, LOG_END).replace(/\n+$/, '');
+  const block = [
+    LOG_BEGIN,
+    'logging:',
+    '  file: ~/.hermes/logs/agent.log',
+    '  level: info',
+    LOG_END,
+  ].join('\n');
+  const next = `${stripped}\n\n${block}\n`;
+  const w = await writeHermesFile(HERMES_CONFIG, next, '600');
+  agentLogs.push({
+    source: 'system',
+    level: w.success ? 'info' : 'error',
+    summary: w.success ? 'enabled Hermes file logging (~/.hermes/logs/agent.log)' : 'failed to enable Hermes file logging',
+  });
+  // Make sure the directory exists so the agent can actually open the file.
+  if (w.success) {
+    await runHermesShell('mkdir -p "$HOME/.hermes/logs"', { timeout: 5000 }).catch(() => undefined);
+  }
+  return { success: w.success };
+};
+
+/** Read the active managed permissions block (for Diagnostics display). */
+export const readHermesPermissionsBlock = async (): Promise<string | null> => {
+  const cfg = await readHermesFile(HERMES_CONFIG);
+  if (!cfg.success || !cfg.content) return null;
+  const startIdx = cfg.content.indexOf(PERMS_BEGIN);
+  if (startIdx === -1) return null;
+  const endIdx = cfg.content.indexOf(PERMS_END, startIdx);
+  if (endIdx === -1) return null;
+  return cfg.content.slice(startIdx, endIdx + PERMS_END.length);
+};
+
 /** Hermes Agent installation, configuration, and lifecycle */
 export const hermesAPI = {
   /** Force-write secrets to ~/.hermes/.env and verify. Used by Diagnostics
    *  page and the Secrets tab "Sync to agent" button. */
   async materializeEnv() {
     return materializeHermesEnv();
+  },
+
+  /** Sync the user's Permissions panel into ~/.hermes/config.yaml so every
+   *  Hermes process (including sub-agents) honors the same rules. */
+  async syncPermissions(perms: PermissionsConfig) {
+    return writeHermesPermissions(perms);
+  },
+
+  /** Turn on file logging so the SubAgents tab can show delegation activity. */
+  async enableFileLogging() {
+    return enableHermesFileLogging();
+  },
+
+  /** Read the active managed permissions block (for Diagnostics). */
+  async readPermissionsBlock() {
+    return readHermesPermissionsBlock();
   },
   /** Install the agent using the official install script.
    *  On Windows we always run inside WSL because hermes-agent is not published
