@@ -85,9 +85,15 @@ function buildCommandEnv(extraEnv = {}) {
 // ─── App-wide state for run-in-background / tray ───────────
 // `runInBackground` toggles whether closing the window hides to tray vs
 // quits. Defaults to TRUE so closing the window keeps the agent alive in
-// the system tray — the renderer can flip it off via Settings.
-// `agentRunning` mirrors the renderer's
-
+// the system tray. The renderer can flip it off via Settings.
+// `agentRunning` mirrors the renderer's Dashboard ON/OFF switch so the
+// tray menu can both reflect and control that state from anywhere.
+let runInBackground = true;
+let agentRunning = true;
+let mainWindow = null;
+let tray = null;
+let isQuittingForReal = false;
+let hasShownTrayHint = false;
 function rebuildTrayMenu() {
   if (!tray) return;
   const statusLabel = agentRunning ? '● Agent: ON' : '○ Agent: OFF';
