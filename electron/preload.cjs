@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Background mode + tray
   setRunInBackground: (enabled) => ipcRenderer.invoke('set-run-in-background', enabled),
+  setAgentRunningState: (running) => ipcRenderer.invoke('set-agent-running-state', running),
   quitApp: () => ipcRenderer.invoke('quit-app'),
 
   // Platform detection
@@ -48,6 +49,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   secretsDelete: (key) => ipcRenderer.invoke('secrets-delete', key),
   secretsMaterializeEnv: (envPath) => ipcRenderer.invoke('secrets-materialize-env', envPath),
   secretsMigrateFromEnv: (envPath) => ipcRenderer.invoke('secrets-migrate-from-env', envPath),
+
+  // Listen for agent running state changes from tray menu
+  onAgentRunningChanged: (callback) => {
+    const handler = (_event, running) => callback(running);
+    ipcRenderer.on('agent-running-changed', handler);
+    return () => ipcRenderer.removeListener('agent-running-changed', handler);
+  },
 
   // Check if running in Electron
   isElectron: true,

@@ -148,6 +148,13 @@ export const coreAPI = {
     return { success: true };
   },
 
+  async setAgentRunningState(running: boolean): Promise<{ success: boolean }> {
+    if (isElectron() && window.electronAPI?.setAgentRunningState) {
+      return window.electronAPI.setAgentRunningState(running);
+    }
+    return { success: true };
+  },
+
   async quitApp(): Promise<void> {
     if (isElectron() && window.electronAPI?.quitApp) {
       await window.electronAPI.quitApp();

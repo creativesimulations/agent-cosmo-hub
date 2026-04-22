@@ -318,6 +318,19 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const sendMessage = useCallback(async (promptText: string) => {
     const trimmed = promptText.trim();
     if (!trimmed) return;
+    // Gate on the user-facing on/off switch. Read directly from localStorage
+    // so ChatContext doesn't need to depend on AgentConnectionContext.
+    try {
+      const running = window.localStorage.getItem("ronbot-agent-running-v1");
+      if (running === "false") {
+        toast({
+          title: "Agent is turned off",
+          description: "Turn the agent on from the Dashboard to send messages.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } catch { /* best effort */ }
 
     // Reserve a user message + an assistant placeholder. They appear instantly
     // even if the worker is still chewing through earlier prompts; the
