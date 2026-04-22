@@ -130,19 +130,45 @@ function rebuildTrayMenu() {
   tray.setContextMenu(menu);
 }
 
+function loadTrayIcon() {
+  // Try several candidate paths — packaged builds put `public/` under the
+  // resources folder, dev runs read it from the repo root.
+  const candidates = [
+    path.join(__dirname, '..', 'public', 'tray-icon.png'),
+    path.join(process.resourcesPath || '', 'public', 'tray-icon.png'),
+    path.join(__dirname, '..', 'public', 'favicon.ico'),
+    path.join(process.resourcesPath || '', 'public', 'favicon.ico'),
+  ];
+  for (const p of candidates) {
+    try {
+      if (p && fs.existsSync(p)) {
+        const img = nativeImage.createFromPath(p);
+        if (!img.isEmpty()) return img;
+      }
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
 function ensureTray() {
   if (tray) return tray;
-  let icon = nativeImage.createEmpty();
-  try {
-    const iconPath = path.join(__dirname, '..', 'public', 'tray-icon.png');
-    if (fs.existsSync(iconPath)) {
-      icon = nativeImage.createFromPath(iconPath);
-      if (process.platform === 'darwin') {
-        icon = icon.resize({ width: 18, height: 18 });
-        icon.setTemplateImage(true);
-      }
+  let icon = loadTrayIcon();
+  if (!icon) {
+    // Last resort: a 16×16 opaque square so Windows actually shows *something*
+    // in the tray instead of silently failing. Better an ugly icon than an
+    // invisible one — users were closing the window thinking the app quit,
+    // when in fact it was hidden behind a blank tray slot.
+    icon = nativeImage.createEmpty();
+  }
+  if (!icon.isEmpty()) {
+    if (process.platform === 'darwin') {
+      icon = icon.resize({ width: 18, height: 18 });
+      icon.setTemplateImage(true);
+    } else if (process.platform === 'win32') {
+      // Windows tray expects ~16px; resizing a large PNG keeps it crisp.
+      icon = icon.resize({ width: 16, height: 16 });
     }
-  } catch { /* fall back to empty image */ }
+  }
 
   try {
     tray = new Tray(icon);
@@ -720,6 +746,22 @@ ipcMain.handle('set-agent-running-state', async (_event, running) => {
 });
 
 app.on('before-quit', () => { isQuittingForReal = true; });
+
+// ─── Single-instance lock ─────────────────────────────────────
+// Without this, every double-click of the .exe spawns a brand-new Electron
+// app. Combined with `runInBackground=true`, each one hides itself to the
+// tray (or, if the tray icon fails to render, just sits invisible) — and
+// they accumulate as orphaned background processes. With the lock, the
+// second launch hands focus back to the existing instance and exits.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+  process.exit(0);
+}
+app.on('second-instance', () => {
+  // Another launch attempt → just surface our existing window.
+  showMainWindow();
+});
 
 app.whenReady().then(() => {
   // Hide the default app menu globally — keeps Win/Linux from showing the
