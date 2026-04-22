@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { systemAPI } from "@/lib/systemAPI";
+import { DEFAULT_PERMISSIONS, type PermissionsConfig } from "@/lib/permissions";
 
 /**
  * App-wide user preferences. Persisted to localStorage, applied immediately
