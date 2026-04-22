@@ -68,6 +68,8 @@ export interface ChatMessage {
   missingKey?: { provider: string; envVar: string };
   diagnostics?: string;
   materializeFailed?: boolean;
+  /** Inline warning when agent reported denial despite a Ronbot Allow setting. */
+  permissionMismatch?: { kind: "internet" | "subAgent" | "shell" | "fileWrite" | "fileRead" | "script"; agentSetting: string };
 }
 
 interface QueueItem {
