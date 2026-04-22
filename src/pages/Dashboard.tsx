@@ -12,8 +12,7 @@ import {
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
-import { systemAPI } from "@/lib/systemAPI";
-import { useAgentConnection } from "@/contexts/AgentConnectionContext";
+import { systemAPI } from
 
 /** Parse `hermes status` output into a flat key/value map. */
 const parseStatusOutput = (stdout: string) => {
