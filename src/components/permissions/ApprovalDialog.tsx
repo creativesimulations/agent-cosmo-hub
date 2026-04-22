@@ -56,10 +56,12 @@ const ApprovalDialog = () => {
           </div>
 
           <div className="rounded-lg border border-white/10 bg-background/40 p-3">
-            <p className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">What</p>
-            <p className="text-sm text-foreground font-mono break-all whitespace-pre-wrap">
-              {pending.target}
+            <p className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">
+              What {pending.target.includes("\n") && <span className="normal-case tracking-normal text-muted-foreground/70">(agent output preceding the prompt)</span>}
             </p>
+            <pre className="text-xs text-foreground font-mono break-all whitespace-pre-wrap max-h-64 overflow-auto leading-relaxed">
+              {pending.target}
+            </pre>
           </div>
 
           {pending.reason && (
