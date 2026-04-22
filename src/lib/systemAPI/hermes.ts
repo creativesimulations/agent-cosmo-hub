@@ -854,7 +854,8 @@ export const hermesAPI = {
     onOutput?: CommandOutputHandler,
     resumeId?: string,
     onStreamId?: (id: string) => void,
-  ): Promise<CommandResult & { reply?: string; diagnostics?: string; sessionId?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean }> {
+    timeoutMs?: number,
+  ): Promise<CommandResult & { reply?: string; diagnostics?: string; sessionId?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean; timedOut?: boolean }> {
     const startedAt = Date.now();
     agentLogs.push({
       source: 'chat',
@@ -935,7 +936,12 @@ export const hermesAPI = {
         : 'hermes chat -q "$PROMPT" </dev/null 2>&1',
     ].join('\n');
 
-    const result = await runHermesShell(script, { timeout: 180000, onStreamId }, onOutput);
+    // Use the caller-provided timeout when given (the UI exposes this as
+    // a setting), otherwise fall back to a generous 10 min default. A short
+    // 3 min ceiling used to silently kill any multi-step / sub-agent run.
+    const effectiveTimeout = Math.max(60_000, timeoutMs ?? 600_000);
+    const result = await runHermesShell(script, { timeout: effectiveTimeout, onStreamId }, onOutput);
+    const timedOut = !result.success && (result.code === 124 || /timed out after/i.test(result.stderr || ''));
 
     // Clean the reply: strip ANSI codes and any leftover banner/status lines.
     const stripAnsi = (s: string) =>
@@ -1056,8 +1062,26 @@ export const hermesAPI = {
       }
     }
 
-    const finalReply = cleaned || stripAnsi(result.stdout || '').trim();
+    let finalReply = cleaned || stripAnsi(result.stdout || '').trim();
     const finalDiag = diagnostics || (mat.success ? '' : `materializeEnv failed: ${mat.error || 'unknown'}`);
+
+    // Replace whatever partial output we got with a clear, actionable
+    // message when the underlying process was killed by the timeout. The
+    // raw "Command timed out after 600000ms" line is technically true but
+    // unhelpful — the user wants to know what to do about it.
+    if (timedOut) {
+      const seconds = Math.round(effectiveTimeout / 1000);
+      finalReply = [
+        `⏱ The agent didn't finish within the ${seconds}s chat timeout.`,
+        '',
+        'Long multi-step tasks (sub-agents, file generation, repeated tool calls)',
+        'can take many minutes. You can raise this limit in Settings → Sessions',
+        '& history → "Per-prompt timeout".',
+        '',
+        'The partial output (if any) was discarded so it isn\'t mistaken for a',
+        'completed answer.',
+      ].join('\n');
+    }
 
     if (missingKey) {
       agentLogs.push({
@@ -1065,6 +1089,14 @@ export const hermesAPI = {
         level: 'error',
         summary: `Missing API key: ${missingKey.envVar} (${missingKey.provider})`,
         detail: finalDiag,
+        durationMs: Date.now() - startedAt,
+      });
+    } else if (timedOut) {
+      agentLogs.push({
+        source: 'chat',
+        level: 'error',
+        summary: `Chat timed out after ${Math.round(effectiveTimeout / 1000)}s — raise "Per-prompt timeout" in Settings`,
+        detail: truncateForLog([finalDiag, result.stderr].filter(Boolean).join('\n')),
         durationMs: Date.now() - startedAt,
       });
     } else if (!result.success) {
@@ -1091,6 +1123,7 @@ export const hermesAPI = {
       diagnostics: finalDiag,
       sessionId,
       missingKey,
+      timedOut,
     };
   },
 

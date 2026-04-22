@@ -433,6 +433,30 @@ const SettingsPage = () => {
             />
           </div>
 
+          <div className="flex items-start justify-between gap-4 py-3 border-b border-border/40">
+            <div className="space-y-0.5 min-w-0 flex-1">
+              <Label className="text-sm font-medium text-foreground">Per-prompt timeout (seconds)</Label>
+              <p className="text-xs text-muted-foreground">
+                How long to wait for the agent to finish a single prompt before giving up.
+                Multi-step / sub-agent runs can take many minutes — raise this to 900–1800
+                if you're seeing "agent didn't finish" errors. Min 60, max 1800.
+              </p>
+            </div>
+            <Input
+              type="number"
+              min={60}
+              max={1800}
+              step={30}
+              value={settings.chatTimeoutSec}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                if (!Number.isFinite(n)) return;
+                update({ chatTimeoutSec: Math.min(1800, Math.max(60, n)) });
+              }}
+              className="w-28 bg-background/50 border-border"
+            />
+          </div>
+
           <div className="flex flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={handleWipeSession} className="flex-1">
               <Network className="w-4 h-4 mr-2" />
