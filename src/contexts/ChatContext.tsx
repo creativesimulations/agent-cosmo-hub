@@ -137,6 +137,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [queuedCount, setQueuedCount] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [draft, setDraft] = useState("");
   // Honor "Auto-resume last session" — when disabled, we drop any persisted id
   // so the next message starts a fresh Hermes session.
   const [sessionId, setSessionId] = useState<string | null>(() =>
