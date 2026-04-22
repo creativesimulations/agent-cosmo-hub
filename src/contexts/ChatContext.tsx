@@ -23,6 +23,37 @@ import { handleAgentReplyArrived } from "@/lib/notify";
 const CHAT_STORAGE_KEY = "ronbot-agent-chat-history-v2";
 const SESSION_STORAGE_KEY = "ronbot-agent-chat-session-id-v1";
 
+/**
+ * Disk mirror for chat history. Electron's `file://` localStorage has been
+ * historically unreliable in packaged builds (it can get wiped on certain
+ * upgrades or when the userData dir gets relocated), so we ALSO persist to
+ * a JSON file under the user's home directory. localStorage stays as the
+ * fast/sync primary; the disk file is a recovery mirror that gets
+ * re-hydrated into localStorage on launch if localStorage is empty.
+ */
+const DISK_HISTORY_PATH = ".ronbot/chat-history.json";
+const DISK_SESSION_PATH = ".ronbot/chat-session-id.txt";
+
+const resolveHomePath = async (relative: string): Promise<string | null> => {
+  if (typeof window === "undefined" || !window.electronAPI) return null;
+  try {
+    const platform = await window.electronAPI.getPlatform();
+    const sep = platform.isWindows ? "\\" : "/";
+    return `${platform.homeDir}${sep}${relative.replace(/\//g, sep)}`;
+  } catch {
+    return null;
+  }
+};
+
+const ensureParentDir = async (fullPath: string): Promise<void> => {
+  if (typeof window === "undefined" || !window.electronAPI) return;
+  try {
+    const sep = fullPath.includes("\\") ? "\\" : "/";
+    const parent = fullPath.substring(0, fullPath.lastIndexOf(sep));
+    if (parent) await window.electronAPI.mkdir(parent);
+  } catch { /* best effort */ }
+};
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
