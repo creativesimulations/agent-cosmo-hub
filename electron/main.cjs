@@ -679,7 +679,21 @@ ipcMain.handle('quit-app', async () => {
   return { success: true };
 });
 
-// ─── App Lifecycle ────────────────────────────────────────────
+// Renderer mirrors the Dashboard ON/OFF agent switch here so the tray menu
+// stays in sync. We only persist state + refresh the menu — the actual
+// "is the agent allowed to chat" gate lives in the renderer.
+ipcMain.handle('set-agent-running-state', async (_event, running) => {
+  agentRunning = !!running;
+  if (tray) {
+    rebuildTrayMenu();
+    try {
+      tray.setToolTip(agentRunning
+        ? 'Ronbot — agent ON (running in background)'
+        : 'Ronbot — agent OFF (idle)');
+    } catch { /* best effort */ }
+  }
+  return { success: true };
+});
 
 app.on('before-quit', () => { isQuittingForReal = true; });
 
