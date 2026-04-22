@@ -334,6 +334,48 @@ const Diagnostics = () => {
         </GlassCard>
       </div>
 
+      {/* Permissions block sent to the agent */}
+      <GlassCard className="p-4 space-y-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-primary" />
+            Permissions sent to agent
+            <span className="text-[11px] font-normal text-muted-foreground">
+              (managed block in ~/.hermes/config.yaml)
+            </span>
+          </h2>
+          <Button onClick={handleSyncPerms} disabled={syncingPerms} variant="ghost" size="sm">
+            <RefreshCw className={cn("w-3 h-3 mr-1", syncingPerms && "animate-spin")} />
+            Re-read block
+          </Button>
+        </div>
+        {permsBlock ? (
+          <pre className="p-2 rounded bg-background/40 border border-white/5 text-[11px] font-mono whitespace-pre-wrap max-h-72 overflow-auto">
+            {permsBlock}
+          </pre>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            No managed permissions block found. It's written automatically on the first chat message,
+            or you can sync it manually from Settings → Permissions.
+          </p>
+        )}
+      </GlassCard>
+
+      {/* Debug toggles */}
+      <GlassCard className="p-4 space-y-3">
+        <h2 className="text-sm font-semibold">Debug toggles</h2>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm text-foreground">Log every prompt-detection event</p>
+            <p className="text-[11px] text-muted-foreground">
+              When ON, every approval-prompt match is recorded in the agent log. Use this to confirm
+              the parser is firing on real prompts.
+            </p>
+          </div>
+          <Switch checked={debugPrompts} onCheckedChange={toggleDebugPrompts} />
+        </div>
+      </GlassCard>
+
       {/* Command log */}
       <GlassCard className="p-4 space-y-3">
         <div className="flex items-center justify-between">
