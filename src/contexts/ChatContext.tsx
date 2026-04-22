@@ -173,15 +173,68 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const stopRequestedRef = useRef(false);
 
   // Persist messages, capped to settings.maxStoredMessages (0 = unlimited).
+  // Mirror to BOTH localStorage (fast/sync) and a disk file under ~/.ronbot
+  // (resilient to localStorage wipes in packaged Electron builds).
   useEffect(() => {
     if (typeof window === "undefined") return;
     const max = settings.maxStoredMessages;
     const toStore = max > 0 && messages.length > max ? messages.slice(-max) : messages;
-    window.localStorage.setItem(
-      CHAT_STORAGE_KEY,
-      JSON.stringify(toStore.map((m) => ({ ...m, timestamp: m.timestamp.toISOString() }))),
+    const serialized = JSON.stringify(
+      toStore.map((m) => ({ ...m, timestamp: m.timestamp.toISOString() })),
     );
+    try { window.localStorage.setItem(CHAT_STORAGE_KEY, serialized); } catch { /* quota / private mode */ }
+
+    // Mirror to disk asynchronously — never block the render.
+    if (window.electronAPI) {
+      void (async () => {
+        const full = await resolveHomePath(DISK_HISTORY_PATH);
+        if (!full) return;
+        await ensureParentDir(full);
+        await window.electronAPI!.writeFile(full, serialized).catch(() => { /* best effort */ });
+      })();
+    }
   }, [messages, settings.maxStoredMessages]);
+
+  // On mount, if localStorage was empty (fresh install OR localStorage was
+  // wiped by Electron) but the disk mirror has history, hydrate from disk.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.electronAPI) return;
+    if (messages.length > 0) return; // localStorage already gave us history
+    let cancelled = false;
+    void (async () => {
+      const histPath = await resolveHomePath(DISK_HISTORY_PATH);
+      if (!histPath) return;
+      const result = await window.electronAPI!.readFile(histPath).catch(() => null);
+      if (cancelled || !result?.success || !result.content) return;
+      try {
+        const parsed = JSON.parse(result.content) as Array<Omit<ChatMessage, "timestamp"> & { timestamp: string }>;
+        if (!Array.isArray(parsed) || parsed.length === 0) return;
+        setMessages(parsed.map((m) => ({
+          ...m,
+          timestamp: new Date(m.timestamp),
+          streaming: false,
+          queued: false,
+        })));
+      } catch { /* corrupt file — ignore */ }
+
+      // Also try to recover session id if localStorage lost it.
+      if (!sessionIdRef.current) {
+        const sidPath = await resolveHomePath(DISK_SESSION_PATH);
+        if (!sidPath) return;
+        const sidRes = await window.electronAPI!.readFile(sidPath).catch(() => null);
+        if (sidRes?.success && sidRes.content) {
+          const sid = sidRes.content.trim();
+          if (sid) {
+            sessionIdRef.current = sid;
+            setSessionId(sid);
+          }
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // Run exactly once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // When the limit is lowered, trim in-memory list to match.
   useEffect(() => {
@@ -192,13 +245,22 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.maxStoredMessages]);
 
-  // Persist session id so app restarts can keep talking to the same Hermes session.
+  // Persist session id (localStorage + disk mirror) so app restarts can keep
+  // talking to the same agent session.
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (sessionId) {
-      window.localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+      try { window.localStorage.setItem(SESSION_STORAGE_KEY, sessionId); } catch { /* */ }
     } else {
-      window.localStorage.removeItem(SESSION_STORAGE_KEY);
+      try { window.localStorage.removeItem(SESSION_STORAGE_KEY); } catch { /* */ }
+    }
+    if (window.electronAPI) {
+      void (async () => {
+        const full = await resolveHomePath(DISK_SESSION_PATH);
+        if (!full) return;
+        await ensureParentDir(full);
+        await window.electronAPI!.writeFile(full, sessionId || "").catch(() => { /* best effort */ });
+      })();
     }
   }, [sessionId]);
 
