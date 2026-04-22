@@ -8,6 +8,9 @@ import { InstallProvider } from "./contexts/InstallContext";
 import { AgentConnectionProvider } from "./contexts/AgentConnectionContext";
 import { ChatProvider } from "./contexts/ChatContext";
 import { SettingsProvider } from "./contexts/SettingsContext";
+import { PermissionsProvider } from "./contexts/PermissionsContext";
+import ApprovalDialog from "./components/permissions/ApprovalDialog";
+import PermissionsBridge from "./components/permissions/PermissionsBridge";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import SubAgents from "./pages/SubAgents";
@@ -34,6 +37,9 @@ const App = () => (
       <Sonner />
       <HashRouter>
         <SettingsProvider>
+        <PermissionsProvider>
+        <PermissionsBridge />
+        <ApprovalDialog />
         <AgentConnectionProvider>
         <InstallProvider>
         <ChatProvider>
@@ -62,6 +68,7 @@ const App = () => (
         </ChatProvider>
         </InstallProvider>
         </AgentConnectionProvider>
+        </PermissionsProvider>
         </SettingsProvider>
       </HashRouter>
     </TooltipProvider>

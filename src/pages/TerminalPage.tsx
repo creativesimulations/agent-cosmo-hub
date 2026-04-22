@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Terminal as TerminalIcon, Send, Loader2, Trash2 } from "lucide-react";
+import { Terminal as TerminalIcon, Send, Loader2, Trash2, Shield } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { systemAPI } from "@/lib/systemAPI";
 import { isElectron } from "@/lib/systemAPI";
+import { usePermissions } from "@/contexts/PermissionsContext";
+import PermissionEventBubble from "@/components/permissions/PermissionEventBubble";
 
 interface TerminalLine {
   type: "input" | "output" | "error" | "system";
@@ -32,6 +34,7 @@ Useful examples:
   cat ~/.hermes/config.yaml`;
 
 const TerminalPage = () => {
+  const { events: permissionEvents } = usePermissions();
   const [lines, setLines] = useState<TerminalLine[]>(WELCOME);
   const [input, setInput] = useState("");
   const [running, setRunning] = useState(false);
@@ -193,6 +196,19 @@ const TerminalPage = () => {
           <Trash2 className="w-4 h-4 mr-1" /> Clear
         </Button>
       </div>
+
+      {permissionEvents.length > 0 && (
+        <GlassCard className="p-3 max-h-40 overflow-y-auto space-y-1.5">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+            <Shield className="w-3.5 h-3.5" />
+            <span className="font-medium">Agent activity</span>
+            <span className="text-muted-foreground/60">({permissionEvents.length} recent)</span>
+          </div>
+          {permissionEvents.slice(0, 8).map((e) => (
+            <PermissionEventBubble key={e.id} event={e} />
+          ))}
+        </GlassCard>
+      )}
 
       <GlassCard className="flex-1 flex flex-col overflow-hidden p-0 min-h-0">
         <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40 shrink-0">

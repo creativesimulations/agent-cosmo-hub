@@ -289,6 +289,12 @@ ipcMain.handle('run-command', async (_event, cmd, options = {}) => {
   });
 });
 
+// Track in-flight streamed children by streamId so the renderer can write
+// to their stdin (e.g. to answer Hermes' interactive permission prompts:
+// `[o]nce | [s]ession | [a]lways | [d]eny`). Without this we'd close stdin
+// up-front and every prompt would silently auto-deny on timeout.
+const liveStreams = new Map();
+
 // Run a command with streaming output
 ipcMain.handle('run-command-stream', async (event, cmd, options = {}) => {
   return new Promise((resolve) => {
@@ -300,8 +306,14 @@ ipcMain.handle('run-command-stream', async (event, cmd, options = {}) => {
       shell: shellOverride,
       env: buildCommandEnv(options.env || {}),
       windowsHide: true,
+      // Keep stdin OPEN as a pipe so the renderer can answer interactive
+      // prompts via `write-stream-stdin`. Previously we let the OS close it
+      // implicitly which made tools like `hermes chat` hang on their
+      // approval prompts and timeout.
+      stdio: ['pipe', 'pipe', 'pipe'],
     };
     const child = spawn(cmd, [], opts);
+    if (streamId) liveStreams.set(streamId, child);
     let settled = false;
     let timedOut = false;
 
@@ -356,6 +368,7 @@ ipcMain.handle('run-command-stream', async (event, cmd, options = {}) => {
     });
 
     child.on('close', (code) => {
+      if (streamId) liveStreams.delete(streamId);
       event.sender.send('command-output', {
         streamId,
         type: 'exit',
@@ -365,6 +378,7 @@ ipcMain.handle('run-command-stream', async (event, cmd, options = {}) => {
     });
 
     child.on('error', (err) => {
+      if (streamId) liveStreams.delete(streamId);
       event.sender.send('command-output', {
         streamId,
         type: 'stderr',
@@ -373,6 +387,37 @@ ipcMain.handle('run-command-stream', async (event, cmd, options = {}) => {
       finish({ success: false, code: 1 });
     });
   });
+});
+
+// Write a chunk of data to the stdin of a live streamed command. The
+// renderer uses this to answer Hermes' interactive permission prompts
+// (e.g. writing "a\n" for "always allow"). Without this the agent's
+// stdin would be closed and every prompt would silently auto-deny.
+ipcMain.handle('write-stream-stdin', async (_event, streamId, data) => {
+  const child = liveStreams.get(streamId);
+  if (!child || !child.stdin || child.stdin.destroyed) {
+    return { success: false, error: 'stream not found or stdin closed' };
+  }
+  try {
+    child.stdin.write(typeof data === 'string' ? data : String(data ?? ''));
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Kill a live streamed command (used by chat "Stop"). Resolves the
+// run-command-stream promise via the normal close handler.
+ipcMain.handle('kill-stream', async (_event, streamId) => {
+  const child = liveStreams.get(streamId);
+  if (!child) return { success: false, error: 'stream not found' };
+  try {
+    child.kill('SIGTERM');
+    setTimeout(() => { try { if (!child.killed) child.kill('SIGKILL'); } catch { /* */ } }, 1500);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 // Get platform info

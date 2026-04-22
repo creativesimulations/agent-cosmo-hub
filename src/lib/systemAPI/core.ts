@@ -140,6 +140,13 @@ export const coreAPI = {
     return { success: false, error: 'not in electron' };
   },
 
+  async writeStreamStdin(streamId: string, data: string): Promise<{ success: boolean; error?: string }> {
+    if (isElectron() && window.electronAPI?.writeStreamStdin) {
+      return window.electronAPI.writeStreamStdin(streamId, data);
+    }
+    return { success: false, error: 'not in electron' };
+  },
+
   async setRunInBackground(enabled: boolean): Promise<{ success: boolean }> {
     if (isElectron() && window.electronAPI?.setRunInBackground) {
       const r = await window.electronAPI.setRunInBackground(enabled);

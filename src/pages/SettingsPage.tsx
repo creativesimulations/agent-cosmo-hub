@@ -47,6 +47,7 @@ import {
 } from "@/lib/notify";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import PermissionsPanel from "@/components/permissions/PermissionsPanel";
 
 /** A labelled toggle row — keeps the page readable when there are 8+ settings. */
 const ToggleRow = ({
@@ -404,7 +405,9 @@ const SettingsPage = () => {
         </div>
       </GlassCard>
 
-      {/* ─── Sessions & history ────────────────────────────────── */}
+      {/* ─── Permissions ───────────────────────────────────────── */}
+      <PermissionsPanel />
+
       <GlassCard className="p-6 space-y-4">
         <div className="flex items-center gap-2">
           <History className="w-5 h-5 text-primary" />

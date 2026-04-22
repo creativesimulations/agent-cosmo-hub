@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Kill an in-flight streamed command (used by chat "Stop")
   killStream: (streamId) => ipcRenderer.invoke('kill-stream', streamId),
 
+  // Write a chunk of data to the stdin of a running streamed command.
+  // Used by the Permissions approval dialog to answer Hermes' interactive
+  // [o]nce / [s]ession / [a]lways / [d]eny prompts.
+  writeStreamStdin: (streamId, data) => ipcRenderer.invoke('write-stream-stdin', streamId, data),
+
   // Background mode + tray
   setRunInBackground: (enabled) => ipcRenderer.invoke('set-run-in-background', enabled),
   setAgentRunningState: (running) => ipcRenderer.invoke('set-agent-running-state', running),
