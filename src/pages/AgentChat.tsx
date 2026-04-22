@@ -20,7 +20,6 @@ import {
 import { cn } from "@/lib/utils";
 
 const AgentChat = () => {
-  const [input, setInput] = useState("");
   const { connected: agentConnected } = useAgentConnection();
   const {
     messages,
@@ -34,7 +33,11 @@ const AgentChat = () => {
     clearAll,
     markChatViewed,
     startNewSession,
+    draft,
+    setDraft,
   } = useChat();
+  const input = draft;
+  const setInput = setDraft;
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
