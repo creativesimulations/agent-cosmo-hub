@@ -61,29 +61,12 @@ const formatElapsed = (ms: number): string => {
   return `${s}s`;
 };
 
+const UPTIME_KEY = "ronbot-connected-since-v1";
+
 const Dashboard = () => {
   const { connected: agentConnected, location } = useAgentConnection();
   const [metrics, setMetrics] = useState({ status: "—", uptime: "—", model: "—" });
-  const connectedSinceRef = useRef<number | null>(null);
-  const [, forceTick] = useState(0);
-
-  // Track when this session's agent connection began so uptime is meaningful
-  // even when the optional messaging gateway isn't running.
-  useEffect(() => {
-    if (agentConnected && connectedSinceRef.current === null) {
-      connectedSinceRef.current = Date.now();
-    } else if (!agentConnected) {
-      connectedSinceRef.current = null;
-    }
-  }, [agentConnected]);
-
-  // Tick every second to keep the elapsed-time uptime fresh.
-  useEffect(() => {
-    if (!agentConnected) return;
-    const id = window.setInterval(() => forceTick((n) => n + 1), 1000);
-    return () => window.clearInterval(id);
-  }, [agentConnected]);
-
+  // Persist the agent connection start timestamp so uptime survives route
   const loadStatus = useCallback(async () => {
     if (!agentConnected) return;
     const [statusResult, configResult] = await Promise.all([
