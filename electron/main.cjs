@@ -289,6 +289,12 @@ ipcMain.handle('run-command', async (_event, cmd, options = {}) => {
   });
 });
 
+// Track in-flight streamed children by streamId so the renderer can write
+// to their stdin (e.g. to answer Hermes' interactive permission prompts:
+// `[o]nce | [s]ession | [a]lways | [d]eny`). Without this we'd close stdin
+// up-front and every prompt would silently auto-deny on timeout.
+const liveStreams = new Map();
+
 // Run a command with streaming output
 ipcMain.handle('run-command-stream', async (event, cmd, options = {}) => {
   return new Promise((resolve) => {
@@ -300,8 +306,14 @@ ipcMain.handle('run-command-stream', async (event, cmd, options = {}) => {
       shell: shellOverride,
       env: buildCommandEnv(options.env || {}),
       windowsHide: true,
+      // Keep stdin OPEN as a pipe so the renderer can answer interactive
+      // prompts via `write-stream-stdin`. Previously we let the OS close it
+      // implicitly which made tools like `hermes chat` hang on their
+      // approval prompts and timeout.
+      stdio: ['pipe', 'pipe', 'pipe'],
     };
     const child = spawn(cmd, [], opts);
+    if (streamId) liveStreams.set(streamId, child);
     let settled = false;
     let timedOut = false;
 
