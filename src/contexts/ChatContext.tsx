@@ -376,6 +376,16 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             setSessionId(result.sessionId);
           }
 
+          // Detect "agent claims it can't do X" while Ronbot says Allow.
+          const perms = settingsRef.current.permissions;
+          const lower = (reply || "").toLowerCase();
+          let permissionMismatch: ChatMessage["permissionMismatch"];
+          if (perms.internet === "allow" && /(no internet|cannot access the internet|internet access (?:denied|blocked|disabled)|not (?:allowed|permitted) to (?:access|use) the (?:internet|web|network))/i.test(lower)) {
+            permissionMismatch = { kind: "internet", agentSetting: "Allow" };
+          } else if (perms.subAgent === "allow" && /(cannot (?:spawn|delegate)|sub[- ]?agent.*denied|delegation.*denied|not (?:allowed|permitted) to (?:spawn|delegate))/i.test(lower)) {
+            permissionMismatch = { kind: "subAgent", agentSetting: "Allow" };
+          }
+
           setMessages((prev) =>
             prev.map((m) =>
               m.id === item.placeholderId
@@ -392,6 +402,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     missingKey: matFailed ? undefined : result.missingKey,
                     diagnostics: result.diagnostics,
                     materializeFailed: matFailed,
+                    permissionMismatch,
                   }
                 : m,
             ),
