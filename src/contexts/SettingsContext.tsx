@@ -53,6 +53,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // Keep the agent alive when the window is closed by default — closing the
   // window now hides to the system tray instead of quitting outright.
   runInBackground: true,
+  // 10 minutes — generous enough for multi-step / sub-agent runs without
+  // hanging the UI forever if the agent truly stalls.
+  chatTimeoutSec: 600,
 };
 
 interface SettingsContextValue {
