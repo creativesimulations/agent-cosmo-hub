@@ -25,6 +25,10 @@ type EventRecorder = (event: Omit<PermissionEvent, "id" | "timestamp">) => void;
 
 let handler: Handler | null = null;
 let recorder: EventRecorder | null = null;
+let debugLogPromptDetection = false;
+
+export const setDebugPromptDetection = (on: boolean) => { debugLogPromptDetection = on; };
+export const isDebugPromptDetection = () => debugLogPromptDetection;
 
 export const registerApprovalHandler = (h: Handler) => { handler = h; };
 export const unregisterApprovalHandler = (h: Handler) => { if (handler === h) handler = null; };
