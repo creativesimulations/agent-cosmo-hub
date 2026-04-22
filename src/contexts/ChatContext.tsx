@@ -68,6 +68,8 @@ export interface ChatMessage {
   missingKey?: { provider: string; envVar: string };
   diagnostics?: string;
   materializeFailed?: boolean;
+  /** Inline warning when agent reported denial despite a Ronbot Allow setting. */
+  permissionMismatch?: { kind: "internet" | "subAgent" | "shell" | "fileWrite" | "fileRead" | "script"; agentSetting: string };
 }
 
 interface QueueItem {
@@ -86,6 +88,8 @@ interface ChatContextValue {
   queuedCount: number;
   unreadCount: number;
   sessionId: string | null;
+  /** Number of sub-agent spawns observed in the in-flight streamed reply. */
+  liveSubAgentCount: number;
   sendMessage: (prompt: string) => Promise<void>;
   /** Interrupt the active reply and discard everything still queued. */
   stop: () => Promise<void>;
@@ -138,6 +142,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const [queuedCount, setQueuedCount] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const [draft, setDraft] = useState("");
+  const [liveSubAgentCount, setLiveSubAgentCount] = useState(0);
   // Honor "Auto-resume last session" — when disabled, we drop any persisted id
   // so the next message starts a fresh Hermes session.
   const [sessionId, setSessionId] = useState<string | null>(() =>
@@ -327,12 +332,27 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
 
         try {
           const timeoutMs = Math.max(60, settingsRef.current.chatTimeoutSec || 600) * 1000;
+          // Track sub-agent spawns mentioned in the streamed reply so the
+          // chat header can show a live "N sub-agents working" pill.
+          let liveCount = 0;
+          setLiveSubAgentCount(0);
+          const subAgentRe = /\b(delegate_task|sub[-_ ]?agent\.start|spawn(ed)?\s+(sub[-_ ]?agent|child\s+agent))\b/gi;
+          const onStream = (chunk: { type: string; data?: string }) => {
+            if ((chunk.type === "stdout" || chunk.type === "stderr") && chunk.data) {
+              const matches = chunk.data.match(subAgentRe);
+              if (matches && matches.length) {
+                liveCount += matches.length;
+                setLiveSubAgentCount(liveCount);
+              }
+            }
+          };
           const result = await systemAPI.chatAgent(
             item.prompt,
-            undefined,
+            onStream,
             sessionIdRef.current ?? undefined,
             (id) => { activeStreamIdRef.current = id; },
             timeoutMs,
+            settingsRef.current.permissions,
           );
 
           // Even on success, if Stop fired during the call, treat as cancelled.
@@ -356,6 +376,16 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             setSessionId(result.sessionId);
           }
 
+          // Detect "agent claims it can't do X" while Ronbot says Allow.
+          const perms = settingsRef.current.permissions;
+          const lower = (reply || "").toLowerCase();
+          let permissionMismatch: ChatMessage["permissionMismatch"];
+          if (perms.internet === "allow" && /(no internet|cannot access the internet|internet access (?:denied|blocked|disabled)|not (?:allowed|permitted) to (?:access|use) the (?:internet|web|network))/i.test(lower)) {
+            permissionMismatch = { kind: "internet", agentSetting: "Allow" };
+          } else if (perms.subAgent === "allow" && /(cannot (?:spawn|delegate)|sub[- ]?agent.*denied|delegation.*denied|not (?:allowed|permitted) to (?:spawn|delegate))/i.test(lower)) {
+            permissionMismatch = { kind: "subAgent", agentSetting: "Allow" };
+          }
+
           setMessages((prev) =>
             prev.map((m) =>
               m.id === item.placeholderId
@@ -372,6 +402,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     missingKey: matFailed ? undefined : result.missingKey,
                     diagnostics: result.diagnostics,
                     materializeFailed: matFailed,
+                    permissionMismatch,
                   }
                 : m,
             ),
@@ -404,6 +435,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           if (!onChatPageRef.current) setUnreadCount((n) => n + 1);
         } finally {
           activeStreamIdRef.current = null;
+          setLiveSubAgentCount(0);
         }
       }
     } finally {
@@ -482,6 +514,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         queuedCount,
         unreadCount,
         sessionId,
+        liveSubAgentCount,
         sendMessage,
         stop,
         deleteMessage,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Network, AlertCircle, RefreshCw, Loader2, CheckCircle2, Activity, FileText } from "lucide-react";
+import { Network, AlertCircle, RefreshCw, Loader2, CheckCircle2, Activity, FileText, XCircle, FileWarning } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import StatusBadge from "@/components/ui/StatusBadge";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,14 @@ type RecentSubAgent = {
   completedAt: string;
   durationMs: number;
   summary?: string;
+};
+
+type FailedSubAgent = {
+  id: string;
+  goal: string;
+  startedAt: string;
+  failedAt: string;
+  reason?: string;
 };
 
 const formatDuration = (ms: number) => {
@@ -53,12 +61,13 @@ const SubAgents = () => {
   const { settings } = useSettings();
   const [active, setActive] = useState<ActiveSubAgent[]>([]);
   const [recent, setRecent] = useState<RecentSubAgent[]>([]);
+  const [failed, setFailed] = useState<FailedSubAgent[]>([]);
+  const [loggingDisabled, setLoggingDisabled] = useState(false);
+  const [enablingLog, setEnablingLog] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logPath, setLogPath] = useState<string>("~/.hermes/logs/agent.log");
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
-  // Track which completed-subagent ids we've already alerted on so we don't
-  // re-fire a notification on every 3-second poll.
   const seenCompletedRef = useRef<Set<string>>(new Set());
   const isFirstLoadRef = useRef(true);
 
@@ -82,6 +91,8 @@ const SubAgents = () => {
         } else {
           setActive(res.active);
           setRecent(res.recent);
+          setFailed(res.failed || []);
+          setLoggingDisabled(!!res.loggingDisabled);
           // Diff completions for the "notify on subagent completion" setting.
           // Skip the very first poll after mount so reopening the tab doesn't
           // dump a flood of stale notifications for already-finished work.
@@ -116,7 +127,7 @@ const SubAgents = () => {
     return () => window.clearInterval(id);
   }, [agentConnected, refresh]);
 
-  const totalCount = useMemo(() => active.length + recent.length, [active, recent]);
+  const totalCount = useMemo(() => active.length + recent.length + failed.length, [active, recent, failed]);
 
   if (!agentConnected) {
     return (
@@ -186,6 +197,42 @@ const SubAgents = () => {
         </GlassCard>
       )}
 
+      {loggingDisabled && (
+        <GlassCard className="border-warning/40 bg-warning/5">
+          <div className="flex items-start gap-3">
+            <FileWarning className="w-5 h-5 text-warning mt-0.5 shrink-0" />
+            <div className="space-y-2 flex-1">
+              <p className="text-sm font-medium text-foreground">Hermes file logging is disabled</p>
+              <p className="text-xs text-muted-foreground">
+                The agent log file at <code>{logPath}</code> doesn't exist yet, so we can't show
+                sub-agent details. If sub-agents ran during your last chat, their activity wasn't
+                captured. Enable file logging to start tracking.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={enablingLog}
+                onClick={async () => {
+                  setEnablingLog(true);
+                  try {
+                    await systemAPI.enableHermesFileLogging();
+                    toast({ title: "File logging enabled", description: "New sub-agent activity will appear here." });
+                    await refresh();
+                  } catch (e) {
+                    toast({ title: "Couldn't enable logging", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+                  } finally {
+                    setEnablingLog(false);
+                  }
+                }}
+              >
+                {enablingLog ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <FileText className="w-3.5 h-3.5 mr-1.5" />}
+                Enable file logging
+              </Button>
+            </div>
+          </div>
+        </GlassCard>
+      )}
+
       {/* Active */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
@@ -231,6 +278,38 @@ const SubAgents = () => {
           </div>
         )}
       </section>
+
+      {/* Failed */}
+      {failed.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <XCircle className="w-4 h-4 text-destructive" />
+            Failed / denied
+            <Badge variant="destructive" className="ml-1">{failed.length}</Badge>
+          </h2>
+          <div className="grid gap-3">
+            {failed.map((sa) => (
+              <GlassCard key={sa.id} className="space-y-2 border-destructive/30">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <XCircle className="w-4 h-4 text-destructive mt-1 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-foreground break-words">{sa.goal}</p>
+                      {sa.reason && (
+                        <p className="text-xs text-destructive/80 mt-1 break-words">{sa.reason}</p>
+                      )}
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
+                        <span>Failed {formatRelative(sa.failedAt)}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <StatusBadge status="offline" label="failed" />
+                </div>
+              </GlassCard>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Recent */}
       <section className="space-y-3">

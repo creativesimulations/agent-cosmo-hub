@@ -25,6 +25,10 @@ type EventRecorder = (event: Omit<PermissionEvent, "id" | "timestamp">) => void;
 
 let handler: Handler | null = null;
 let recorder: EventRecorder | null = null;
+let debugLogPromptDetection = false;
+
+export const setDebugPromptDetection = (on: boolean) => { debugLogPromptDetection = on; };
+export const isDebugPromptDetection = () => debugLogPromptDetection;
 
 export const registerApprovalHandler = (h: Handler) => { handler = h; };
 export const unregisterApprovalHandler = (h: Handler) => { if (handler === h) handler = null; };
@@ -49,7 +53,26 @@ export const recordPermissionEvent = (event: Omit<PermissionEvent, "id" | "times
 // describe what the agent was about to do (the command, the file path,
 // etc.) — we capture them as the dialog's "what" body.
 
-export const APPROVAL_PROMPT_RE = /Choice\s*\[\s*o\s*\/\s*s\s*\/\s*a\s*\/\s*D\s*\]\s*:/i;
+// Multiple shapes the agent might emit — different Hermes versions and tool
+// adapters word their prompts differently. We accept any of them as a signal
+// to pop the approval modal.
+export const APPROVAL_PROMPT_PATTERNS: RegExp[] = [
+  /Choice\s*\[\s*o\s*\/\s*s\s*\/\s*a\s*\/\s*D?\s*\]\s*:/i,
+  /\[\s*o\s*\]\s*nce\s*[|/]\s*\[\s*s\s*\]\s*ession\s*[|/]\s*\[\s*a\s*\]\s*lways\s*[|/]\s*\[\s*d\s*\]\s*eny/i,
+  /Approve\??\s*\(\s*o\s*\/\s*s\s*\/\s*a\s*\/\s*d\s*\)/i,
+  /Permission\s+required/i,
+  /Awaiting\s+approval/i,
+  /Allow\s+this\s+(action|command|operation)\??/i,
+  /\(once\s*\/\s*session\s*\/\s*always\s*\/\s*deny\)/i,
+];
+
+export const APPROVAL_PROMPT_RE = APPROVAL_PROMPT_PATTERNS[0];
+
+/** True if any known approval-prompt pattern matches. */
+export const matchesApprovalPrompt = (text: string): boolean => {
+  for (const re of APPROVAL_PROMPT_PATTERNS) if (re.test(text)) return true;
+  return false;
+};
 
 /** Crude classifier — guess the action from the prompt context. */
 export const guessAction = (context: string): PermissionAction => {

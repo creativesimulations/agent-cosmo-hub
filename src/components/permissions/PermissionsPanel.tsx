@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Shield, Plus, X, FolderOpen, FolderX } from "lucide-react";
+import { Shield, Plus, X, FolderOpen, FolderX, RefreshCw, Loader2 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useSettings } from "@/contexts/SettingsContext";
+import { systemAPI } from "@/lib/systemAPI";
+import { toast } from "@/hooks/use-toast";
 import {
   PermissionDefault,
   PermissionsConfig,
@@ -144,20 +146,43 @@ const FolderList = ({
 const PermissionsPanel = () => {
   const { settings, update } = useSettings();
   const perms = settings.permissions;
+  const [syncing, setSyncing] = useState(false);
 
   const setPerms = (patch: Partial<PermissionsConfig>) => {
     update({ permissions: { ...perms, ...patch } });
   };
 
+  const syncNow = async () => {
+    setSyncing(true);
+    try {
+      const r = await systemAPI.syncPermissions(perms);
+      if (r.success) {
+        toast({ title: "Permissions synced", description: "Your rules were written to ~/.hermes/config.yaml" });
+      } else {
+        toast({ title: "Sync failed", description: r.error || "Unknown error", variant: "destructive" });
+      }
+    } catch (e) {
+      toast({ title: "Sync failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <GlassCard className="p-6 space-y-4">
-      <div className="flex items-center gap-2">
-        <Shield className="w-5 h-5 text-primary" />
-        <h2 className="text-lg font-semibold text-foreground">Permissions</h2>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Shield className="w-5 h-5 text-primary" />
+          <h2 className="text-lg font-semibold text-foreground">Permissions</h2>
+        </div>
+        <Button size="sm" variant="outline" onClick={syncNow} disabled={syncing}>
+          {syncing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />}
+          Sync to agent now
+        </Button>
       </div>
       <p className="text-sm text-muted-foreground -mt-2">
-        Control what your agent can do without asking. When set to "Ask each time", the agent
-        pauses and shows you a popup explaining what it wants to do — no more silent denials.
+        Control what your agent can do without asking. Rules are auto-synced to the agent on every
+        message — sub-agents inherit them too. Use "Sync to agent now" to push them immediately.
       </p>
 
       <div className="-mt-1">

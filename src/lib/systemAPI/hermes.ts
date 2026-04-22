@@ -5,11 +5,14 @@ import type { CommandResult } from './types';
 import { agentLogs, truncateForLog } from '../diagnostics';
 import {
   APPROVAL_PROMPT_RE,
+  matchesApprovalPrompt,
+  isDebugPromptDetection,
   choiceToStdin,
   getApprovalHandler,
   guessAction,
   recordPermissionEvent,
 } from '../approvalBridge';
+import type { PermissionsConfig } from '../permissions';
 
 const HERMES_DIR = '$HOME/.hermes';
 const HERMES_ENV = '$HOME/.hermes/.env';
@@ -478,12 +481,138 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
   return { success: true, count: secretEntries.length };
 };
 
+// ─── Permissions YAML mirror ──────────────────────────────────────
+// Hermes has its own permission engine. Sub-agents (and many parent
+// actions) consult it directly without ever emitting a Choice prompt to
+// stdout, so intercepting prompts in the parent stream is not enough — we
+// also have to write the user's choices into ~/.hermes/config.yaml so
+// every Hermes process honors them.
+//
+// We splice a managed `permissions:` block into config.yaml between two
+// sentinel comments (same pattern we use for the .env managed block). The
+// rest of the file is left untouched.
+
+const PERMS_BEGIN = '# ─── Managed by Ronbot: permissions (do not edit) ───';
+const PERMS_END = '# ─── End Ronbot permissions ───';
+const LOG_BEGIN = '# ─── Managed by Ronbot: logging (do not edit) ───';
+const LOG_END = '# ─── End Ronbot logging ───';
+
+const stripManagedBlock = (yaml: string, begin: string, end: string): string => {
+  const startIdx = yaml.indexOf(begin);
+  if (startIdx === -1) return yaml;
+  const endIdx = yaml.indexOf(end, startIdx);
+  if (endIdx === -1) return yaml;
+  const after = yaml.slice(endIdx + end.length);
+  // Trim the leading newline of `after` so we don't accumulate blank lines
+  // each time we re-write.
+  return (yaml.slice(0, startIdx).replace(/\n+$/, '') + after.replace(/^\n+/, '\n')).replace(/\n{3,}/g, '\n\n');
+};
+
+const yamlList = (items: string[]): string => {
+  if (!items.length) return '[]';
+  return '\n' + items.map((p) => `    - "${p.replace(/"/g, '\\"')}"`).join('\n');
+};
+
+/** Write the current PermissionsConfig into ~/.hermes/config.yaml.
+ *  Idempotent: only the managed block is touched. */
+export const writeHermesPermissions = async (
+  perms: PermissionsConfig,
+): Promise<{ success: boolean; error?: string }> => {
+  const cfg = await readHermesFile(HERMES_CONFIG);
+  const existing = cfg.success && cfg.content ? cfg.content : 'model: openrouter/auto\n';
+  const stripped = stripManagedBlock(existing, PERMS_BEGIN, PERMS_END).replace(/\n+$/, '');
+
+  const block = [
+    PERMS_BEGIN,
+    'permissions:',
+    `  shell: ${perms.shell}`,
+    `  shell_allow_readonly: ${perms.shellAllowReadOnly ? 'true' : 'false'}`,
+    `  file_read: ${perms.fileRead}`,
+    `  file_write: ${perms.fileWrite}`,
+    `  file_read_scope: ${perms.fileReadScope}`,
+    `  file_write_scope: ${perms.fileWriteScope}`,
+    `  internet: ${perms.internet}`,
+    `  script: ${perms.script}`,
+    `  subagent: ${perms.subAgent}`,
+    `  default: ${perms.fallback}`,
+    `  allowed_paths:${yamlList(perms.allowedFolders)}`,
+    `  blocked_paths:${yamlList(perms.blockedFolders)}`,
+    PERMS_END,
+  ].join('\n');
+
+  const next = `${stripped}\n\n${block}\n`;
+  const w = await writeHermesFile(HERMES_CONFIG, next, '600');
+  agentLogs.push({
+    source: 'system',
+    level: w.success ? 'info' : 'error',
+    summary: w.success
+      ? `permissions synced to ~/.hermes/config.yaml (shell=${perms.shell}, internet=${perms.internet}, subagent=${perms.subAgent})`
+      : 'failed to sync permissions to ~/.hermes/config.yaml',
+  });
+  return w.success
+    ? { success: true }
+    : { success: false, error: 'Failed to write config.yaml permissions block' };
+};
+
+/** Enable file logging in Hermes config so the SubAgents tab can read events. */
+export const enableHermesFileLogging = async (): Promise<{ success: boolean }> => {
+  const cfg = await readHermesFile(HERMES_CONFIG);
+  const existing = cfg.success && cfg.content ? cfg.content : 'model: openrouter/auto\n';
+  const stripped = stripManagedBlock(existing, LOG_BEGIN, LOG_END).replace(/\n+$/, '');
+  const block = [
+    LOG_BEGIN,
+    'logging:',
+    '  file: ~/.hermes/logs/agent.log',
+    '  level: info',
+    LOG_END,
+  ].join('\n');
+  const next = `${stripped}\n\n${block}\n`;
+  const w = await writeHermesFile(HERMES_CONFIG, next, '600');
+  agentLogs.push({
+    source: 'system',
+    level: w.success ? 'info' : 'error',
+    summary: w.success ? 'enabled Hermes file logging (~/.hermes/logs/agent.log)' : 'failed to enable Hermes file logging',
+  });
+  // Make sure the directory exists so the agent can actually open the file.
+  if (w.success) {
+    await runHermesShell('mkdir -p "$HOME/.hermes/logs"', { timeout: 5000 }).catch(() => undefined);
+  }
+  return { success: w.success };
+};
+
+/** Read the active managed permissions block (for Diagnostics display). */
+export const readHermesPermissionsBlock = async (): Promise<string | null> => {
+  const cfg = await readHermesFile(HERMES_CONFIG);
+  if (!cfg.success || !cfg.content) return null;
+  const startIdx = cfg.content.indexOf(PERMS_BEGIN);
+  if (startIdx === -1) return null;
+  const endIdx = cfg.content.indexOf(PERMS_END, startIdx);
+  if (endIdx === -1) return null;
+  return cfg.content.slice(startIdx, endIdx + PERMS_END.length);
+};
+
 /** Hermes Agent installation, configuration, and lifecycle */
 export const hermesAPI = {
   /** Force-write secrets to ~/.hermes/.env and verify. Used by Diagnostics
    *  page and the Secrets tab "Sync to agent" button. */
   async materializeEnv() {
     return materializeHermesEnv();
+  },
+
+  /** Sync the user's Permissions panel into ~/.hermes/config.yaml so every
+   *  Hermes process (including sub-agents) honors the same rules. */
+  async syncPermissions(perms: PermissionsConfig) {
+    return writeHermesPermissions(perms);
+  },
+
+  /** Turn on file logging so the SubAgents tab can show delegation activity. */
+  async enableFileLogging() {
+    return enableHermesFileLogging();
+  },
+
+  /** Read the active managed permissions block (for Diagnostics). */
+  async readPermissionsBlock() {
+    return readHermesPermissionsBlock();
   },
   /** Install the agent using the official install script.
    *  On Windows we always run inside WSL because hermes-agent is not published
@@ -862,6 +991,7 @@ export const hermesAPI = {
     resumeId?: string,
     onStreamId?: (id: string) => void,
     timeoutMs?: number,
+    permissions?: PermissionsConfig,
   ): Promise<CommandResult & { reply?: string; diagnostics?: string; sessionId?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean; timedOut?: boolean }> {
     const startedAt = Date.now();
     agentLogs.push({
@@ -870,6 +1000,14 @@ export const hermesAPI = {
       summary: `→ Prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
     });
     const mat = await materializeHermesEnv();
+
+    // Mirror the Permissions panel into config.yaml so sub-agents and other
+    // Hermes processes that don't go through our stdin interceptor still
+    // honor the user's rules. This is the real fix for "agent says no
+    // internet even though I set Allow".
+    if (permissions) {
+      await writeHermesPermissions(permissions).catch(() => undefined);
+    }
 
     // Hard-fail before invoking hermes if we couldn't sync secrets.
     // Calling `hermes chat` against a stale/empty .env would just produce a
@@ -959,16 +1097,29 @@ export const hermesAPI = {
       if (chunk.type !== 'stdout' && chunk.type !== 'stderr') return;
       const text = chunk.data || '';
       if (!text) return;
-      promptBuffer = (promptBuffer + text).slice(-4000);
+      promptBuffer = (promptBuffer + text).slice(-8000);
       if (answeringPrompt) return;
-      if (!APPROVAL_PROMPT_RE.test(promptBuffer)) return;
+      if (!matchesApprovalPrompt(promptBuffer)) return;
 
-      // Pull a few lines of context just before the prompt to describe the action.
+      // Pull the 20 lines preceding the prompt as context — this is what
+      // gets shown to the user as "What" in the approval dialog so they
+      // can see the actual command/path the agent wants to act on.
       const lines = promptBuffer.split('\n').filter((l) => l.trim());
-      const promptIdx = lines.findIndex((l) => APPROVAL_PROMPT_RE.test(l));
-      const ctxLines = lines.slice(Math.max(0, promptIdx - 6), promptIdx).join('\n').trim();
-      const target = ctxLines.slice(-300) || '(action details not captured)';
+      let promptIdx = lines.findIndex((l) => matchesApprovalPrompt(l));
+      if (promptIdx < 0) promptIdx = lines.length - 1;
+      const ctxLines = lines.slice(Math.max(0, promptIdx - 20), promptIdx).join('\n').trim();
+      const target = ctxLines.slice(-1500) || '(action details not captured)';
       const action = guessAction(ctxLines);
+
+      if (isDebugPromptDetection()) {
+        agentLogs.push({
+          source: 'chat',
+          level: 'debug',
+          summary: `[approval] prompt detected · action=${action}`,
+          detail: target,
+        });
+      }
+
       const handler = getApprovalHandler();
       const sid = activeStreamId;
       if (!handler || !sid) {
@@ -1480,11 +1631,12 @@ model: ${options.model || 'openrouter/auto'}
     error?: string;
     active: Array<{ id: string; goal: string; startedAt: string; lastActivity?: string; lastEvent?: string }>;
     recent: Array<{ id: string; goal: string; startedAt: string; completedAt: string; durationMs: number; summary?: string }>;
+    failed: Array<{ id: string; goal: string; startedAt: string; failedAt: string; reason?: string }>;
     logPath: string;
+    /** True when the agent log file does not exist (Hermes file logging is off). */
+    loggingDisabled?: boolean;
   }> {
     const logPath = '$HOME/.hermes/logs/agent.log';
-    // Read up to the last 4000 lines — generous enough to cover a long
-    // multi-delegation session, small enough to parse instantly.
     const result = await runHermesShell([
       `LOG="${logPath}"`,
       'if [ ! -f "$LOG" ]; then exit 3; fi',
@@ -1492,21 +1644,30 @@ model: ${options.model || 'openrouter/auto'}
     ].join('\n'), { timeout: 10000 });
 
     if (!result.success) {
-      // exit 3 = log doesn't exist yet (agent never ran). Treat as empty.
+      // exit 3 = log file missing entirely (file logging not enabled, or
+      // agent never ran). Surface that to the UI so we can show an
+      // actionable banner instead of a blank tab.
       if (result.code === 3) {
-        return { success: true, active: [], recent: [], logPath: '~/.hermes/logs/agent.log' };
+        return {
+          success: true,
+          active: [],
+          recent: [],
+          failed: [],
+          logPath: '~/.hermes/logs/agent.log',
+          loggingDisabled: true,
+        };
       }
       return {
         success: false,
         error: result.stderr || 'Failed to read agent log',
         active: [],
         recent: [],
+        failed: [],
         logPath: '~/.hermes/logs/agent.log',
       };
     }
 
     const lines = (result.stdout || '').split('\n');
-    // Python logging timestamp at line start: "2026-04-20 14:35:02,123 ..."
     const tsRe = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})(?:[,.](\d{1,3}))?/;
     const parseTs = (line: string): number | null => {
       const m = line.match(tsRe);
@@ -1516,24 +1677,23 @@ model: ${options.model || 'openrouter/auto'}
       return Number.isNaN(t) ? null : t + ms;
     };
 
-    // A subagent is identified by the goal text it was launched with — that
-    // string is unique enough across a session and Hermes doesn't expose a
-    // numeric child id in the log. We extract it from the `delegate_task` tool
-    // call (`goal="..."` or `goal: "..."`) closest before each `subagent.start`.
     type Pending = { id: string; goal: string; startedAt: number; lastActivity?: number; lastEvent?: string };
     type Done = { id: string; goal: string; startedAt: number; completedAt: number; summary?: string };
+    type Failed = { id: string; goal: string; startedAt: number; failedAt: number; reason?: string };
 
     const pending: Pending[] = [];
     const completed: Done[] = [];
+    const failed: Failed[] = [];
     let lastDelegateGoal: string | null = null;
 
     const goalFromLine = (line: string): string | null => {
-      // Try a few shapes: goal="...", goal: '...', or "task": "..."
       const patterns = [
         /goal\s*[:=]\s*"([^"]{1,400})"/,
         /goal\s*[:=]\s*'([^']{1,400})'/,
         /"task"\s*:\s*"([^"]{1,400})"/,
         /preview\s*=\s*"([^"]{1,400})"/,
+        /task\s*[:=]\s*"([^"]{1,400})"/,
+        /spawned\s+(?:sub[-_ ]?agent|child\s+agent)\s+(?:for\s+)?["']?([^"'\n]{4,200})/i,
       ];
       for (const re of patterns) {
         const m = line.match(re);
@@ -1542,18 +1702,48 @@ model: ${options.model || 'openrouter/auto'}
       return null;
     };
 
+    // Broadened classifiers — match the variety of phrasings Hermes (and
+    // its versions / forks) use. We accept anything that looks like a
+    // delegated/child agent lifecycle event.
+    const isDelegate = (l: string) => /\bdelegate_task\b|\bdelegate\(.*task/i.test(l);
+    const isStart = (l: string) =>
+      /\bsub[-_]?agent\.start\b/i.test(l) ||
+      /\bworker\.start\b/i.test(l) ||
+      /\bchild[-_ ]?agent\b.*\b(started|spawn(ed)?|launch(ed)?)\b/i.test(l) ||
+      /\bspawn(ed)?\s+(sub[-_ ]?agent|child\s+agent|worker)\b/i.test(l) ||
+      /\b(task|delegation)\b.*\bstarted\b/i.test(l);
+    const isComplete = (l: string) =>
+      /\bsub[-_]?agent\.complete\b/i.test(l) ||
+      /\bworker\.complete\b/i.test(l) ||
+      /\bchild[-_ ]?agent\b.*\b(complete|finish(ed)?|done)\b/i.test(l) ||
+      /\b(task|delegation)\b.*\bcompleted\b/i.test(l);
+    const isFailed = (l: string) =>
+      /\bsub[-_]?agent\.(failed|error|denied)\b/i.test(l) ||
+      /\bworker\.failed\b/i.test(l) ||
+      /\b(task|delegation)\b.*\b(failed|denied|errored)\b/i.test(l) ||
+      /\bchild[-_ ]?agent\b.*\b(failed|denied|crashed)\b/i.test(l);
+    const isHeartbeat = (l: string) =>
+      /\bsub[-_]?agent\.(thinking|tool|progress)\b/i.test(l) ||
+      /\bworker\.(thinking|tool|progress)\b/i.test(l);
+
+    const reasonFromLine = (line: string): string | undefined => {
+      const m =
+        line.match(/(?:reason|error|denied)\s*[:=]\s*"([^"]{1,300})"/i) ||
+        line.match(/(?:reason|error|denied)\s*[:=]\s*'([^']{1,300})'/i) ||
+        line.match(/permission denied[:\s]*([^\n]{1,200})/i);
+      return m ? m[1] : undefined;
+    };
+
     for (const line of lines) {
       if (!line) continue;
       const ts = parseTs(line);
 
-      // Capture the goal from a delegate_task invocation so a following
-      // subagent.start event can adopt it.
-      if (/delegate_task/i.test(line)) {
+      if (isDelegate(line)) {
         const g = goalFromLine(line);
         if (g) lastDelegateGoal = g;
       }
 
-      if (/subagent\.start/i.test(line) && ts !== null) {
+      if (isStart(line) && ts !== null) {
         const goal = goalFromLine(line) || lastDelegateGoal || '(no goal recorded)';
         const id = `${ts}-${goal.slice(0, 40)}`;
         pending.push({ id, goal, startedAt: ts, lastActivity: ts, lastEvent: 'started' });
@@ -1561,9 +1751,7 @@ model: ${options.model || 'openrouter/auto'}
         continue;
       }
 
-      if (/subagent\.complete/i.test(line) && ts !== null && pending.length > 0) {
-        // Pair with the OLDEST pending (FIFO) — Hermes blocks the parent
-        // until children finish, so order is preserved per delegation batch.
+      if (isComplete(line) && ts !== null && pending.length > 0) {
         const open = pending.shift()!;
         const summary = goalFromLine(line) || undefined;
         completed.push({
@@ -1576,19 +1764,41 @@ model: ${options.model || 'openrouter/auto'}
         continue;
       }
 
-      // Any subagent.* event updates the most recent active one's heartbeat.
-      if (/subagent\.(thinking|tool|progress)/i.test(line) && ts !== null && pending.length > 0) {
+      if (isFailed(line) && ts !== null) {
+        const reason = reasonFromLine(line);
+        const open = pending.shift();
+        if (open) {
+          failed.push({
+            id: open.id,
+            goal: open.goal,
+            startedAt: open.startedAt,
+            failedAt: ts,
+            reason,
+          });
+        } else {
+          // Failure without a paired start (denied at spawn time).
+          const goal = goalFromLine(line) || lastDelegateGoal || '(no goal recorded)';
+          failed.push({
+            id: `${ts}-fail-${goal.slice(0, 40)}`,
+            goal,
+            startedAt: ts,
+            failedAt: ts,
+            reason,
+          });
+          lastDelegateGoal = null;
+        }
+        continue;
+      }
+
+      if (isHeartbeat(line) && ts !== null && pending.length > 0) {
         const last = pending[pending.length - 1];
         last.lastActivity = ts;
-        if (/subagent\.thinking/i.test(line)) last.lastEvent = 'thinking';
-        else if (/subagent\.tool/i.test(line)) last.lastEvent = 'using a tool';
+        if (/thinking/i.test(line)) last.lastEvent = 'thinking';
+        else if (/tool/i.test(line)) last.lastEvent = 'using a tool';
         else last.lastEvent = 'working';
       }
     }
 
-    // Drop pending entries older than 1 hour with no recent activity — they
-    // almost certainly crashed without emitting a complete event, and showing
-    // a "still running for 9 days" subagent is misleading.
     const STALE_AFTER_MS = 60 * 60 * 1000;
     const now = Date.now();
     const stillActive = pending.filter(
@@ -1617,6 +1827,16 @@ model: ${options.model || 'openrouter/auto'}
           completedAt: toIso(c.completedAt),
           durationMs: c.completedAt - c.startedAt,
           summary: c.summary,
+        })),
+      failed: failed
+        .sort((a, b) => b.failedAt - a.failedAt)
+        .slice(0, 25)
+        .map((f) => ({
+          id: f.id,
+          goal: f.goal,
+          startedAt: toIso(f.startedAt),
+          failedAt: toIso(f.failedAt),
+          reason: f.reason,
         })),
     };
   },

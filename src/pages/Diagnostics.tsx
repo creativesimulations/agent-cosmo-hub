@@ -51,6 +51,7 @@ const Diagnostics = () => {
   const [cfgSummary, setCfgSummary] = useState<ConfigSummary>({ loaded: false });
   const [storeSummary, setStoreSummary] = useState<StoreSummary>({ loaded: false, entries: [] });
   const [lastResult, setLastResult] = useState<string>("");
+  const [permsBlock, setPermsBlock] = useState<string | null>(null);
 
   useEffect(() => {
     const unsub = diagnostics.subscribe((all) => {
@@ -94,6 +95,12 @@ const Diagnostics = () => {
       setCfgSummary({ loaded: true, modelLine, raw: cfg.content });
     } catch (e) {
       setCfgSummary({ loaded: true, error: e instanceof Error ? e.message : String(e) });
+    }
+    try {
+      const block = await systemAPI.readPermissionsBlock();
+      setPermsBlock(block);
+    } catch {
+      setPermsBlock(null);
     }
   };
 
