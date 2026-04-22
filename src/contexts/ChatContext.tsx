@@ -488,6 +488,8 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         clearAll,
         markChatViewed,
         startNewSession,
+        draft,
+        setDraft,
       }}
     >
       {children}
