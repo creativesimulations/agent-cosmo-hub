@@ -962,16 +962,29 @@ export const hermesAPI = {
       if (chunk.type !== 'stdout' && chunk.type !== 'stderr') return;
       const text = chunk.data || '';
       if (!text) return;
-      promptBuffer = (promptBuffer + text).slice(-4000);
+      promptBuffer = (promptBuffer + text).slice(-8000);
       if (answeringPrompt) return;
-      if (!APPROVAL_PROMPT_RE.test(promptBuffer)) return;
+      if (!matchesApprovalPrompt(promptBuffer)) return;
 
-      // Pull a few lines of context just before the prompt to describe the action.
+      // Pull the 20 lines preceding the prompt as context — this is what
+      // gets shown to the user as "What" in the approval dialog so they
+      // can see the actual command/path the agent wants to act on.
       const lines = promptBuffer.split('\n').filter((l) => l.trim());
-      const promptIdx = lines.findIndex((l) => APPROVAL_PROMPT_RE.test(l));
-      const ctxLines = lines.slice(Math.max(0, promptIdx - 6), promptIdx).join('\n').trim();
-      const target = ctxLines.slice(-300) || '(action details not captured)';
+      let promptIdx = lines.findIndex((l) => matchesApprovalPrompt(l));
+      if (promptIdx < 0) promptIdx = lines.length - 1;
+      const ctxLines = lines.slice(Math.max(0, promptIdx - 20), promptIdx).join('\n').trim();
+      const target = ctxLines.slice(-1500) || '(action details not captured)';
       const action = guessAction(ctxLines);
+
+      if (isDebugPromptDetection()) {
+        agentLogs.push({
+          source: 'chat',
+          level: 'debug',
+          summary: `[approval] prompt detected · action=${action}`,
+          detail: target,
+        });
+      }
+
       const handler = getApprovalHandler();
       const sid = activeStreamId;
       if (!handler || !sid) {
