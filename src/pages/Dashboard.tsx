@@ -65,30 +65,12 @@ const UPTIME_KEY = "ronbot-connected-since-v1";
 
 const Dashboard = () => {
   const { connected: agentConnected, location } = useAgentConnection();
-  const [metrics, setMetrics] = useState({ status: "—", uptime: "—
-    if (!agentConnected) return;
-    const [statusResult, configResult] = await Promise.all([
-      systemAPI.hermesStatus(),
-      systemAPI.readConfig(),
-    ]);
-    const configuredModel =
-      configResult.success && configResult.content
-        ? readConfiguredModel(configResult.content)
-        : null;
+  const [metrics, setMetrics] = useState({ status: "—", uptime: "—", model: "—" });
+  const [, forceTick] = useState(0);
 
-    const raw = statusResult.success ? parseStatusOutput(statusResult.stdout) : {};
-    const status = deriveDisplayStatus(raw, agentConnected);
-
-    setMetrics((prev) => ({
-      status,
-      // Gateway-reported uptime takes precedence; otherwise we show
-      // session uptime computed live from connectedSinceRef.
-      uptime: status === "Gateway running" && raw.uptime ? raw.uptime : prev.uptime,
-      // Prefer the live config.yaml value so dashboard reflects /model
-      // changes made from inside the agent itself.
-      model: configuredModel || raw.model || "Configured",
-    }));
-  }, [agentConnected]);
+  // Persist the agent connection start timestamp in localStorage so the
+  // uptime counter survives switching tabs, navigating away from /dashboard,
+  // or reopening the window when the agent runs in
 
   useEffect(() => {
     void loadStatus();
