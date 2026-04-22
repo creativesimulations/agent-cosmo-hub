@@ -65,9 +65,7 @@ const UPTIME_KEY = "ronbot-connected-since-v1";
 
 const Dashboard = () => {
   const { connected: agentConnected, location } = useAgentConnection();
-  const [metrics, setMetrics] = useState({ status: "—", uptime: "—", model: "—" });
-  // Persist the agent connection start timestamp so uptime survives route
-  const loadStatus = useCallback(async () => {
+  const [metrics, setMetrics] = useState({ status: "—", uptime: "—
     if (!agentConnected) return;
     const [statusResult, configResult] = await Promise.all([
       systemAPI.hermesStatus(),
