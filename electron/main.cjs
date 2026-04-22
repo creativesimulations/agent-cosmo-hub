@@ -84,14 +84,16 @@ function buildCommandEnv(extraEnv = {}) {
 
 // ─── App-wide state for run-in-background / tray ───────────
 // `runInBackground` toggles whether closing the window hides to tray vs
-// quits. `agentRunning` mirrors the renderer's Dashboard ON/OFF switch so
-// the tray menu can both reflect and control that state from anywhere.
-let runInBackground = false;
+// quits. Defaults to TRUE so closing the window keeps the agent alive in
+// the system tray. The renderer can flip it off via Settings.
+// `agentRunning` mirrors the renderer's Dashboard ON/OFF switch so the
+// tray menu can both reflect and control that state from anywhere.
+let runInBackground = true;
 let agentRunning = true;
 let mainWindow = null;
 let tray = null;
 let isQuittingForReal = false;
-
+let hasShownTrayHint = false;
 function rebuildTrayMenu() {
   if (!tray) return;
   const statusLabel = agentRunning ? '● Agent: ON' : '○ Agent: OFF';
@@ -175,6 +177,7 @@ function createWindow() {
     minHeight: 700,
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#050714',
+    autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -182,13 +185,21 @@ function createWindow() {
     },
   });
 
+  // Strip the default Electron menu (File / Edit / View / Window / Help)
+  // — Ronbot is a single-window app and the menubar adds no value.
+  mainWindow.setMenuBarVisibility(false);
+  mainWindow.setMenu(null);
+
   mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+
+  // Ensure the tray exists up-front so closing the window has something to
+  // hide into. On Linux/Wayland setups without a tray we fall back gracefully.
+  if (runInBackground) ensureTray();
 
   mainWindow.on('close', (event) => {
     if (isQuittingForReal) return;
     // macOS convention: closing the window keeps the app alive in the Dock,
-    // matching every other Mac app. Win/Linux only persist when the user
-    // has explicitly enabled "Run in background" so the tray icon appears.
+    // matching every other Mac app.
     if (process.platform === 'darwin') {
       event.preventDefault();
       mainWindow.hide();
@@ -197,12 +208,25 @@ function createWindow() {
     }
     if (runInBackground) {
       event.preventDefault();
-      mainWindow.hide();
       const t = ensureTray();
-      // Linux without a system tray (some Wayland/GNOME setups): keep the
-      // window visible so the user isn't stranded with no way back.
+      // Linux without a system tray: don't strand the user with no window.
       if (!t && process.platform === 'linux') {
         mainWindow.show();
+        return;
+      }
+      mainWindow.hide();
+
+      // First-time hint so the user knows the app is still alive in the tray.
+      if (!hasShownTrayHint && t) {
+        hasShownTrayHint = true;
+        try {
+          if (process.platform === 'win32' && typeof t.displayBalloon === 'function') {
+            t.displayBalloon({
+              title: 'Ronbot is still running',
+              content: 'Right-click the tray icon to open Ronbot or quit it completely.',
+            });
+          }
+        } catch { /* tray balloons are best-effort */ }
       }
     }
   });
@@ -698,7 +722,16 @@ ipcMain.handle('set-agent-running-state', async (_event, running) => {
 app.on('before-quit', () => { isQuittingForReal = true; });
 
 app.whenReady().then(() => {
+  // Hide the default app menu globally — keeps Win/Linux from showing the
+  // File/Edit/View bar at the top of every window. macOS still gets a
+  // minimal app menu (it's a system requirement).
+  if (process.platform !== 'darwin') {
+    try { Menu.setApplicationMenu(null); } catch { /* best effort */ }
+  }
   createWindow();
+  // Pre-create the tray immediately so the user can find Ronbot even if
+  // they close the window before we get a chance to set things up.
+  ensureTray();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
     else showMainWindow();

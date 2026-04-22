@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Activity,
   Cpu,
@@ -61,19 +61,40 @@ const formatElapsed = (ms: number): string => {
   return `${s}s`;
 };
 
+const UPTIME_KEY = "ronbot-connected-since-v1";
+
+const readStoredConnectedSince = (): number | null => {
+  try {
+    const raw = window.localStorage.getItem(UPTIME_KEY);
+    if (!raw) return null;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+};
+
 const Dashboard = () => {
   const { connected: agentConnected, location } = useAgentConnection();
   const [metrics, setMetrics] = useState({ status: "—", uptime: "—", model: "—" });
-  const connectedSinceRef = useRef<number | null>(null);
+  const [connectedSince, setConnectedSince] = useState<number | null>(() => readStoredConnectedSince());
   const [, forceTick] = useState(0);
 
-  // Track when this session's agent connection began so uptime is meaningful
-  // even when the optional messaging gateway isn't running.
+  // Stamp / clear the connection start time in localStorage so it survives
+  // route changes and window reopens (when running in background).
   useEffect(() => {
-    if (agentConnected && connectedSinceRef.current === null) {
-      connectedSinceRef.current = Date.now();
-    } else if (!agentConnected) {
-      connectedSinceRef.current = null;
+    if (agentConnected) {
+      const existing = readStoredConnectedSince();
+      if (existing === null) {
+        const now = Date.now();
+        try { window.localStorage.setItem(UPTIME_KEY, String(now)); } catch { /* ignore */ }
+        setConnectedSince(now);
+      } else {
+        setConnectedSince(existing);
+      }
+    } else {
+      try { window.localStorage.removeItem(UPTIME_KEY); } catch { /* ignore */ }
+      setConnectedSince(null);
     }
   }, [agentConnected]);
 
@@ -100,11 +121,7 @@ const Dashboard = () => {
 
     setMetrics((prev) => ({
       status,
-      // Gateway-reported uptime takes precedence; otherwise we show
-      // session uptime computed live from connectedSinceRef.
       uptime: status === "Gateway running" && raw.uptime ? raw.uptime : prev.uptime,
-      // Prefer the live config.yaml value so dashboard reflects /model
-      // changes made from inside the agent itself.
       model: configuredModel || raw.model || "Configured",
     }));
   }, [agentConnected]);
@@ -112,9 +129,6 @@ const Dashboard = () => {
   useEffect(() => {
     void loadStatus();
     if (!agentConnected) return;
-    // Live-sync: poll every 5s and on window focus so model/status changes
-    // (including ones the agent makes itself) show up here without a manual
-    // refresh.
     const interval = window.setInterval(() => void loadStatus(), 5000);
     const onFocus = () => void loadStatus();
     window.addEventListener("focus", onFocus);
@@ -176,8 +190,8 @@ const Dashboard = () => {
             value:
               metrics.status === "Gateway running" && metrics.uptime !== "—"
                 ? metrics.uptime
-                : connectedSinceRef.current
-                  ? formatElapsed(Date.now() - connectedSinceRef.current)
+                : connectedSince
+                  ? formatElapsed(Date.now() - connectedSince)
                   : "—",
             icon: Clock,
             accent: "text-foreground",
