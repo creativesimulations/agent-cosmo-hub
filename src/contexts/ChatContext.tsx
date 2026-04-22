@@ -95,6 +95,9 @@ interface ChatContextValue {
   markChatViewed: () => void;
   /** Start a brand-new Hermes session (drops the resume id). */
   startNewSession: () => void;
+  /** In-memory draft for the chat composer — survives tab switches but not app restarts. */
+  draft: string;
+  setDraft: (value: string) => void;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
