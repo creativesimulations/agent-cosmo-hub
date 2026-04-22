@@ -162,7 +162,9 @@ const Dashboard = () => {
                 ? metrics.uptime
                 : connectedSince
                   ? formatElapsed(Date.now() - connectedSince)
-                  : "—",
+                  : frozenUptimeMs !== null
+                    ? formatElapsed(frozenUptimeMs)
+                    : "—",
             icon: Clock,
             accent: "text-foreground",
           },
