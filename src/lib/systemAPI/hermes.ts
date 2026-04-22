@@ -5,11 +5,14 @@ import type { CommandResult } from './types';
 import { agentLogs, truncateForLog } from '../diagnostics';
 import {
   APPROVAL_PROMPT_RE,
+  matchesApprovalPrompt,
+  isDebugPromptDetection,
   choiceToStdin,
   getApprovalHandler,
   guessAction,
   recordPermissionEvent,
 } from '../approvalBridge';
+import type { PermissionsConfig } from '../permissions';
 
 const HERMES_DIR = '$HOME/.hermes';
 const HERMES_ENV = '$HOME/.hermes/.env';
