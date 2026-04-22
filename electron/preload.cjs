@@ -50,6 +50,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   secretsMaterializeEnv: (envPath) => ipcRenderer.invoke('secrets-materialize-env', envPath),
   secretsMigrateFromEnv: (envPath) => ipcRenderer.invoke('secrets-migrate-from-env', envPath),
 
+  // Listen for agent running state changes from tray menu
+  onAgentRunningChanged: (callback) => {
+    const handler = (_event, running) => callback(running);
+    ipcRenderer.on('agent-running-changed', handler);
+    return () => ipcRenderer.removeListener('agent-running-changed', handler);
+  },
+
   // Check if running in Electron
   isElectron: true,
 });
