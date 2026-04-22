@@ -86,6 +86,8 @@ interface ChatContextValue {
   queuedCount: number;
   unreadCount: number;
   sessionId: string | null;
+  /** Number of sub-agent spawns observed in the in-flight streamed reply. */
+  liveSubAgentCount: number;
   sendMessage: (prompt: string) => Promise<void>;
   /** Interrupt the active reply and discard everything still queued. */
   stop: () => Promise<void>;
