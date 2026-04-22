@@ -3,6 +3,13 @@ import { secretsStore } from './secretsStore';
 import { isElectron } from './types';
 import type { CommandResult } from './types';
 import { agentLogs, truncateForLog } from '../diagnostics';
+import {
+  APPROVAL_PROMPT_RE,
+  choiceToStdin,
+  getApprovalHandler,
+  guessAction,
+  recordPermissionEvent,
+} from '../approvalBridge';
 
 const HERMES_DIR = '$HOME/.hermes';
 const HERMES_ENV = '$HOME/.hermes/.env';
@@ -931,16 +938,58 @@ export const hermesAPI = {
       // If we have a session id from a previous turn, resume it so the agent
       // keeps full conversation context. Otherwise start fresh and we'll
       // capture the new session id from the footer Hermes prints.
+      // Drop `</dev/null` so stdin stays open and we can answer interactive
+      // permission prompts via writeStreamStdin.
       resumeId
-        ? `hermes chat --resume ${JSON.stringify(resumeId)} -q "$PROMPT" </dev/null 2>&1`
-        : 'hermes chat -q "$PROMPT" </dev/null 2>&1',
+        ? `hermes chat --resume ${JSON.stringify(resumeId)} -q "$PROMPT" 2>&1`
+        : 'hermes chat -q "$PROMPT" 2>&1',
     ].join('\n');
 
+    // Detect Hermes' interactive `Choice [o/s/a/D]:` permission prompts in
+    // the streamed output and route them through the approval dialog.
+    let activeStreamId: string | null = null;
+    let promptBuffer = '';
+    let answeringPrompt = false;
+    const wrappedOnStreamId = (id: string) => {
+      activeStreamId = id;
+      onStreamId?.(id);
+    };
+    const interceptingOnOutput: CommandOutputHandler = (chunk) => {
+      onOutput?.(chunk);
+      if (chunk.type !== 'stdout' && chunk.type !== 'stderr') return;
+      const text = chunk.data || '';
+      if (!text) return;
+      promptBuffer = (promptBuffer + text).slice(-4000);
+      if (answeringPrompt) return;
+      if (!APPROVAL_PROMPT_RE.test(promptBuffer)) return;
+
+      // Pull a few lines of context just before the prompt to describe the action.
+      const lines = promptBuffer.split('\n').filter((l) => l.trim());
+      const promptIdx = lines.findIndex((l) => APPROVAL_PROMPT_RE.test(l));
+      const ctxLines = lines.slice(Math.max(0, promptIdx - 6), promptIdx).join('\n').trim();
+      const target = ctxLines.slice(-300) || '(action details not captured)';
+      const action = guessAction(ctxLines);
+      const handler = getApprovalHandler();
+      const sid = activeStreamId;
+      if (!handler || !sid) {
+        // No UI mounted — auto-deny so the agent doesn't hang forever.
+        recordPermissionEvent({ action, target, decision: 'auto-denied', prompted: false });
+        void coreAPI.writeStreamStdin(sid || '', 'd\n').catch(() => { /* */ });
+        promptBuffer = '';
+        return;
+      }
+      answeringPrompt = true;
+      promptBuffer = '';
+      void handler({ action, target }).then((choice) => {
+        void coreAPI.writeStreamStdin(sid, choiceToStdin(choice)).catch(() => { /* */ });
+        answeringPrompt = false;
+      });
+    };
+
     // Use the caller-provided timeout when given (the UI exposes this as
-    // a setting), otherwise fall back to a generous 10 min default. A short
-    // 3 min ceiling used to silently kill any multi-step / sub-agent run.
+    // a setting), otherwise fall back to a generous 10 min default.
     const effectiveTimeout = Math.max(60_000, timeoutMs ?? 600_000);
-    const result = await runHermesShell(script, { timeout: effectiveTimeout, onStreamId }, onOutput);
+    const result = await runHermesShell(script, { timeout: effectiveTimeout, onStreamId: wrappedOnStreamId }, interceptingOnOutput);
     const timedOut = !result.success && (result.code === 124 || /timed out after/i.test(result.stderr || ''));
 
     // Clean the reply: strip ANSI codes and any leftover banner/status lines.
