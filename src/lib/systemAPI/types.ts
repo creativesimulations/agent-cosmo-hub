@@ -56,6 +56,7 @@ declare global {
       // Process control + window lifecycle
       killStream: (streamId: string) => Promise<{ success: boolean; error?: string }>;
       setRunInBackground: (enabled: boolean) => Promise<{ success: boolean; runInBackground: boolean }>;
+      setAgentRunningState: (running: boolean) => Promise<{ success: boolean }>;
       quitApp: () => Promise<{ success: boolean }>;
 
       isElectron: boolean;
