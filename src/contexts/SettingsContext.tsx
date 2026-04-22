@@ -33,14 +33,19 @@ const STORAGE_KEY = "ronbot-settings-v1";
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: "dark",
-  autoStartAgent: false,
+  // Behavior — all on by default so the agent feels "always ready".
+  autoStartAgent: true,
   autoResumeSession: true,
-  desktopNotifications: false,
-  soundOnReply: false,
-  notifyOnSubAgentComplete: false,
+  // Notifications — opt-out, since users explicitly want to know when the
+  // agent replies / sub-agents finish, especially when running in tray.
+  desktopNotifications: true,
+  soundOnReply: true,
+  notifyOnSubAgentComplete: true,
   maxStoredMessages: 200,
   autoCheckUpdates: true,
-  runInBackground: false,
+  // Keep the agent alive when the window is closed by default — closing the
+  // window now hides to the system tray instead of quitting outright.
+  runInBackground: true,
 };
 
 interface SettingsContextValue {
