@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Network, AlertCircle, RefreshCw, Loader2, CheckCircle2, Activity, FileText } from "lucide-react";
+import { Network, AlertCircle, RefreshCw, Loader2, CheckCircle2, Activity, FileText, XCircle, FileWarning } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import StatusBadge from "@/components/ui/StatusBadge";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,14 @@ type RecentSubAgent = {
   completedAt: string;
   durationMs: number;
   summary?: string;
+};
+
+type FailedSubAgent = {
+  id: string;
+  goal: string;
+  startedAt: string;
+  failedAt: string;
+  reason?: string;
 };
 
 const formatDuration = (ms: number) => {
@@ -53,12 +61,13 @@ const SubAgents = () => {
   const { settings } = useSettings();
   const [active, setActive] = useState<ActiveSubAgent[]>([]);
   const [recent, setRecent] = useState<RecentSubAgent[]>([]);
+  const [failed, setFailed] = useState<FailedSubAgent[]>([]);
+  const [loggingDisabled, setLoggingDisabled] = useState(false);
+  const [enablingLog, setEnablingLog] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logPath, setLogPath] = useState<string>("~/.hermes/logs/agent.log");
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
-  // Track which completed-subagent ids we've already alerted on so we don't
-  // re-fire a notification on every 3-second poll.
   const seenCompletedRef = useRef<Set<string>>(new Set());
   const isFirstLoadRef = useRef(true);
 
@@ -82,6 +91,8 @@ const SubAgents = () => {
         } else {
           setActive(res.active);
           setRecent(res.recent);
+          setFailed(res.failed || []);
+          setLoggingDisabled(!!res.loggingDisabled);
           // Diff completions for the "notify on subagent completion" setting.
           // Skip the very first poll after mount so reopening the tab doesn't
           // dump a flood of stale notifications for already-finished work.
