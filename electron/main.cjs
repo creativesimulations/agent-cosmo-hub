@@ -722,7 +722,16 @@ ipcMain.handle('set-agent-running-state', async (_event, running) => {
 app.on('before-quit', () => { isQuittingForReal = true; });
 
 app.whenReady().then(() => {
+  // Hide the default app menu globally — keeps Win/Linux from showing the
+  // File/Edit/View bar at the top of every window. macOS still gets a
+  // minimal app menu (it's a system requirement).
+  if (process.platform !== 'darwin') {
+    try { Menu.setApplicationMenu(null); } catch { /* best effort */ }
+  }
   createWindow();
+  // Pre-create the tray immediately so the user can find Ronbot even if
+  // they close the window before we get a chance to set things up.
+  ensureTray();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
     else showMainWindow();
