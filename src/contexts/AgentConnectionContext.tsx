@@ -141,7 +141,7 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
   }, []);
 
   return (
-    <AgentConnectionContext.Provider value={{ connected, status, error, location, agentRunning, setAgentRunning, refresh, markConnected }}>
+    <AgentConnectionContext.Provider value={{ connected, status, error, location, agentRunning, setAgentRunning, refresh, markConnected, connectedSince }}>
       {children}
     </AgentConnectionContext.Provider>
   );

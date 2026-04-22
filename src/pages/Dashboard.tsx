@@ -61,42 +61,10 @@ const formatElapsed = (ms: number): string => {
   return `${s}s`;
 };
 
-const UPTIME_KEY = "ronbot-connected-since-v1";
-
-const readStoredConnectedSince = (): number | null => {
-  try {
-    const raw = window.localStorage.getItem(UPTIME_KEY);
-    if (!raw) return null;
-    const n = parseInt(raw, 10);
-    return Number.isFinite(n) ? n : null;
-  } catch {
-    return null;
-  }
-};
-
 const Dashboard = () => {
-  const { connected: agentConnected, location } = useAgentConnection();
+  const { connected: agentConnected, location, connectedSince } = useAgentConnection();
   const [metrics, setMetrics] = useState({ status: "—", uptime: "—", model: "—" });
-  const [connectedSince, setConnectedSince] = useState<number | null>(() => readStoredConnectedSince());
   const [, forceTick] = useState(0);
-
-  // Stamp / clear the connection start time in localStorage so it survives
-  // route changes and window reopens (when running in background).
-  useEffect(() => {
-    if (agentConnected) {
-      const existing = readStoredConnectedSince();
-      if (existing === null) {
-        const now = Date.now();
-        try { window.localStorage.setItem(UPTIME_KEY, String(now)); } catch { /* ignore */ }
-        setConnectedSince(now);
-      } else {
-        setConnectedSince(existing);
-      }
-    } else {
-      try { window.localStorage.removeItem(UPTIME_KEY); } catch { /* ignore */ }
-      setConnectedSince(null);
-    }
-  }, [agentConnected]);
 
   // Tick every second to keep the elapsed-time uptime fresh.
   useEffect(() => {
