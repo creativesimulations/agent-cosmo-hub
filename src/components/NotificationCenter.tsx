@@ -75,7 +75,7 @@ const NotificationCenter = () => {
             initial={{ opacity: 0, y: -10, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -10, scale: 0.95 }}
-            className="absolute left-0 top-10 w-80 glass-strong rounded-xl border border-white/10 shadow-2xl z-50 overflow-hidden"
+            className="absolute left-0 top-10 w-80 glass-strong rounded-xl border border-white/10 shadow-2xl z-[100] overflow-hidden"
           >
             <div className="p-3 border-b border-white/5 flex items-center justify-between">
               <span className="text-sm font-semibold text-foreground">Notifications</span>
