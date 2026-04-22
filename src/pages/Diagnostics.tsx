@@ -15,9 +15,12 @@ import {
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { systemAPI } from "@/lib/systemAPI";
 import { secretsStore, type BackendInfo } from "@/lib/systemAPI";
 import { diagnostics, type DiagEntry } from "@/lib/diagnostics";
+import { setDebugPromptDetection, isDebugPromptDetection } from "@/lib/approvalBridge";
+import { ShieldCheck } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +55,8 @@ const Diagnostics = () => {
   const [storeSummary, setStoreSummary] = useState<StoreSummary>({ loaded: false, entries: [] });
   const [lastResult, setLastResult] = useState<string>("");
   const [permsBlock, setPermsBlock] = useState<string | null>(null);
+  const [syncingPerms, setSyncingPerms] = useState(false);
+  const [debugPrompts, setDebugPrompts] = useState<boolean>(isDebugPromptDetection());
 
   useEffect(() => {
     const unsub = diagnostics.subscribe((all) => {
@@ -147,6 +152,33 @@ const Diagnostics = () => {
     } finally {
       setRunning(null);
     }
+  };
+
+  const handleSyncPerms = async () => {
+    setSyncingPerms(true);
+    try {
+      // Pull latest settings from disk-backed settings (mirrored by SettingsContext)
+      // We just call the systemAPI which reads current PermissionsConfig from settings store.
+      // Settings live in renderer; easiest path is to re-read what's already persisted via
+      // the materialize path which also writes perms — but we expose syncPermissions directly.
+      // The PermissionsPanel button does this with the live in-memory copy; here we trigger
+      // a refresh of the on-disk block view.
+      await refreshSummaries();
+      toast({ title: "Refreshed", description: "Re-read managed permissions block from ~/.hermes/config.yaml" });
+    } finally {
+      setSyncingPerms(false);
+    }
+  };
+
+  const toggleDebugPrompts = (on: boolean) => {
+    setDebugPrompts(on);
+    setDebugPromptDetection(on);
+    toast({
+      title: on ? "Prompt detection logging ON" : "Prompt detection logging OFF",
+      description: on
+        ? "Every approval-prompt match will be recorded in the agent log."
+        : "Stopped logging prompt detection events.",
+    });
   };
 
   const copyAll = async () => {
@@ -301,6 +333,48 @@ const Diagnostics = () => {
           )}
         </GlassCard>
       </div>
+
+      {/* Permissions block sent to the agent */}
+      <GlassCard className="p-4 space-y-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-primary" />
+            Permissions sent to agent
+            <span className="text-[11px] font-normal text-muted-foreground">
+              (managed block in ~/.hermes/config.yaml)
+            </span>
+          </h2>
+          <Button onClick={handleSyncPerms} disabled={syncingPerms} variant="ghost" size="sm">
+            <RefreshCw className={cn("w-3 h-3 mr-1", syncingPerms && "animate-spin")} />
+            Re-read block
+          </Button>
+        </div>
+        {permsBlock ? (
+          <pre className="p-2 rounded bg-background/40 border border-white/5 text-[11px] font-mono whitespace-pre-wrap max-h-72 overflow-auto">
+            {permsBlock}
+          </pre>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            No managed permissions block found. It's written automatically on the first chat message,
+            or you can sync it manually from Settings → Permissions.
+          </p>
+        )}
+      </GlassCard>
+
+      {/* Debug toggles */}
+      <GlassCard className="p-4 space-y-3">
+        <h2 className="text-sm font-semibold">Debug toggles</h2>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm text-foreground">Log every prompt-detection event</p>
+            <p className="text-[11px] text-muted-foreground">
+              When ON, every approval-prompt match is recorded in the agent log. Use this to confirm
+              the parser is firing on real prompts.
+            </p>
+          </div>
+          <Switch checked={debugPrompts} onCheckedChange={toggleDebugPrompts} />
+        </div>
+      </GlassCard>
 
       {/* Command log */}
       <GlassCard className="p-4 space-y-3">
