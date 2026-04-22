@@ -991,6 +991,7 @@ export const hermesAPI = {
     resumeId?: string,
     onStreamId?: (id: string) => void,
     timeoutMs?: number,
+    permissions?: PermissionsConfig,
   ): Promise<CommandResult & { reply?: string; diagnostics?: string; sessionId?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean; timedOut?: boolean }> {
     const startedAt = Date.now();
     agentLogs.push({
@@ -999,6 +1000,14 @@ export const hermesAPI = {
       summary: `→ Prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
     });
     const mat = await materializeHermesEnv();
+
+    // Mirror the Permissions panel into config.yaml so sub-agents and other
+    // Hermes processes that don't go through our stdin interceptor still
+    // honor the user's rules. This is the real fix for "agent says no
+    // internet even though I set Allow".
+    if (permissions) {
+      await writeHermesPermissions(permissions).catch(() => undefined);
+    }
 
     // Hard-fail before invoking hermes if we couldn't sync secrets.
     // Calling `hermes chat` against a stale/empty .env would just produce a
