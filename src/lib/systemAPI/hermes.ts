@@ -936,7 +936,12 @@ export const hermesAPI = {
         : 'hermes chat -q "$PROMPT" </dev/null 2>&1',
     ].join('\n');
 
-    const result = await runHermesShell(script, { timeout: 180000, onStreamId }, onOutput);
+    // Use the caller-provided timeout when given (the UI exposes this as
+    // a setting), otherwise fall back to a generous 10 min default. A short
+    // 3 min ceiling used to silently kill any multi-step / sub-agent run.
+    const effectiveTimeout = Math.max(60_000, timeoutMs ?? 600_000);
+    const result = await runHermesShell(script, { timeout: effectiveTimeout, onStreamId }, onOutput);
+    const timedOut = !result.success && (result.code === 124 || /timed out after/i.test(result.stderr || ''));
 
     // Clean the reply: strip ANSI codes and any leftover banner/status lines.
     const stripAnsi = (s: string) =>
