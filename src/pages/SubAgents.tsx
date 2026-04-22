@@ -197,6 +197,42 @@ const SubAgents = () => {
         </GlassCard>
       )}
 
+      {loggingDisabled && (
+        <GlassCard className="border-warning/40 bg-warning/5">
+          <div className="flex items-start gap-3">
+            <FileWarning className="w-5 h-5 text-warning mt-0.5 shrink-0" />
+            <div className="space-y-2 flex-1">
+              <p className="text-sm font-medium text-foreground">Hermes file logging is disabled</p>
+              <p className="text-xs text-muted-foreground">
+                The agent log file at <code>{logPath}</code> doesn't exist yet, so we can't show
+                sub-agent details. If sub-agents ran during your last chat, their activity wasn't
+                captured. Enable file logging to start tracking.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={enablingLog}
+                onClick={async () => {
+                  setEnablingLog(true);
+                  try {
+                    await systemAPI.enableHermesFileLogging();
+                    toast({ title: "File logging enabled", description: "New sub-agent activity will appear here." });
+                    await refresh();
+                  } catch (e) {
+                    toast({ title: "Couldn't enable logging", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+                  } finally {
+                    setEnablingLog(false);
+                  }
+                }}
+              >
+                {enablingLog ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <FileText className="w-3.5 h-3.5 mr-1.5" />}
+                Enable file logging
+              </Button>
+            </div>
+          </div>
+        </GlassCard>
+      )}
+
       {/* Active */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
