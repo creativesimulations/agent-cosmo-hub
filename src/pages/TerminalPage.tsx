@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Terminal as TerminalIcon, Send, Loader2, Trash2 } from "lucide-react";
+import { Terminal as TerminalIcon, Send, Loader2, Trash2, Shield } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { systemAPI } from "@/lib/systemAPI";
 import { isElectron } from "@/lib/systemAPI";
+import { usePermissions } from "@/contexts/PermissionsContext";
+import PermissionEventBubble from "@/components/permissions/PermissionEventBubble";
 
 interface TerminalLine {
   type: "input" | "output" | "error" | "system";
@@ -32,6 +34,7 @@ Useful examples:
   cat ~/.hermes/config.yaml`;
 
 const TerminalPage = () => {
+  const { events: permissionEvents } = usePermissions();
   const [lines, setLines] = useState<TerminalLine[]>(WELCOME);
   const [input, setInput] = useState("");
   const [running, setRunning] = useState(false);
