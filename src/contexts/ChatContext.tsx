@@ -322,11 +322,13 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         setIsStreaming(true);
 
         try {
+          const timeoutMs = Math.max(60, settingsRef.current.chatTimeoutSec || 600) * 1000;
           const result = await systemAPI.chatAgent(
             item.prompt,
             undefined,
             sessionIdRef.current ?? undefined,
             (id) => { activeStreamIdRef.current = id; },
+            timeoutMs,
           );
 
           // Even on success, if Stop fired during the call, treat as cancelled.
