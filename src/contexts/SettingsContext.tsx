@@ -35,6 +35,15 @@ export interface AppSettings {
    * enforced in the UI: 60–1800 seconds.
    */
   chatTimeoutSec: number;
+  /**
+   * Per-action permission defaults the agent enforces without asking.
+   * See src/lib/permissions.ts for the full shape and what each field does.
+   * "Ask each time" surfaces a glass approval dialog instead of a silent
+   * deny — historically the agent would hang on its built-in
+   * `[o]nce | [s]ession | [a]lways | [d]eny` prompt with no UI surface,
+   * and the user never knew why their task failed.
+   */
+  permissions: PermissionsConfig;
 }
 
 const STORAGE_KEY = "ronbot-settings-v1";
@@ -57,6 +66,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // 10 minutes — generous enough for multi-step / sub-agent runs without
   // hanging the UI forever if the agent truly stalls.
   chatTimeoutSec: 600,
+  permissions: DEFAULT_PERMISSIONS,
 };
 
 interface SettingsContextValue {
@@ -73,7 +83,10 @@ const loadSettings = (): AppSettings => {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw);
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    // Merge nested permissions so newly-added permission fields pick up
+    // their defaults instead of being undefined for existing users.
+    const permissions = { ...DEFAULT_PERMISSIONS, ...(parsed?.permissions || {}) };
+    return { ...DEFAULT_SETTINGS, ...parsed, permissions };
   } catch {
     return DEFAULT_SETTINGS;
   }
