@@ -332,12 +332,27 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
 
         try {
           const timeoutMs = Math.max(60, settingsRef.current.chatTimeoutSec || 600) * 1000;
+          // Track sub-agent spawns mentioned in the streamed reply so the
+          // chat header can show a live "N sub-agents working" pill.
+          let liveCount = 0;
+          setLiveSubAgentCount(0);
+          const subAgentRe = /\b(delegate_task|sub[-_ ]?agent\.start|spawn(ed)?\s+(sub[-_ ]?agent|child\s+agent))\b/gi;
+          const onStream = (chunk: { type: string; data?: string }) => {
+            if ((chunk.type === "stdout" || chunk.type === "stderr") && chunk.data) {
+              const matches = chunk.data.match(subAgentRe);
+              if (matches && matches.length) {
+                liveCount += matches.length;
+                setLiveSubAgentCount(liveCount);
+              }
+            }
+          };
           const result = await systemAPI.chatAgent(
             item.prompt,
-            undefined,
+            onStream,
             sessionIdRef.current ?? undefined,
             (id) => { activeStreamIdRef.current = id; },
             timeoutMs,
+            settingsRef.current.permissions,
           );
 
           // Even on success, if Stop fired during the call, treat as cancelled.
