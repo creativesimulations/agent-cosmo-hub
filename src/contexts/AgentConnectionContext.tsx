@@ -4,6 +4,7 @@ import { useSettings } from "./SettingsContext";
 
 const AGENT_RUNNING_KEY = "ronbot-agent-running-v1";
 const CONNECTED_SINCE_KEY = "ronbot-connected-since-v1";
+const FROZEN_UPTIME_KEY = "ronbot-frozen-uptime-v1";
 
 interface AgentConnectionValue {
   connected: boolean;
@@ -14,8 +15,10 @@ interface AgentConnectionValue {
   setAgentRunning: (on: boolean) => void;
   refresh: () => Promise<boolean>;
   markConnected: (location?: string) => void;
-  /** Epoch ms when the current connection began (null if not connected). */
+  /** Epoch ms when the current uptime period began (null if agent is off). */
   connectedSince: number | null;
+  /** Frozen elapsed ms from the last run, shown while agent is off. */
+  frozenUptimeMs: number | null;
 }
 
 const AgentConnectionContext = createContext<AgentConnectionValue | null>(null);
