@@ -177,6 +177,7 @@ function createWindow() {
     minHeight: 700,
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#050714',
+    autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -184,13 +185,21 @@ function createWindow() {
     },
   });
 
+  // Strip the default Electron menu (File / Edit / View / Window / Help)
+  // — Ronbot is a single-window app and the menubar adds no value.
+  mainWindow.setMenuBarVisibility(false);
+  mainWindow.setMenu(null);
+
   mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+
+  // Ensure the tray exists up-front so closing the window has something to
+  // hide into. On Linux/Wayland setups without a tray we fall back gracefully.
+  if (runInBackground) ensureTray();
 
   mainWindow.on('close', (event) => {
     if (isQuittingForReal) return;
     // macOS convention: closing the window keeps the app alive in the Dock,
-    // matching every other Mac app. Win/Linux only persist when the user
-    // has explicitly enabled "Run in background" so the tray icon appears.
+    // matching every other Mac app.
     if (process.platform === 'darwin') {
       event.preventDefault();
       mainWindow.hide();
@@ -199,12 +208,25 @@ function createWindow() {
     }
     if (runInBackground) {
       event.preventDefault();
-      mainWindow.hide();
       const t = ensureTray();
-      // Linux without a system tray (some Wayland/GNOME setups): keep the
-      // window visible so the user isn't stranded with no way back.
+      // Linux without a system tray: don't strand the user with no window.
       if (!t && process.platform === 'linux') {
         mainWindow.show();
+        return;
+      }
+      mainWindow.hide();
+
+      // First-time hint so the user knows the app is still alive in the tray.
+      if (!hasShownTrayHint && t) {
+        hasShownTrayHint = true;
+        try {
+          if (process.platform === 'win32' && typeof t.displayBalloon === 'function') {
+            t.displayBalloon({
+              title: 'Ronbot is still running',
+              content: 'Right-click the tray icon to open Ronbot or quit it completely.',
+            });
+          }
+        } catch { /* tray balloons are best-effort */ }
       }
     }
   });
