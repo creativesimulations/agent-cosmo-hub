@@ -190,8 +190,8 @@ const Dashboard = () => {
             value:
               metrics.status === "Gateway running" && metrics.uptime !== "—"
                 ? metrics.uptime
-                : connectedSinceRef.current
-                  ? formatElapsed(Date.now() - connectedSinceRef.current)
+                : connectedSince
+                  ? formatElapsed(Date.now() - connectedSince)
                   : "—",
             icon: Clock,
             accent: "text-foreground",
