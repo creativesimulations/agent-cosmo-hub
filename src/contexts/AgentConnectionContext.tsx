@@ -99,6 +99,24 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
     void systemAPI.hermesStatus().catch(() => {});
   }, [settings.autoStartAgent, connected]);
 
+  // Listen for tray-menu toggles so the Dashboard switch stays in sync.
+  useEffect(() => {
+    if (!window.electronAPI?.onAgentRunningChanged) return;
+    const unsubscribe = window.electronAPI.onAgentRunningChanged((running) => {
+      setAgentRunningState(running);
+      try {
+        window.localStorage.setItem(AGENT_RUNNING_KEY, String(running));
+      } catch { /* best effort */ }
+    });
+    return unsubscribe;
+  }, []);
+
+  // On mount, push current state to Electron so the tray reflects it.
+  useEffect(() => {
+    void systemAPI.setAgentRunningState(agentRunning);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <AgentConnectionContext.Provider value={{ connected, status, error, location, agentRunning, setAgentRunning, refresh, markConnected }}>
       {children}
