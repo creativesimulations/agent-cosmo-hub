@@ -63,21 +63,72 @@ const formatElapsed = (ms: number): string => {
 
 const UPTIME_KEY = "ronbot-connected-since-v1";
 
+const readStoredConnectedSince = (): number | null => {
+  try {
+    const raw = window.localStorage.getItem(UPTIME_KEY);
+    if (!raw) return null;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+};
+
 const Dashboard = () => {
   const { connected: agentConnected, location } = useAgentConnection();
   const [metrics, setMetrics] = useState({ status: "—", uptime: "—", model: "—" });
+  const [connectedSince, setConnectedSince] = useState<number | null>(() => readStoredConnectedSince());
   const [, forceTick] = useState(0);
 
-  // Persist the agent connection start timestamp in localStorage so the
-  // uptime counter survives switching tabs, navigating away from /dashboard,
-  // or reopening the window when the agent runs in
+  // Stamp / clear the connection start time in localStorage so it survives
+  // route changes and window reopens (when running in background).
+  useEffect(() => {
+    if (agentConnected) {
+      const existing = readStoredConnectedSince();
+      if (existing === null) {
+        const now = Date.now();
+        try { window.localStorage.setItem(UPTIME_KEY, String(now)); } catch { /* ignore */ }
+        setConnectedSince(now);
+      } else {
+        setConnectedSince(existing);
+      }
+    } else {
+      try { window.localStorage.removeItem(UPTIME_KEY); } catch { /* ignore */ }
+      setConnectedSince(null);
+    }
+  }, [agentConnected]);
+
+  // Tick every second to keep the elapsed-time uptime fresh.
+  useEffect(() => {
+    if (!agentConnected) return;
+    const id = window.setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [agentConnected]);
+
+  const loadStatus = useCallback(async () => {
+    if (!agentConnected) return;
+    const [statusResult, configResult] = await Promise.all([
+      systemAPI.hermesStatus(),
+      systemAPI.readConfig(),
+    ]);
+    const configuredModel =
+      configResult.success && configResult.content
+        ? readConfiguredModel(configResult.content)
+        : null;
+
+    const raw = statusResult.success ? parseStatusOutput(statusResult.stdout) : {};
+    const status = deriveDisplayStatus(raw, agentConnected);
+
+    setMetrics((prev) => ({
+      status,
+      uptime: status === "Gateway running" && raw.uptime ? raw.uptime : prev.uptime,
+      model: configuredModel || raw.model || "Configured",
+    }));
+  }, [agentConnected]);
 
   useEffect(() => {
     void loadStatus();
     if (!agentConnected) return;
-    // Live-sync: poll every 5s and on window focus so model/status changes
-    // (including ones the agent makes itself) show up here without a manual
-    // refresh.
     const interval = window.setInterval(() => void loadStatus(), 5000);
     const onFocus = () => void loadStatus();
     window.addEventListener("focus", onFocus);
