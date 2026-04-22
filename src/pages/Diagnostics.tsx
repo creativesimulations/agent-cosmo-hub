@@ -55,6 +55,8 @@ const Diagnostics = () => {
   const [storeSummary, setStoreSummary] = useState<StoreSummary>({ loaded: false, entries: [] });
   const [lastResult, setLastResult] = useState<string>("");
   const [permsBlock, setPermsBlock] = useState<string | null>(null);
+  const [syncingPerms, setSyncingPerms] = useState(false);
+  const [debugPrompts, setDebugPrompts] = useState<boolean>(isDebugPromptDetection());
 
   useEffect(() => {
     const unsub = diagnostics.subscribe((all) => {
