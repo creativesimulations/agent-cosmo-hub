@@ -1,82 +1,83 @@
 
 
-# Agent Permissions & Approval System
+# Fix permissions, sub-agent visibility, and missing approval prompts
 
-## Problem
-The Hermes agent has a permission prompt for any "side-effect" action (running a shell command, writing a file, fetching from the web, etc.):
+## Three connected bugs
 
-```
-[o]nce  |  [s]ession  |  [a]lways  |  [d]eny
-Choice [o/s/a/D]:
-```
+1. **Agent reported "no internet" even though the setting was Allow** — Ronbot's Permissions panel only intercepts prompts in the parent chat's stdout. Hermes's *own* permission engine never gets told, so it falls back to its built-in default (deny) for sub-agents and many parent actions.
+2. **Sub-agents tab stayed empty** — `listSubAgents()` greps for log markers that may not match real Hermes output, and silently returns `[]` when `~/.hermes/logs/agent.log` doesn't exist.
+3. **No approval modal ever appeared** — when permission is auto-handled by Hermes itself (because we never wrote anything to its config), the `Choice [o/s/a/D]:` prompt may not even be emitted; or when it is, our regex misses variant formats.
 
-Right now Ronbot closes the agent's stdin (`</dev/null`), so every prompt auto-times-out to **deny**. The prompt text is also filtered out of the chat view, so you never even see it. That's why your QA task failed silently — every command it tried was denied behind your back.
+## Fix
 
-## What we'll build
+### A. Mirror the Permissions panel into Hermes's own config (the real fix)
 
-### 1. New "Permissions" settings panel
-A dedicated **Settings → Permissions** section with toggle-driven defaults the agent will follow without asking:
+On every `chat()` call, write a managed block into `~/.hermes/config.yaml` derived from `settings.permissions`:
 
-- **Shell commands** — Ask each time / Allow read-only (`ls`, `cat`, …) / Allow all
-- **File reads** — Ask / Allow inside chosen folders / Allow anywhere
-- **File writes** — Ask / Allow inside chosen folders / Allow anywhere
-- **Internet access** — Ask / Allow / Deny
-- **Python / script execution** — Ask / Allow / Deny
-- **Sub-agent spawning** — Ask / Allow / Deny
-- **Default action when no rule matches** — Deny (safe) / Ask / Allow (trusted)
-- **Allow-listed folders** — list of paths the agent can freely read/write in (e.g. `~/Documents/RonbotWork`)
-- **Block-listed folders** — paths the agent must never touch (e.g. `~/.ssh`, `~/.hermes`)
-
-These get persisted (localStorage + `~/.ronbot/settings.json`, same as the rest of the prefs) and mirrored into Hermes via `~/.hermes/config.yaml` keys + env vars on every chat call (so the agent itself enforces the rule and skips its own prompt when the answer is pre-decided).
-
-### 2. Live approval dialog
-When a request hits "Ask each time", instead of silently denying:
-
-- Ronbot detects the `Choice [o/s/a/D]:` line in the streamed output.
-- A glass modal slides in showing:
-  - **What** the agent wants to do (e.g. "Run shell command: `python3 scripts/qa_processor.py`")
-  - **Why** (the agent's stated reason / current task step)
-  - **Risk badge** (Low / Medium / High based on the action class)
-  - Four buttons: **Once** · **This session** · **Always** · **Deny**
-- If `desktopNotifications` is on and the window isn't focused, fire a system notification ("Ron is waiting for your approval").
-- The Agent Chat sidebar entry shows a pulsing "⏳ Awaiting approval" badge.
-- The choice is written back to the agent's stdin and the run continues.
-- "Always" choices also update the relevant Permissions setting so future sessions remember.
-
-### 3. In-chat permission events
-Inside the chat thread we'll render a compact, non-intrusive system bubble for each permission event so you can see history:
-
-```
-🔐 Approved (session): run command  python3 scripts/qa_processor.py
-🚫 Denied: write file  /etc/hosts
+```yaml
+# ─── Managed by Ronbot: permissions ───
+permissions:
+  shell: allow | ask | deny
+  file_read: allow | ask | deny
+  file_write: allow | ask | deny
+  internet: allow | ask | deny
+  script: allow | ask | deny
+  subagent: allow | ask | deny
+  default: ask
+  allowed_paths: [~/Documents, ~/Downloads, ...]
+  blocked_paths: [~/.ssh, ~/.aws, ...]
+# ─── End managed ───
 ```
 
-These are interleaved with assistant messages so the conversation tells the full story.
+- New helper `writeHermesPermissions(perms)` in `hermes.ts` — same managed-block pattern as `.env`.
+- Called from `chat()` after `materializeHermesEnv`.
+- Also exported as a manual "Sync now" button in Settings → Permissions.
+- Diagnostics gets a new "Permissions sent to agent" panel showing the active block, so you can verify it.
 
-### 4. Terminal tab integration
-The Terminal page gets a small "Agent activity" feed at the top showing the same permission events live, plus the raw approval prompts as they arrive — so power users can watch what the agent is asking for in real time.
+This makes sub-agents inherit the same rules without us needing to intercept their stdin.
 
-### 5. Wire stdin properly
-Replace `</dev/null` on the `hermes chat` invocation with an attached stdin pipe. The Electron main process keeps the handle open for the lifetime of the run so we can write `o\n`, `s\n`, `a\n` or `d\n` in response to detected prompts.
+### B. Make approval prompts actually fire
 
-## Files we'll touch
+Make the prompt detector more robust so the modal really opens:
 
-- `src/contexts/SettingsContext.tsx` — add `permissions` substructure to `AppSettings` with sensible safe defaults.
-- `src/pages/SettingsPage.tsx` — new "Permissions" section with the toggles + folder list editors.
-- `src/contexts/PermissionsContext.tsx` *(new)* — global event bus for pending approval requests, history, and the modal trigger.
-- `src/components/permissions/ApprovalDialog.tsx` *(new)* — the four-button modal.
-- `src/components/permissions/PermissionEventBubble.tsx` *(new)* — chat-thread system message.
-- `src/lib/systemAPI/hermes.ts` — detect approval prompts in streamed output, expose a `respondToPrompt(streamId, choice)` helper, write Permissions settings into `~/.hermes/config.yaml` before each chat call, drop `</dev/null`.
-- `electron/main.cjs` + `electron/preload.cjs` — new IPC channel `agent:write-stdin` so the renderer can answer prompts.
-- `src/contexts/ChatContext.tsx` — surface detected prompts to PermissionsContext, render permission events in the message stream.
-- `src/pages/TerminalPage.tsx` — subscribe to PermissionsContext for the live activity feed.
-- `src/lib/diagnostics.ts` — new `agentLogs` source `'permission'` so events show up in Logs too.
+- Broaden `APPROVAL_PROMPT_RE` to also catch variants: `[o]nce/[s]ession/[a]lways/[d]eny`, `Approve? (o/s/a/d)`, `> Permission required`, `Awaiting approval`.
+- Capture the **20 lines preceding** the prompt as the dialog's "What" body so the user sees the actual command/path the agent is about to touch.
+- Add a debug toggle in Diagnostics: **"Log every prompt detection"** so we can confirm the parser is firing.
+- If the agent emits a permission line but our parser misses it, fall back to a generic "Agent is waiting for input" pill in chat with a free-text reply box.
 
-## Defaults (safe out of the box)
-- Shell / writes / internet / scripts → **Ask each time**
-- File reads → **Allow inside `~/Documents`, `~/Downloads`, project folders; ask elsewhere**
-- Block list seeded with `~/.ssh`, `~/.hermes`, `~/.aws`, `~/.config`
-- Default fallback → **Ask**
+### C. Fix the Sub-Agents tab
 
-You can flip everything to "Allow" in two clicks if you want headless autonomy, but you'll always have informed consent as the default.
+Three improvements to `listSubAgents()`:
+
+1. **Broaden log markers**: match `subagent`, `sub_agent`, `sub-agent`, `delegate_task`, `child agent`, `spawned agent`, `worker.start/complete`, plus any line with both `task` and one of `started/completed/failed`.
+2. **Add a "Failed" bucket** for denied/error sub-agents with the reason text.
+3. **Detect "logging not enabled"**: if `agent.log` is missing AND the parent chat mentioned spawning sub-agents, show a banner on the SubAgents tab:
+   > "Sub-agents ran during this chat but Hermes file logging is disabled, so we can't show their details."  
+   With a one-click **"Enable file logging"** button that writes `logging.file: ~/.hermes/logs/agent.log` into config.
+
+### D. Live in-chat feedback
+
+While a chat turn is streaming:
+
+- Count `delegate_task` / sub-agent mentions and show a live pill above the message: **"🤖 4 sub-agents working…"** Click → SubAgents tab.
+- If the agent's reply contains "no internet" / "permission denied" while the relevant Ronbot setting is **Allow**, render a system bubble:
+  > "Agent reported no internet access, but Ronbot's setting is Allow. The permissions block may not have been applied. Open Diagnostics."
+
+## Files touched
+
+- `src/lib/systemAPI/hermes.ts` — `writeHermesPermissions()`, hook into `chat()`, broaden `listSubAgents()` markers + Failed bucket + logging-disabled detection, expose `enableFileLogging()`.
+- `src/lib/approvalBridge.ts` — broaden `APPROVAL_PROMPT_RE`, capture 20-line context window.
+- `src/components/permissions/ApprovalDialog.tsx` — render the multi-line "What" context.
+- `src/contexts/ChatContext.tsx` — pass `settings.permissions` into `chat()`, count live sub-agent mentions, expose `liveSubAgentCount`, detect denial-vs-Allow mismatch.
+- `src/pages/AgentChat.tsx` — live "N sub-agents working" pill, internet-denied warning bubble.
+- `src/pages/SubAgents.tsx` — Failed bucket, "logging disabled" banner with Enable button.
+- `src/pages/Diagnostics.tsx` — "Permissions sent to agent" panel + "Log every prompt detection" toggle.
+- `src/pages/SettingsPage.tsx` — "Sync permissions to agent now" button in the Permissions panel.
+- `src/lib/diagnostics.ts` — log every permissions-block write and every prompt detection.
+
+## Safety
+
+- The YAML write is **additive** — only the managed block is touched, never user-edited keys.
+- "Enable file logging" is opt-in, never automatic.
+- If Hermes ignores the YAML keys (older build), Diagnostics surfaces a one-line warning so you can see it instead of silently failing.
 
