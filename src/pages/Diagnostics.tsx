@@ -154,6 +154,33 @@ const Diagnostics = () => {
     }
   };
 
+  const handleSyncPerms = async () => {
+    setSyncingPerms(true);
+    try {
+      // Pull latest settings from disk-backed settings (mirrored by SettingsContext)
+      // We just call the systemAPI which reads current PermissionsConfig from settings store.
+      // Settings live in renderer; easiest path is to re-read what's already persisted via
+      // the materialize path which also writes perms — but we expose syncPermissions directly.
+      // The PermissionsPanel button does this with the live in-memory copy; here we trigger
+      // a refresh of the on-disk block view.
+      await refreshSummaries();
+      toast({ title: "Refreshed", description: "Re-read managed permissions block from ~/.hermes/config.yaml" });
+    } finally {
+      setSyncingPerms(false);
+    }
+  };
+
+  const toggleDebugPrompts = (on: boolean) => {
+    setDebugPrompts(on);
+    setDebugPromptDetection(on);
+    toast({
+      title: on ? "Prompt detection logging ON" : "Prompt detection logging OFF",
+      description: on
+        ? "Every approval-prompt match will be recorded in the agent log."
+        : "Stopped logging prompt detection events.",
+    });
+  };
+
   const copyAll = async () => {
     await navigator.clipboard.writeText(diagnostics.toText());
     toast({ title: "Copied", description: `${entries.length} log entries copied` });
