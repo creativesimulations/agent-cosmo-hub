@@ -1062,8 +1062,26 @@ export const hermesAPI = {
       }
     }
 
-    const finalReply = cleaned || stripAnsi(result.stdout || '').trim();
+    let finalReply = cleaned || stripAnsi(result.stdout || '').trim();
     const finalDiag = diagnostics || (mat.success ? '' : `materializeEnv failed: ${mat.error || 'unknown'}`);
+
+    // Replace whatever partial output we got with a clear, actionable
+    // message when the underlying process was killed by the timeout. The
+    // raw "Command timed out after 600000ms" line is technically true but
+    // unhelpful — the user wants to know what to do about it.
+    if (timedOut) {
+      const seconds = Math.round(effectiveTimeout / 1000);
+      finalReply = [
+        `⏱ The agent didn't finish within the ${seconds}s chat timeout.`,
+        '',
+        'Long multi-step tasks (sub-agents, file generation, repeated tool calls)',
+        'can take many minutes. You can raise this limit in Settings → Sessions',
+        '& history → "Per-prompt timeout".',
+        '',
+        'The partial output (if any) was discarded so it isn\'t mistaken for a',
+        'completed answer.',
+      ].join('\n');
+    }
 
     if (missingKey) {
       agentLogs.push({
@@ -1071,6 +1089,14 @@ export const hermesAPI = {
         level: 'error',
         summary: `Missing API key: ${missingKey.envVar} (${missingKey.provider})`,
         detail: finalDiag,
+        durationMs: Date.now() - startedAt,
+      });
+    } else if (timedOut) {
+      agentLogs.push({
+        source: 'chat',
+        level: 'error',
+        summary: `Chat timed out after ${Math.round(effectiveTimeout / 1000)}s — raise "Per-prompt timeout" in Settings`,
+        detail: truncateForLog([finalDiag, result.stderr].filter(Boolean).join('\n')),
         durationMs: Date.now() - startedAt,
       });
     } else if (!result.success) {
@@ -1097,6 +1123,7 @@ export const hermesAPI = {
       diagnostics: finalDiag,
       sessionId,
       missingKey,
+      timedOut,
     };
   },
 
