@@ -435,6 +435,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           if (!onChatPageRef.current) setUnreadCount((n) => n + 1);
         } finally {
           activeStreamIdRef.current = null;
+          setLiveSubAgentCount(0);
         }
       }
     } finally {
@@ -513,6 +514,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         queuedCount,
         unreadCount,
         sessionId,
+        liveSubAgentCount,
         sendMessage,
         stop,
         deleteMessage,
