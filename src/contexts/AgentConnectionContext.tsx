@@ -47,9 +47,9 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
     try {
       window.localStorage.setItem(AGENT_RUNNING_KEY, String(on));
     } catch { /* best effort */ }
-    // Notify Electron tray of new state
-    if (window.electronAPI?.isElectron) {
-      window.electronAPI.runCommand?.("echo noop").catch(() => {});
+    // Update tray tooltip to reflect agent state
+    if (window.electronAPI?.setAgentRunningState) {
+      window.electronAPI.setAgentRunningState(on).catch(() => {});
     }
   }, []);
 
