@@ -654,6 +654,11 @@ export const hermesAPI = {
   async readPermissionsBlock() {
     return readHermesPermissionsBlock();
   },
+
+  /** Toggle Camofox `managed_persistence` in the agent's config. */
+  async setBrowserCamofoxPersistence(enabled: boolean) {
+    return setBrowserCamofoxPersistence(enabled);
+  },
   /** Install the agent using the official install script.
    *  On Windows we always run inside WSL because hermes-agent is not published
    *  to PyPI and requires the install script (which expects a POSIX shell). */
