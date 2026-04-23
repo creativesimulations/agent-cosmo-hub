@@ -18,9 +18,16 @@ import {
   Play,
   History,
   Network,
-  
+  ChevronDown,
+  Shield,
+  Sparkles,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
