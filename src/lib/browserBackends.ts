@@ -87,12 +87,11 @@ export const BROWSER_BACKENDS: BrowserBackend[] = [
     name: 'Local Chrome (CDP)',
     tagline: 'Use your own Chrome — keeps your existing logins & cookies.',
     description:
-      "Connects to a Chrome instance on your machine using the Chrome DevTools Protocol. Best when you're already logged in to the sites Ron needs to use. Setup is CLI-only — we'll guide you through the launch command.",
+      "Connects to a Chrome instance on your machine using the Chrome DevTools Protocol. Best when you're already logged in to the sites Ron needs to use. Ron will install Chrome (if missing), launch it with remote debugging, and wire up the connection — no terminal needed.",
     tier: 'free',
     icon: 'Chrome',
-    surface: 'manual',
+    surface: 'local',
     requiredEnv: [],
-    manualOnly: true,
   },
   {
     id: 'browserUse',
