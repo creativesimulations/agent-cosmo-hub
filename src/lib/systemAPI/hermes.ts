@@ -498,6 +498,8 @@ const LOG_BEGIN = '# ─── Managed by Ronbot: logging (do not edit) ──�
 const LOG_END = '# ─── End Ronbot logging ───';
 const BROWSER_BEGIN = '# ─── Managed by Ronbot: browser (do not edit) ───';
 const BROWSER_END = '# ─── End Ronbot browser ───';
+const TOOLSETS_BEGIN = '# ─── Managed by Ronbot: toolsets (do not edit) ───';
+const TOOLSETS_END = '# ─── End Ronbot toolsets ───';
 
 const stripManagedBlock = (yaml: string, begin: string, end: string): string => {
   const startIdx = yaml.indexOf(begin);
@@ -622,7 +624,10 @@ const writeBrowserBlock = async (
 ): Promise<{ success: boolean; error?: string }> => {
   const cfg = await readHermesFile(HERMES_CONFIG);
   const existing = cfg.success && cfg.content ? cfg.content : 'model: openrouter/auto\n';
-  const stripped = stripManagedBlock(existing, BROWSER_BEGIN, BROWSER_END).replace(/\n+$/, '');
+  let stripped = stripManagedBlock(existing, BROWSER_BEGIN, BROWSER_END).replace(/\n+$/, '');
+  // Also strip any prior managed toolsets block — we re-write it below so the
+  // hermes-web toolset is always loaded whenever a browser backend is wired.
+  stripped = stripManagedBlock(stripped, TOOLSETS_BEGIN, TOOLSETS_END).replace(/\n+$/, '');
 
   const isEmpty = !next.camofoxPersistence && !next.cdpUrl;
   let out: string;
@@ -630,6 +635,10 @@ const writeBrowserBlock = async (
     out = `${stripped}\n`;
   } else {
     const lines: string[] = [BROWSER_BEGIN, 'browser:'];
+    // CRITICAL: explicitly mark the browser subsystem as enabled. Without this
+    // some Hermes builds short-circuit `browser_*` tool calls with a "browser
+    // permission error" even when the toolset is loaded and the CDP url is set.
+    lines.push('  enabled: true');
     if (next.cdpUrl) {
       lines.push(`  cdp_url: "${next.cdpUrl}"`);
     }
@@ -638,7 +647,17 @@ const writeBrowserBlock = async (
       lines.push('    managed_persistence: true');
     }
     lines.push(BROWSER_END);
-    out = `${stripped}\n\n${lines.join('\n')}\n`;
+
+    // Toolsets: ensure hermes-web is present so browser_navigate / browser_click
+    // / etc. are actually registered with the agent. We only manage our own
+    // block; users can still add other toolsets elsewhere in the file.
+    const toolsetLines = [
+      TOOLSETS_BEGIN,
+      'toolsets:',
+      '  - hermes-web',
+      TOOLSETS_END,
+    ];
+    out = `${stripped}\n\n${lines.join('\n')}\n\n${toolsetLines.join('\n')}\n`;
   }
   const w = await writeHermesFile(HERMES_CONFIG, out, '600');
   return w.success ? { success: true } : { success: false, error: 'Failed to write config.yaml browser block' };
@@ -705,6 +724,76 @@ export const hermesAPI = {
   /** Read the active managed permissions block (for Diagnostics). */
   async readPermissionsBlock() {
     return readHermesPermissionsBlock();
+  },
+
+  /** Read live browser diagnostics: CDP reachability, what config.yaml says,
+   *  whether `hermes-web` is loaded, and the effective `internet` permission.
+   *  This is what the Diagnostics page shows under "Browser toolset". */
+  async getBrowserDiagnostics(): Promise<{
+    cdpUrl: string | null;
+    cdpReachable: boolean | null;
+    cdpVersion?: string;
+    browserEnabledInConfig: boolean;
+    hermesWebToolsetLoaded: boolean;
+    internetPermission: string | null;
+    rawBrowserBlock: string | null;
+    rawToolsetsBlock: string | null;
+  }> {
+    const cfg = await readHermesFile(HERMES_CONFIG);
+    const yaml = cfg.success && cfg.content ? cfg.content : '';
+
+    // Browser block
+    const bIdx = yaml.indexOf(BROWSER_BEGIN);
+    const bEnd = yaml.indexOf(BROWSER_END, bIdx);
+    const rawBrowserBlock = bIdx !== -1 && bEnd !== -1
+      ? yaml.slice(bIdx, bEnd + BROWSER_END.length)
+      : null;
+    const browserState = parseBrowserBlock(yaml);
+    const browserEnabledInConfig = rawBrowserBlock
+      ? /^\s*enabled:\s*true/m.test(rawBrowserBlock)
+      : false;
+
+    // Toolsets block (managed or unmanaged — we accept either)
+    const tIdx = yaml.indexOf(TOOLSETS_BEGIN);
+    const tEnd = yaml.indexOf(TOOLSETS_END, tIdx);
+    const rawToolsetsBlock = tIdx !== -1 && tEnd !== -1
+      ? yaml.slice(tIdx, tEnd + TOOLSETS_END.length)
+      : null;
+    const hermesWebToolsetLoaded = /(^|\n)\s*-\s*hermes-web\b/.test(yaml);
+
+    // Internet permission (from managed perms block)
+    const permsBlock = await readHermesPermissionsBlock();
+    const internetMatch = permsBlock?.match(/^\s*internet:\s*(\w+)/m);
+    const internetPermission = internetMatch ? internetMatch[1] : null;
+
+    // Probe CDP
+    let cdpReachable: boolean | null = null;
+    let cdpVersion: string | undefined;
+    if (browserState.cdpUrl) {
+      try {
+        // Hermes points cdp_url at e.g. http://127.0.0.1:9222 — append /json/version.
+        const probeUrl = browserState.cdpUrl.replace(/\/+$/, '') + '/json/version';
+        const resp = await fetch(probeUrl, { method: 'GET' });
+        cdpReachable = resp.ok;
+        if (resp.ok) {
+          const json = await resp.json().catch(() => ({} as { Browser?: string }));
+          cdpVersion = (json as { Browser?: string }).Browser;
+        }
+      } catch {
+        cdpReachable = false;
+      }
+    }
+
+    return {
+      cdpUrl: browserState.cdpUrl,
+      cdpReachable,
+      cdpVersion,
+      browserEnabledInConfig,
+      hermesWebToolsetLoaded,
+      internetPermission,
+      rawBrowserBlock,
+      rawToolsetsBlock,
+    };
   },
 
   /** Toggle Camofox `managed_persistence` in the agent's config. */
