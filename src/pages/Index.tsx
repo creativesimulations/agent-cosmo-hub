@@ -373,7 +373,93 @@ const Index = () => {
           </motion.div>
         )}
 
-        {mode === "install" && (
+        {mode === "guard" && (
+          <motion.div
+            key="guard"
+            initial={{ opacity: 0, x: 30 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -30 }}
+            className="max-w-md w-full space-y-6"
+          >
+            <Button variant="ghost" size="sm" onClick={() => setMode("choose")} className="text-muted-foreground hover:text-foreground">
+              <ArrowLeft className="w-4 h-4 mr-1" /> Back
+            </Button>
+
+            <GlassCard className="space-y-5">
+              <div className="space-y-2">
+                <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-success" />
+                  You already have an agent
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  An agent named <span className="text-primary font-semibold">{existingAgentName}</span> is already installed at <code className="text-foreground text-xs">~/.hermes</code>. Ronbot is built for a single agent — pick how you want to continue.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <Button
+                  onClick={handleGuardConnect}
+                  className="w-full gradient-primary text-primary-foreground"
+                >
+                  <Link2 className="w-4 h-4 mr-2" /> Connect to {existingAgentName}
+                </Button>
+
+                <div className="glass-subtle rounded-lg p-3 space-y-2">
+                  <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-primary" /> Rename this agent
+                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    Updates the persona file and clears chat history so the new name takes effect on the next message. Keeps secrets, skills, and the venv.
+                  </p>
+                  <div className="flex gap-2">
+                    <Input
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      placeholder="New name"
+                      disabled={renaming}
+                      className="bg-background/50 border-white/10 text-sm"
+                    />
+                    <Button
+                      onClick={handleGuardRename}
+                      disabled={renaming || !renameValue.trim() || renameValue.trim() === existingAgentName}
+                      size="sm"
+                      variant="secondary"
+                    >
+                      {renaming ? <Loader2 className="w-4 h-4 animate-spin" /> : "Rename"}
+                    </Button>
+                  </div>
+                </div>
+
+                <Button
+                  onClick={() => setShowResetConfirm(true)}
+                  variant="ghost"
+                  className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"
+                >
+                  <XCircle className="w-4 h-4 mr-2" /> Reset & install fresh
+                </Button>
+              </div>
+
+              {resetting && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Removing existing agent...
+                  </div>
+                  <div className="font-mono text-xs space-y-1 max-h-32 overflow-y-auto pr-1 glass-subtle rounded-lg p-2">
+                    {resetOutput.map((line, i) => (
+                      <p key={i} className={
+                        line.startsWith("✓") ? "text-success" :
+                        line.startsWith("✗") ? "text-destructive" :
+                        "text-foreground/70"
+                      }>{line}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </GlassCard>
+          </motion.div>
+        )}
+
+
           <motion.div
             key="install"
             initial={{ opacity: 0, x: 30 }}
