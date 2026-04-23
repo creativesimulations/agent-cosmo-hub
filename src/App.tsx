@@ -9,6 +9,7 @@ import { AgentConnectionProvider } from "./contexts/AgentConnectionContext";
 import { ChatProvider } from "./contexts/ChatContext";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { PermissionsProvider } from "./contexts/PermissionsContext";
+import { CapabilitiesProvider } from "./contexts/CapabilitiesContext";
 import ApprovalDialog from "./components/permissions/ApprovalDialog";
 import PermissionsBridge from "./components/permissions/PermissionsBridge";
 import Index from "./pages/Index";
@@ -41,6 +42,7 @@ const App = () => (
         <PermissionsBridge />
         <ApprovalDialog />
         <AgentConnectionProvider>
+        <CapabilitiesProvider>
         <InstallProvider>
         <ChatProvider>
         <Routes>
@@ -67,6 +69,7 @@ const App = () => (
         </Routes>
         </ChatProvider>
         </InstallProvider>
+        </CapabilitiesProvider>
         </AgentConnectionProvider>
         </PermissionsProvider>
         </SettingsProvider>
