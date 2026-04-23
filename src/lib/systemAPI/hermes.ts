@@ -972,10 +972,15 @@ export const hermesAPI = {
     // combined with the Windows PATH it overflows OS limits when inlined).
     const baseResult = await runHermesShell(fullCmd, { timeout: 600000 }, onOutput);
     if (!baseResult.success) return baseResult;
-    if (!extrasFlag) return finalizeInstallVerification(baseResult, onOutput);
+    if (!extrasFlag) {
+      await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }, onOutput).catch(() => undefined);
+      return finalizeInstallVerification(baseResult, onOutput);
+    }
 
     const extrasResult = await runHermesShell(extrasCmd(extrasFlag), { timeout: 300000 }, onOutput);
-    return extrasResult.success ? finalizeInstallVerification(extrasResult, onOutput) : extrasResult;
+    if (!extrasResult.success) return extrasResult;
+    await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }, onOutput).catch(() => undefined);
+    return finalizeInstallVerification(extrasResult, onOutput);
   },
 
   /** Install from a local folder the user already has on disk
@@ -1053,7 +1058,9 @@ export const hermesAPI = {
     ].join('\n');
 
     const result = await runHermesShell(script, { timeout: 600000 }, onOutput);
-    return result.success ? finalizeInstallVerification(result, onOutput) : result;
+    if (!result.success) return result;
+    await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }, onOutput).catch(() => undefined);
+    return finalizeInstallVerification(result, onOutput);
   },
 
   /** Alternative: install via git clone + editable pip into the dedicated venv.
