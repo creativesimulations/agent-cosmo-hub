@@ -2,12 +2,14 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, Re
 import { useLocation } from "react-router-dom";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
+import { toast as sonnerToast } from "sonner";
 import { useSettings } from "./SettingsContext";
 import { handleAgentReplyArrived } from "@/lib/notify";
 import { liveSubAgents } from "@/lib/liveSubAgents";
 import { detectToolUnavailable, type ToolUnavailableHit } from "@/lib/toolUnavailable";
 import { detectToolCalls } from "@/lib/toolUseDetection";
 import { useCapabilities } from "./CapabilitiesContext";
+import { capabilityProbe } from "@/lib/capabilityProbe";
 
 /**
  * Chat is hoisted into a top-level context so:
