@@ -518,7 +518,11 @@ const yamlList = (items: string[]): string => {
 };
 
 /** Write the current PermissionsConfig into ~/.hermes/config.yaml.
- *  Idempotent: only the managed block is touched. */
+ *  Idempotent: only the managed block is touched.
+ *
+ *  Includes the per-tool keys the official `hermes-cli` toolset honors:
+ *  browser, code_execution, delegation, cronjob, messaging, image_gen, tts —
+ *  in addition to the historical shell / file / internet / script keys. */
 export const writeHermesPermissions = async (
   perms: PermissionsConfig,
 ): Promise<{ success: boolean; error?: string }> => {
@@ -537,6 +541,13 @@ export const writeHermesPermissions = async (
     `  file_write_scope: ${perms.fileWriteScope}`,
     `  internet: ${perms.internet}`,
     `  script: ${perms.script}`,
+    `  browser: ${perms.browser ?? 'ask'}`,
+    `  code_execution: ${perms.codeExecution ?? 'ask'}`,
+    `  delegation: ${perms.delegation ?? 'allow'}`,
+    `  cronjob: ${perms.cronjob ?? 'ask'}`,
+    `  messaging: ${perms.messaging ?? 'ask'}`,
+    `  image_gen: ${perms.imageGen ?? 'allow'}`,
+    `  tts: ${perms.tts ?? 'allow'}`,
     `  default: ${perms.fallback}`,
     `  allowed_paths:${yamlList(perms.allowedFolders)}`,
     `  blocked_paths:${yamlList(perms.blockedFolders)}`,
@@ -606,16 +617,14 @@ interface BrowserBlockState {
   cdpUrl: string | null;
 }
 
-const BROWSER_DEFAULT_TOOLSETS = ['hermes-web'];
-const BROWSER_DEFAULT_ALLOWED_TOOLS = [
-  'browser',
-  'browser_navigate',
-  'browser_click',
-  'browser_type',
-  'browser_snapshot',
-  'browser_wait',
-  'web',
-];
+// Official Hermes platform toolset bundle. Loading `hermes-cli` natively
+// registers `web`, `browser`, `terminal`, `file`, `vision`, `image_gen`,
+// `tts`, `memory`, `todo`, `clarify`, `delegation`, `code_execution`,
+// `cronjob`, `skills`, `session_search`, `messaging`, etc. — i.e. the full
+// 36-tool bundle the docs describe. Previously we wrote `hermes-web`, which
+// is not a real toolset name and caused the agent to report "missing skill"
+// for every web/browser call.
+const BROWSER_DEFAULT_TOOLSETS = ['hermes-cli'];
 
 const quoteYamlScalar = (value: string): string => `"${value.replace(/"/g, '\\"')}"`;
 
@@ -649,15 +658,10 @@ const writeBrowserBlock = async (
   stripped = stripManagedBlock(stripped, TOOLSETS_BEGIN, TOOLSETS_END).replace(/\n+$/, '');
 
   const lines: string[] = [BROWSER_BEGIN, 'browser:'];
-  // CRITICAL: explicitly mark the browser subsystem as enabled. Without this
-  // some Hermes builds short-circuit `browser_*` tool calls with a "browser
-  // permission error" even when the toolset is loaded and the CDP url is set.
-  lines.push('  enabled: true');
-  lines.push('  allow_network: true');
-  lines.push('  tool_allowlist:');
-  for (const tool of BROWSER_DEFAULT_ALLOWED_TOOLS) {
-    lines.push(`    - ${quoteYamlScalar(tool)}`);
-  }
+  // Only emit keys that the documented Hermes browser schema understands.
+  // The previous `enabled` / `allow_network` / `tool_allowlist` keys were
+  // invented by us and were either ignored or actively blocked the agent's
+  // permission system — they are intentionally NOT written anymore.
   if (next.cdpUrl) {
     lines.push(`  cdp_url: "${next.cdpUrl}"`);
   }
@@ -665,11 +669,14 @@ const writeBrowserBlock = async (
     lines.push('  camofox:');
     lines.push('    managed_persistence: true');
   }
+  // If neither field is set, leave the block as a placeholder so later edits
+  // round-trip cleanly.
+  if (lines.length === 2) lines.push('  # (no overrides — using Hermes defaults)');
   lines.push(BROWSER_END);
 
-  // Toolsets: ensure hermes-web is present so browser_navigate / browser_click
-  // / etc. are actually registered with the agent. We only manage our own
-  // block; users can still add other toolsets elsewhere in the file.
+  // Toolsets: load the official `hermes-cli` platform bundle so web,
+  // browser, terminal, file, vision, image_gen, tts, etc. are all
+  // registered without the user needing extra setup.
   const toolsetLines = [
     TOOLSETS_BEGIN,
     'toolsets:',
@@ -783,7 +790,10 @@ export const hermesAPI = {
     const rawToolsetsBlock = tIdx !== -1 && tEnd !== -1
       ? yaml.slice(tIdx, tEnd + TOOLSETS_END.length)
       : null;
-    const hermesWebToolsetLoaded = /(^|\n)\s*-\s*hermes-web\b/.test(yaml);
+    // Look for the official toolset bundle. Accept the legacy `hermes-web`
+    // name too so freshly-repaired and not-yet-repaired installs both report.
+    const hermesWebToolsetLoaded =
+      /(^|\n)\s*-\s*hermes-cli\b/.test(yaml) || /(^|\n)\s*-\s*hermes-web\b/.test(yaml);
 
     // Internet permission (from managed perms block)
     const permsBlock = await readHermesPermissionsBlock();
