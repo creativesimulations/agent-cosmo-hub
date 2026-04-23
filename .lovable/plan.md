@@ -1,101 +1,83 @@
 
 
-# Align Ronbot with official Hermes setup + correct permissions, skills & tools intake
+# Align system analysis, secret naming & chat structure with official Hermes docs
 
-## Why this is needed
+## What's wrong today
 
-The agent currently can't browse the web because we write `toolsets: [hermes-web]` (not a real Hermes toolset) plus invented keys (`browser.enabled`, `browser.allow_network`, `browser.tool_allowlist`) that Hermes ignores or rejects. We also gate trivial web access behind a browser-backend wizard, miss `ripgrep`, and don't surface terminal sandboxing or a path for users to drop in their own Hermes skills/tools.
+1. **Prerequisite scan checks the wrong things.** Per the official docs, the only hard prereqs are **Python 3.11+, Git, WSL2 on Windows**. The Hermes installer brings everything else (uv, ripgrep, ffmpeg, Node, build tools) in itself. Today we mark `curl` and `ripgrep` as **required** (they're not), and we still emit "missing pip" errors when the installer would install pip into its own venv anyway.
 
-## Part 1 — Toolsets, config schema & defaults
+2. **Secret env-var names don't match the official Hermes vars.** A few important mismatches:
+   - We use `GEMINI_API_KEY` — the docs specify **`GOOGLE_API_KEY`** for Gemini.
+   - We're missing **`NOUS_API_KEY`** (Nous Portal — the project's first-party provider).
+   - We use `HUGGINGFACE_API_KEY` style — docs use **`HF_TOKEN`**.
+   - We're missing **`HERMES_MODEL`** override and **`OPENAI_BASE_URL`** / **`ANTHROPIC_BASE_URL`** for self-hosted/proxied providers.
+   - Our messaging vars now match docs (good — already fixed).
 
-**`src/lib/systemAPI/hermes.ts`**
-- Replace `BROWSER_DEFAULT_TOOLSETS = ['hermes-web']` with the official platform bundle: `toolsets: [hermes-cli]`. This natively registers `web`, `browser`, `terminal`, `file`, `vision`, `image_gen`, `tts`, `memory`, `todo`, `clarify`, `delegation`, `code_execution`, `cronjob`, `skills`, `session_search`, `messaging`.
-- Reduce the `browser:` block to documented keys only: `cdp_url` (when set) and Camofox `managed_persistence`. Drop `enabled`, `allow_network`, `tool_allowlist`.
-- `writeInitialConfig` writes `toolsets: [hermes-cli]` from the start so a fresh agent has working web/terminal/file/browser immediately.
-- New `repairConfig()` helper: rewrites `toolsets`, strips bogus keys, re-chmods `node_modules/.bin/*`, re-runs `hermes doctor`, then sends a chat ping.
-- Update `getBrowserDiagnostics()` to look for `hermes-cli` (not `hermes-web`).
+3. **Chat call shape doesn't follow the documented Hermes interface.**
+   - Docs use **`hermes chat -p "<prompt>"`** for one-shot prompts, **`hermes --resume <id>`** at the top level (not `hermes chat --resume <id> -q`).
+   - We use `-q` (legacy) and `chat --resume` (legacy subcommand). Both still work on older builds but are being removed in current Hermes. Modern installs will return "unknown option `-q`".
+   - We don't pass `--no-color` / `--json` flags Hermes now offers for clean machine-readable output, so we hand-roll ANSI/box stripping that misses new chrome.
 
-## Part 2 — Permissions aligned to the new toolset
+## Plan
 
-Currently `PermissionsConfig` (`src/lib/permissions.ts`) only knows `shell / fileRead / fileWrite / internet / script`. With `hermes-cli` loaded, the agent now has `browser_*`, `vision`, `image_gen`, `tts`, `code_execution`, `delegation`, `cronjob`, `messaging` — all currently falling into the generic `fallback` bucket.
+### 1. `src/lib/systemAPI/prereqs.ts` + `src/pages/PrerequisiteCheck.tsx` — make scan match docs
 
-**`src/lib/permissions.ts`**
-- Extend `PermissionAction` with: `browser`, `codeExecution`, `delegation`, `cronjob`, `messaging`, `imageGen`, `tts`.
-- Extend `PermissionsConfig` with matching defaults (sensible: `browser: ask`, `codeExecution: ask`, `delegation: allow`, `cronjob: ask`, `messaging: ask`, `imageGen: allow`, `tts: allow`).
-- Update `RISK_BY_ACTION` and `PERMISSION_LABELS` for each.
-- Bump `DEFAULT_PERMISSIONS.internet` to `'allow'` so the basic web tool works on first run (it's the #1 user complaint).
+- **Required (block install):** `os`, `wsl2` (Windows only), `git`, `python3.11+`.
+- **Recommended (warn, don't block):** `ripgrep`, `curl`, `ffmpeg`.
+- **Auto-installed (info only, never block):** `pip`, `python-venv`, Node, `uv`.
+- Reorder UI into three labeled groups so users immediately see what they actually need vs. what Hermes handles.
+- Keep all install buttons; just change the `required` flag and the "all required met" gate so a missing `ripgrep` no longer blocks installation.
+- Add a **`hermes`** detection row at the top — if Hermes is already installed, the whole prereq screen collapses to a "✓ Hermes is already installed (vX.Y.Z)" banner with a "Re-scan" button.
 
-**`src/lib/systemAPI/hermes.ts` → `writeHermesPermissions`**
-- Emit the new keys in the managed permissions block in `config.yaml` using Hermes' documented permission schema (per-tool `allow|ask|deny`).
+### 2. `src/lib/secretPresets.ts` — align env-var names to docs
 
-**`src/components/permissions/PermissionsPanel.tsx`**
-- Add rows for the new permission classes, grouped under "Web & browsing", "Code & execution", "Agent collaboration", "Media".
+Add / rename presets so what we store matches what `hermes` reads from `~/.hermes/.env`:
 
-**`src/lib/toolUseDetection.ts` & `src/lib/capabilities.ts`**
-- Map the official `hermes-cli` tool names (`web_search`, `web_extract`, `browser_navigate`, `browser_click`, `code_execution_run`, `image_gen_create`, `tts_speak`, `delegation_spawn`, `cronjob_create`, `messaging_send`) to the new capability IDs so proactive gating fires correctly.
+| Current | Docs canonical | Action |
+|---|---|---|
+| `GEMINI_API_KEY` | `GOOGLE_API_KEY` | Rename, keep `GEMINI_API_KEY` as alias for back-compat (auto-mirror on save) |
+| — | `NOUS_API_KEY` | Add (Nous Portal) |
+| `HUGGINGFACE_API_KEY` | `HF_TOKEN` | Add `HF_TOKEN`; keep old as alias |
+| — | `HERMES_MODEL` | Add (overrides `model:` in config.yaml) |
+| — | `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`, `OPENROUTER_BASE_URL` | Add (for self-hosted/proxy setups) |
+| — | `OLLAMA_HOST`, `LMSTUDIO_BASE_URL` | Add (local LLM runtimes) |
 
-## Part 3 — Skills & tools intake (user-supplied Hermes packs)
+Add a small **alias mirror** in `secretsStore.set()`: when the user saves `GEMINI_API_KEY`, also write `GOOGLE_API_KEY` (and vice versa) so both old and new Hermes builds find it. Same for `HF_TOKEN` ↔ `HUGGINGFACE_API_KEY`.
 
-So users can drop in any Hermes-compatible skill they download:
+### 3. `src/lib/systemAPI/hermes.ts` — modern `hermes chat` invocation
 
-**`src/lib/systemAPI/hermes.ts`**
-- New `installSkillFromPath(srcPath)`: copies a folder into `~/.hermes/skills/<name>/`, validates it has the Hermes-required `manifest.yaml` (or `skill.yaml`), then reloads the skills list.
-- New `installSkillFromGit(url)`: `git clone` into `~/.hermes/skills/<name>` then validate.
-- New `installToolFromPath(srcPath)`: same flow but into `~/.hermes/tools/`.
-- All three auto-add the skill/tool name to `config.yaml` `skills.enabled:` / `tools.enabled:` and re-chmod any executables.
+- Replace `hermes chat -q "$PROMPT"` with **`hermes chat -p "$PROMPT" --no-color`**.
+- Replace `hermes chat --resume <id> -q ...` with **`hermes --resume <id> chat -p "..." --no-color`** (matches docs: resume is a top-level flag).
+- Add a **capability probe** that runs `hermes chat --help` once on first chat and caches whether `-p` and `--no-color` are supported. If the binary is older and only knows `-q`, fall back automatically — no user-visible failure when someone hasn't run `hermes update` yet.
+- Update the `--resume` regex to match both the new footer (`hermes --resume <id>`) and the legacy one (`hermes chat --resume <id>`).
+- After install, also run `hermes config check` (documented sanity command) and surface its output in the install summary.
 
-**`src/pages/Skills.tsx`**
-- Add an "Install skill" button with two options: "From folder…" (uses the existing `selectFolder` API) and "From Git URL…".
-- After install, show validation result (manifest found, required secrets, executables fixed) and offer to open the secrets page if any are missing.
+### 4. `src/contexts/InstallContext.tsx` — post-install verification matches docs
 
-**`src/pages/SettingsPage.tsx`** (new collapsible "Tools & skills" section)
-- "Install tool from folder / Git" mirroring the skills flow.
-- "Reload toolsets" button calling a new `hermesAPI.reloadToolsets()`.
-- "Open `~/.hermes/skills` folder" using `revealInFolder` so power users can drop files in directly.
+After `hermes doctor` passes, run the documented post-install ping sequence:
+1. `hermes config check` — schema validation
+2. `hermes chat -p "ping" --no-color` — real round-trip
 
-## Part 4 — Don't gate basic web on the browser wizard
+Report each as a separate green/red row in the install-complete screen.
 
-**`src/components/skills/BrowserSetupDialog.tsx`** and the post-install screen
-- Reframe as a two-tier UX:
-  - **Tier 1 (automatic)**: `web_search`, `web_extract`, terminal, files, vision, code execution — work out of the box.
-  - **Tier 2 (optional)**: pick Chrome / Camofox / Browserbase only for click/type/screenshot automation.
-- Show a "Web is already working" banner when `hermes-cli` is loaded so users stop being told they need a backend.
+### 5. `src/pages/Diagnostics.tsx` — add "Recommended packages" panel
 
-## Part 5 — Prereqs trimmed to what Hermes actually requires
-
-**`src/lib/systemAPI/prereqs.ts`** & **`src/pages/PrerequisiteCheck.tsx`**
-- Add `checkRipgrep` + `installRipgrep` (apt / brew / WSL winget).
-- Demote Python, pip, Node, ffmpeg from "required" to "auto-installed by Hermes" (the official `install.sh` brings them in via `uv`).
-- Required list becomes: **git** (all), **WSL2** (Windows), **ripgrep** (all).
-
-## Part 6 — Optional but high-value polish
-
-- **`src/contexts/InstallContext.tsx`**: after `hermes doctor` passes, do one silent `hermes chat -p "ping"` round-trip and report success/failure as the final wizard step. Catches "doctor green but provider auth wrong" — the #1 silent failure in the docs.
-- **`src/pages/SettingsPage.tsx`**: new collapsible "Sandbox" section with a `terminal.backend` dropdown (`local` / `docker` / `ssh`) + relevant env-var fields routed through the secrets store.
-- **`src/pages/Diagnostics.tsx`**: "Repair config" button calling the new `repairConfig()` helper. Single click fixes any machine broken by previous attempts.
+Show non-blocking status for `ripgrep`, `ffmpeg`, `curl`, `node` with one-click install per platform, so users who skipped them at install time can add them later without re-running the wizard.
 
 ## Files edited
 
-- `src/lib/systemAPI/hermes.ts` (toolsets, browser block, permissions writer, skill/tool installers, repair, reloadToolsets)
-- `src/lib/systemAPI/prereqs.ts` (ripgrep + demotions)
-- `src/lib/permissions.ts` (new actions + defaults)
-- `src/components/permissions/PermissionsPanel.tsx` (new rows + groups)
-- `src/lib/toolUseDetection.ts`, `src/lib/capabilities.ts` (new tool→capability mappings)
-- `src/pages/Skills.tsx` (install from folder/Git, validation, missing-secret prompts)
-- `src/pages/SettingsPage.tsx` (Tools & skills section, Sandbox section)
-- `src/pages/PrerequisiteCheck.tsx` (split required vs auto-installed)
-- `src/components/skills/BrowserSetupDialog.tsx` (Tier 1 / Tier 2 reframe)
-- `src/contexts/InstallContext.tsx` (post-doctor chat ping; default `web` description)
-- `src/pages/Diagnostics.tsx` ("Repair config" button)
+- `src/lib/systemAPI/prereqs.ts` — required/recommended split, `hermes` detection
+- `src/pages/PrerequisiteCheck.tsx` — three-group UI, gate only on truly required
+- `src/lib/secretPresets.ts` — `GOOGLE_API_KEY`, `NOUS_API_KEY`, `HF_TOKEN`, `HERMES_MODEL`, base URLs, local runtime hosts
+- `src/lib/systemAPI/secretsStore.ts` — alias mirroring on `set()`
+- `src/lib/systemAPI/hermes.ts` — `chat -p` / top-level `--resume`, capability probe, updated regex, `config check`
+- `src/contexts/InstallContext.tsx` — post-install `config check` + `chat -p ping` rows
+- `src/pages/Diagnostics.tsx` — recommended-packages panel
 
 ## Outcome
 
-After this change, a fresh install on Linux / macOS / WSL2:
-
-1. Browses the web and reads pages immediately — no extra setup.
-2. Has the official `hermes-cli` toolset loaded with all 36 tools the docs describe.
-3. Has fine-grained per-tool permissions (browser, code execution, delegation, cron, messaging, image, tts) shown in the Permissions panel and synced to `config.yaml`.
-4. Lets users drop in any downloaded Hermes skill or tool from a folder or Git URL — auto-validated, auto-enabled, secrets prompted.
-5. Has a one-click "Repair config" path for machines broken by prior installer attempts.
-6. Optionally upgrades to full browser automation, Docker/SSH terminal sandboxing, and other extras — but never blocks basic web behind them.
+- Prereq scan blocks install only on what Hermes docs actually require — no more false-positive "ripgrep missing → can't install" loops.
+- Secret names match the docs exactly, so a fresh agent picks up provider keys with zero manual `.env` editing. Old aliases keep working for users who saved the previous names.
+- Chat uses the documented `hermes chat -p` / `hermes --resume` interface, with automatic fallback to the legacy `-q` form on older binaries — no user-visible breakage during the transition.
+- Install completion explicitly verifies via `hermes doctor` + `hermes config check` + a real chat ping, catching every silent-failure path the docs warn about.
 
