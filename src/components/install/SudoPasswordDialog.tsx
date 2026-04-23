@@ -206,3 +206,6 @@ function SudoPasswordDialogImpl({ open, reason, onCancel, onPassword, onPassword
     </Dialog>
   );
 }
+
+const SudoPasswordDialog = SudoPasswordDialogImpl;
+export default SudoPasswordDialog;
