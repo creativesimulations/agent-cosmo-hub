@@ -444,7 +444,9 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             setSessionId(result.sessionId);
           }
 
-          // Detect "agent claims it can't do X" while Ronbot says Allow.
+          // Detect "agent claims it can't do X" while Ronbot says Allow,
+          // OR sub-agents spawned without a per-spawn approval prompt while
+          // Ronbot's setting was "Ask each time".
           const perms = settingsRef.current.permissions;
           const lower = (reply || "").toLowerCase();
           let permissionMismatch: ChatMessage["permissionMismatch"];
@@ -452,6 +454,16 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             permissionMismatch = { kind: "internet", agentSetting: "Allow" };
           } else if (perms.subAgent === "allow" && /(cannot (?:spawn|delegate)|sub[- ]?agent.*denied|delegation.*denied|not (?:allowed|permitted) to (?:spawn|delegate))/i.test(lower)) {
             permissionMismatch = { kind: "subAgent", agentSetting: "Allow" };
+          } else if (perms.subAgent === "ask" && spawnedThisTurn > 0) {
+            // User wanted to be asked per sub-agent spawn but the agent ran
+            // them without a prompt — Hermes' permission engine probably
+            // doesn't recognize the `subagent:` key in our managed YAML, so
+            // it auto-allowed. Surface this so they're not surprised.
+            permissionMismatch = {
+              kind: "subAgentNoPrompt",
+              agentSetting: "Ask each time",
+              detail: `${spawnedThisTurn} sub-agent${spawnedThisTurn === 1 ? "" : "s"} ran without prompting.`,
+            };
           }
 
           setMessages((prev) =>
