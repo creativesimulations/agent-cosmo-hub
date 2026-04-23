@@ -394,9 +394,37 @@ const Index = () => {
                       <span className="text-sm font-medium text-foreground">Install Agent</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      This will download and install the AI agent framework
+                      This will {installSource === "local" ? "install your local agent folder" : "download and install the Ronbot agent framework"}
                       {selectedFeatures.length > 0 && ` with ${selectedFeatures.map(f => OPTIONAL_FEATURES.find(o => o.id === f)?.label).filter(Boolean).join(", ")}`}.
                     </p>
+
+                    <div className="glass-subtle rounded-lg p-3 flex items-start gap-2 border border-white/5">
+                      {installSource === "local" ? (
+                        <>
+                          <HardDrive className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs text-foreground font-medium">Source: local folder</p>
+                            <p className="text-xs text-muted-foreground font-mono truncate">{localAgentPath || "(no folder selected)"}</p>
+                            {!installing && (
+                              <button
+                                onClick={handlePickLocalAgent}
+                                className="text-xs text-primary hover:underline mt-1"
+                              >
+                                Change folder
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <Package className="w-4 h-4 text-accent mt-0.5 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs text-foreground font-medium">Source: Ronbot bundled agent</p>
+                            <p className="text-xs text-muted-foreground">Downloaded from the official Ronbot repository</p>
+                          </div>
+                        </>
+                      )}
+                    </div>
 
                     {!installing && !installComplete && (
                       <InstallPreflight onReadyChange={setPreflightReady} />
