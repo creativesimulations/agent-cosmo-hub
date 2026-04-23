@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { Shield, Plus, X, FolderOpen, FolderX, RefreshCw, Loader2 } from "lucide-react";
+import { Shield, X, FolderOpen, FolderX, RefreshCw, Loader2, FolderPlus } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useSettings } from "@/contexts/SettingsContext";
@@ -76,50 +75,73 @@ const PermRow = ({
   </div>
 );
 
-/** Editable list of folder paths (allow / block). */
+/** Editable list of folder paths (allow / block) using the OS folder picker. */
 const FolderList = ({
   title,
   description,
   icon: Icon,
   paths,
   onChange,
-  placeholder,
+  pickerTitle,
 }: {
   title: string;
   description: string;
   icon: typeof FolderOpen;
   paths: string[];
   onChange: (next: string[]) => void;
-  placeholder: string;
+  pickerTitle: string;
 }) => {
-  const [draft, setDraft] = useState("");
-  const add = () => {
-    const v = draft.trim();
-    if (!v) return;
-    if (paths.includes(v)) { setDraft(""); return; }
-    onChange([...paths, v]);
-    setDraft("");
+  const [picking, setPicking] = useState(false);
+
+  const pickFolder = async () => {
+    setPicking(true);
+    try {
+      const r = await systemAPI.selectFolder({ title: pickerTitle });
+      if (!r.success) {
+        toast({
+          title: "Couldn't open folder picker",
+          description: r.error || "Unknown error",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (r.canceled || !r.path) return;
+      const chosen = r.path.trim();
+      if (!chosen) return;
+      if (paths.includes(chosen)) {
+        toast({ title: "Already in the list", description: chosen });
+        return;
+      }
+      onChange([...paths, chosen]);
+    } finally {
+      setPicking(false);
+    }
   };
+
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <Icon className="w-4 h-4 text-muted-foreground" />
-        <Label className="text-sm font-medium text-foreground">{title}</Label>
-      </div>
-      <p className="text-xs text-muted-foreground">{description}</p>
-      <div className="flex gap-2">
-        <Input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
-          placeholder={placeholder}
-          className="bg-background/50 border-border font-mono text-xs"
-        />
-        <Button type="button" variant="outline" size="sm" onClick={add}>
-          <Plus className="w-4 h-4" />
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Icon className="w-4 h-4 text-muted-foreground" />
+          <Label className="text-sm font-medium text-foreground">{title}</Label>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={pickFolder}
+          disabled={picking}
+        >
+          {picking ? (
+            <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+          ) : (
+            <FolderPlus className="w-3.5 h-3.5 mr-1.5" />
+          )}
+          Add folder…
         </Button>
       </div>
-      {paths.length > 0 && (
+      <p className="text-xs text-muted-foreground">{description}</p>
+      {paths.length > 0 ? (
         <div className="flex flex-wrap gap-1.5 pt-1">
           {paths.map((p) => (
             <span
@@ -138,6 +160,10 @@ const FolderList = ({
             </span>
           ))}
         </div>
+      ) : (
+        <p className="text-xs text-muted-foreground/60 italic pt-1">
+          No folders yet — click "Add folder…" to choose one.
+        </p>
       )}
     </div>
   );
