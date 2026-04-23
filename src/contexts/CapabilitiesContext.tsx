@@ -290,6 +290,52 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
     [policy, registry, requestApproval, recordEvent, setPolicy, persistSessionGrants, recordUse],
   );
 
+  // ── Capability decision dialog state ──
+  const [pendingDecision, setPendingDecision] = useState<PendingDecision | null>(null);
+  const [probeResults, setProbeResults] = useState<Record<string, CapabilityProbeResult>>({});
+
+  const openCapabilityDecision = useCallback(
+    (capabilityId: string, probe: CapabilityProbeResult, context?: string) => {
+      setProbeResults((prev) => ({ ...prev, [capabilityId]: probe }));
+      setPendingDecision({ capabilityId, probe, context });
+    },
+    [],
+  );
+  const closePendingDecision = useCallback(() => setPendingDecision(null), []);
+  const grantSession = useCallback(
+    (capabilityId: string) => {
+      sessionGrantsRef.current.add(capabilityId);
+      persistSessionGrants();
+    },
+    [persistSessionGrants],
+  );
+
+  const refreshProbes = useCallback(async () => {
+    // Probe every web/media/communication capability so the sidebar badge
+    // reflects everything the user might want to set up.
+    const targets = Object.values(registry).filter(
+      (c) => c.group === "web" || c.group === "media" || c.group === "communication",
+    );
+    const next: Record<string, CapabilityProbeResult> = {};
+    for (const cap of targets) {
+      try {
+        next[cap.id] = await capabilityProbe(cap.id);
+      } catch { /* skip */ }
+    }
+    setProbeResults((prev) => ({ ...prev, ...next }));
+  }, [registry]);
+
+  // Re-run probes whenever the underlying inputs change (skills, secrets,
+  // agent reconnect). Cheap thanks to the 60s probe cache.
+  useEffect(() => {
+    void refreshProbes();
+  }, [refreshProbes, installedSkills, storedSecretKeys, agentConnected]);
+
+  const pendingDecisionsCount = useMemo(
+    () => Object.values(probeResults).filter((p) => !p.ready && p.reason !== "ready").length,
+    [probeResults],
+  );
+
   const value = useMemo(
     () => ({
       registry,
@@ -301,8 +347,19 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
       rediscover,
       gate,
       recordUse,
+      pendingDecision,
+      openCapabilityDecision,
+      closePendingDecision,
+      grantSession,
+      pendingDecisionsCount,
+      probeResults,
+      refreshProbes,
     }),
-    [registry, policy, setPolicy, resetAll, recentlyUsed, readinessFor, rediscover, gate, recordUse],
+    [
+      registry, policy, setPolicy, resetAll, recentlyUsed, readinessFor, rediscover, gate, recordUse,
+      pendingDecision, openCapabilityDecision, closePendingDecision, grantSession,
+      pendingDecisionsCount, probeResults, refreshProbes,
+    ],
   );
 
   return <CapabilitiesContext.Provider value={value}>{children}</CapabilitiesContext.Provider>;
