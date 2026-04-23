@@ -101,6 +101,46 @@ const buildHermesShellCommand = async (script: string): Promise<string> => {
   return `bash -lc '${exec}'`;
 };
 
+/**
+ * Cached probe of `hermes chat --help` so we know whether the binary
+ * supports the documented modern flags (`-p`, `--no-color`) or only the
+ * legacy `-q`. Probed once per session on first chat.
+ */
+const HERMES_CHAT_CAPS: { probed: boolean; supportsModern: boolean; supportsNoColor: boolean } = {
+  probed: false,
+  supportsModern: true,
+  supportsNoColor: true,
+};
+
+let hermesCapsProbePromise: Promise<void> | null = null;
+
+async function ensureHermesChatCaps(): Promise<void> {
+  if (HERMES_CHAT_CAPS.probed) return;
+  if (hermesCapsProbePromise) return hermesCapsProbePromise;
+  hermesCapsProbePromise = (async () => {
+    try {
+      const platform = await coreAPI.getPlatform();
+      const inner = 'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH" && hermes chat --help 2>&1 || true';
+      const b64 = btoa(unescape(encodeURIComponent(inner)));
+      const cmd = platform.isWindows
+        ? `wsl bash -lc "echo ${b64} | base64 -d | bash"`
+        : `bash -lc "echo ${b64} | base64 -d | bash"`;
+      const r = await coreAPI.runCommand(cmd, { timeout: 10000 });
+      const out = (r.stdout || '') + (r.stderr || '');
+      const hasP = /\B-p\b|--prompt\b/.test(out);
+      const hasQ = /\B-q\b/.test(out);
+      HERMES_CHAT_CAPS.supportsModern = hasP || !hasQ;
+      HERMES_CHAT_CAPS.supportsNoColor = /--no-color/.test(out);
+    } catch {
+      /* keep optimistic defaults */
+    } finally {
+      HERMES_CHAT_CAPS.probed = true;
+    }
+  })();
+  return hermesCapsProbePromise;
+}
+
+
 const runHermesShell = async (
   script: string,
   options?: Record<string, unknown> & { onStreamId?: (id: string) => void },
