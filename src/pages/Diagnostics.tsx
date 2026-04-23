@@ -120,14 +120,20 @@ const Diagnostics = () => {
   };
 
   const handleRepairBrowser = async () => {
-    if (!browserDiag) return;
     setBrowserBusy(true);
     try {
-      // Re-write the browser block with current state — this picks up the
-      // latest format (enabled: true + managed toolsets: hermes-web).
-      await systemAPI.setBrowserCdpUrl(browserDiag.cdpUrl);
+      const r = await systemAPI.repairConfig();
       await refreshSummaries();
-      toast({ title: "Browser config repaired", description: "Re-wrote ~/.hermes/config.yaml with browser.enabled and hermes-web toolset." });
+      if (r.success) {
+        toast({
+          title: "Config repaired",
+          description: "Rewrote toolsets to hermes-cli, stripped legacy keys, fixed binary permissions, and re-ran doctor.",
+        });
+        setLastResult(`✅ Repair OK\n\nhermes doctor:\n${r.doctorOutput}`);
+      } else {
+        toast({ title: "Repair failed", description: r.error || "See output below", variant: "destructive" });
+        setLastResult(`❌ Repair failed: ${r.error || "unknown"}\n\n${r.doctorOutput}`);
+      }
     } catch (e) {
       toast({ title: "Repair failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
@@ -447,11 +453,11 @@ const Diagnostics = () => {
               {browserDiag.hermesWebToolsetLoaded
                 ? <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
                 : <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />}
-              <span className="font-mono">hermes-web toolset loaded:</span>
+              <span className="font-mono">hermes-cli toolset loaded:</span>
               <span className={cn(browserDiag.hermesWebToolsetLoaded ? "text-foreground" : "text-destructive")}>
                 {browserDiag.hermesWebToolsetLoaded
-                  ? "yes (browser_navigate / browser_click registered)"
-                  : "no — agent has no browser tools; click Repair"}
+                  ? "yes (web, browser_*, terminal, file, vision, image_gen, tts… all registered)"
+                  : "no — agent has no tools loaded; click Repair config"}
               </span>
             </li>
             <li className="flex items-center gap-2">
