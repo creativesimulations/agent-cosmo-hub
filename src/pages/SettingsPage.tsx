@@ -18,9 +18,16 @@ import {
   Play,
   History,
   Network,
-  
+  ChevronDown,
+  Shield,
+  Sparkles,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -106,6 +113,66 @@ const ThemeOption = ({
       <Icon className={cn("w-5 h-5", active && "text-primary")} />
       <span className="text-xs font-medium">{label}</span>
     </button>
+  );
+};
+
+/**
+ * A collapsible Settings section. Header (icon + title) is the trigger,
+ * a chevron rotates 180° when open. Always starts closed.
+ *
+ * `bare` skips the outer GlassCard frame — used for panels that render
+ * their own GlassCard internally.
+ */
+const SettingsSection = ({
+  icon: Icon,
+  title,
+  iconClassName,
+  bare,
+  className,
+  children,
+}: {
+  icon: typeof Sun;
+  title: string;
+  iconClassName?: string;
+  bare?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) => {
+  const Header = (
+    <CollapsibleTrigger
+      className={cn(
+        "group w-full flex items-center justify-between gap-3 rounded-lg text-left transition-colors",
+        bare ? "px-5 py-4 glass hover:bg-foreground/5" : "hover:bg-foreground/5 -m-2 p-2",
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <Icon className={cn("w-5 h-5 text-primary", iconClassName)} />
+        <h2 className="text-lg font-semibold text-foreground">{title}</h2>
+      </div>
+      <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
+    </CollapsibleTrigger>
+  );
+
+  if (bare) {
+    return (
+      <Collapsible defaultOpen={false} className={cn("rounded-xl", className)}>
+        {Header}
+        <CollapsibleContent>
+          <div className="mt-3">{children}</div>
+        </CollapsibleContent>
+      </Collapsible>
+    );
+  }
+
+  return (
+    <GlassCard className={cn("p-6", className)}>
+      <Collapsible defaultOpen={false}>
+        {Header}
+        <CollapsibleContent>
+          <div className="pt-4 space-y-4">{children}</div>
+        </CollapsibleContent>
+      </Collapsible>
+    </GlassCard>
   );
 };
 
@@ -240,11 +307,7 @@ const SettingsPage = () => {
       </div>
 
       {/* ─── Appearance ─────────────────────────────────────────── */}
-      <GlassCard className="p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <Sun className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Appearance</h2>
-        </div>
+      <SettingsSection icon={Sun} title="Appearance">
         <div>
           <Label className="text-sm font-medium text-foreground">Theme</Label>
           <p className="text-xs text-muted-foreground mb-3">
@@ -274,15 +337,11 @@ const SettingsPage = () => {
             />
           </div>
         </div>
-      </GlassCard>
+      </SettingsSection>
 
       {/* ─── Agent Identity ─────────────────────────────────────── */}
       {agentConnected ? (
-        <GlassCard className="p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <User className="w-5 h-5 text-primary" />
-            <h2 className="text-lg font-semibold text-foreground">Agent Identity</h2>
-          </div>
+        <SettingsSection icon={User} title="Agent Identity">
           <p className="text-sm text-muted-foreground">
             Give your agent a name. Stored in <code className="text-xs">~/.hermes/SOUL.md</code>.
           </p>
@@ -322,7 +381,7 @@ const SettingsPage = () => {
               </p>
             </div>
           )}
-        </GlassCard>
+        </SettingsSection>
       ) : (
         <GlassCard className="p-6 flex items-center gap-3 text-sm text-muted-foreground">
           <AlertCircle className="w-5 h-5 text-muted-foreground/60" />
@@ -331,11 +390,7 @@ const SettingsPage = () => {
       )}
 
       {/* ─── Behavior ──────────────────────────────────────────── */}
-      <GlassCard className="p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <Play className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Behavior</h2>
-        </div>
+      <SettingsSection icon={Play} title="Behavior">
         <div className="-mt-2">
           <ToggleRow
             title="Auto-start agent on app launch"
@@ -356,14 +411,10 @@ const SettingsPage = () => {
             onCheckedChange={(v) => update({ runInBackground: v })}
           />
         </div>
-      </GlassCard>
+      </SettingsSection>
 
       {/* ─── Notifications ─────────────────────────────────────── */}
-      <GlassCard className="p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <Bell className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Notifications</h2>
-        </div>
+      <SettingsSection icon={Bell} title="Notifications">
         <div className="-mt-2">
           <ToggleRow
             title="Desktop notification when reply lands"
@@ -404,20 +455,19 @@ const SettingsPage = () => {
             }}
           />
         </div>
-      </GlassCard>
+      </SettingsSection>
 
       {/* ─── Permissions ───────────────────────────────────────── */}
-      <PermissionsPanel />
+      <SettingsSection icon={Shield} title="Permissions" bare>
+        <PermissionsPanel />
+      </SettingsSection>
 
       {/* ─── Capabilities (auto-discovered) ────────────────────── */}
-      <CapabilitiesPanel />
+      <SettingsSection icon={Sparkles} title="Capabilities" bare>
+        <CapabilitiesPanel />
+      </SettingsSection>
 
-      <GlassCard className="p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <History className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Sessions & history</h2>
-        </div>
-
+      <SettingsSection icon={History} title="Sessions & history">
         <div className="space-y-4 -mt-2">
           <div className="flex items-start justify-between gap-4 py-3 border-b border-border/40">
             <div className="space-y-0.5 min-w-0 flex-1">
@@ -483,14 +533,10 @@ const SettingsPage = () => {
             Clearing history just empties this app's local copy of the conversation.
           </p>
         </div>
-      </GlassCard>
+      </SettingsSection>
 
       {/* ─── Updates ───────────────────────────────────────────── */}
-      <GlassCard className="p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <RefreshCw className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Updates</h2>
-        </div>
+      <SettingsSection icon={RefreshCw} title="Updates">
         <div className="-mt-2">
           <ToggleRow
             title="Auto-check for app & agent updates"
@@ -499,14 +545,15 @@ const SettingsPage = () => {
             onCheckedChange={(v) => update({ autoCheckUpdates: v })}
           />
         </div>
-      </GlassCard>
+      </SettingsSection>
 
       {/* ─── Danger Zone ───────────────────────────────────────── */}
-      <GlassCard className="p-6 space-y-4 border-destructive/40 bg-destructive/5">
-        <div className="flex items-center gap-2">
-          <AlertTriangle className="w-5 h-5 text-destructive" />
-          <h2 className="text-lg font-semibold text-foreground">Danger Zone</h2>
-        </div>
+      <SettingsSection
+        icon={AlertTriangle}
+        title="Danger Zone"
+        iconClassName="text-destructive"
+        className="border-destructive/40 bg-destructive/5"
+      >
         <p className="text-sm text-muted-foreground">
           Destructive actions. Both ask for confirmation first.
         </p>
@@ -548,7 +595,7 @@ const SettingsPage = () => {
             </Button>
           </div>
         </div>
-      </GlassCard>
+      </SettingsSection>
 
       {/* ─── Confirmation dialogs ──────────────────────────────── */}
       <AlertDialog open={confirmClearChat} onOpenChange={setConfirmClearChat}>
