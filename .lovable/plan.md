@@ -1,83 +1,104 @@
 
 
-# Fix permissions, sub-agent visibility, and missing approval prompts
+# Universal capability gating: never silently fail again
 
-## Three connected bugs
+## Goal
 
-1. **Agent reported "no internet" even though the setting was Allow** — Ronbot's Permissions panel only intercepts prompts in the parent chat's stdout. Hermes's *own* permission engine never gets told, so it falls back to its built-in default (deny) for sub-agents and many parent actions.
-2. **Sub-agents tab stayed empty** — `listSubAgents()` greps for log markers that may not match real Hermes output, and silently returns `[]` when `~/.hermes/logs/agent.log` doesn't exist.
-3. **No approval modal ever appeared** — when permission is auto-handled by Hermes itself (because we never wrote anything to its config), the `Choice [o/s/a/D]:` prompt may not even be emitted; or when it is, our regex misses variant formats.
+Every time the agent tries to use ANY feature/skill/tool — browser, search, image gen, voice, messaging, custom skills the user installs later — the user gets ONE consistent experience:
 
-## Fix
+1. A clear notice (modal or chat bubble) explaining what the agent wants and why
+2. Four choices: **Allow once / Allow this session / Always allow / Always deny**
+3. The decision is remembered per-capability, surfaced in Settings, and revocable
+4. The list of capabilities updates itself as skills are added/removed — no hardcoded toggles to maintain
 
-### A. Mirror the Permissions panel into Hermes's own config (the real fix)
+## Three-layer model
 
-On every `chat()` call, write a managed block into `~/.hermes/config.yaml` derived from `settings.permissions`:
-
-```yaml
-# ─── Managed by Ronbot: permissions ───
-permissions:
-  shell: allow | ask | deny
-  file_read: allow | ask | deny
-  file_write: allow | ask | deny
-  internet: allow | ask | deny
-  script: allow | ask | deny
-  subagent: allow | ask | deny
-  default: ask
-  allowed_paths: [~/Documents, ~/Downloads, ...]
-  blocked_paths: [~/.ssh, ~/.aws, ...]
-# ─── End managed ───
+```text
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 1: CAPABILITY REGISTRY  (single source of truth)     │
+│  - Auto-discovered from installed skills + known tool list   │
+│  - Each entry: id, label, risk, requiredSecrets, extras     │
+└─────────────────────────────────────────────────────────────┘
+            │
+            ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 2: CAPABILITY POLICY  (user's stored decisions)      │
+│  - Per-capability default: ask | allow | session | deny     │
+│  - Stored in settings.capabilityPolicy (Map<id, choice>)    │
+└─────────────────────────────────────────────────────────────┘
+            │
+            ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 3: RUNTIME GATE                                      │
+│  - Before/during agent action: check policy                 │
+│  - If "ask" → show modal → record decision                  │
+│  - If failure detected post-hoc → guided fix bubble         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-- New helper `writeHermesPermissions(perms)` in `hermes.ts` — same managed-block pattern as `.env`.
-- Called from `chat()` after `materializeHermesEnv`.
-- Also exported as a manual "Sync now" button in Settings → Permissions.
-- Diagnostics gets a new "Permissions sent to agent" panel showing the active block, so you can verify it.
+## How the user experiences it
 
-This makes sub-agents inherit the same rules without us needing to intercept their stdin.
+### Proactive (preferred): when the agent announces a tool call
+- Detect tool-use markers in the agent's stream (`tool: web_search`, `Calling browser…`, `using image_gen`, etc.)
+- If policy = `ask` → pause stream, show modal with capability name, what it does, risk level, four buttons
+- If policy = `allow`/`session` → silent, but a small chip appears in the message ("🌐 Used web search")
+- If policy = `deny` → inject a system note telling the agent it's blocked, so it stops trying
 
-### B. Make approval prompts actually fire
+### Reactive (fallback): when detection misses and agent fails
+- The existing `toolUnavailable` detector catches the failure phrasing
+- Same four-button modal pops up retroactively: "The agent tried to use **Web Browser** and was blocked. What should happen next time?"
+- One click to allow + offer to retry the message
 
-Make the prompt detector more robust so the modal really opens:
+### Configurable in Settings
+- New "Capabilities" section in Settings (alongside Permissions)
+- Auto-generated list — one row per discovered capability with the four-state selector
+- Shows readiness: ✅ Ready / ⚠️ Needs key / ⚠️ Skill missing
+- "Reset all to Ask" button
 
-- Broaden `APPROVAL_PROMPT_RE` to also catch variants: `[o]nce/[s]ession/[a]lways/[d]eny`, `Approve? (o/s/a/d)`, `> Permission required`, `Awaiting approval`.
-- Capture the **20 lines preceding** the prompt as the dialog's "What" body so the user sees the actual command/path the agent is about to touch.
-- Add a debug toggle in Diagnostics: **"Log every prompt detection"** so we can confirm the parser is firing.
-- If the agent emits a permission line but our parser misses it, fall back to a generic "Agent is waiting for input" pill in chat with a free-text reply box.
+## Capability registry (auto-discovery)
 
-### C. Fix the Sub-Agents tab
+Built from three sources, merged at runtime:
+1. **Built-in catalog** — well-known capabilities the agent ships with: `shell`, `fileRead`, `fileWrite`, `internet`, `script`, `webBrowser`, `webSearch`, `imageGen`, `voice`, `messaging`, `email`, `calendar`
+2. **Installed skills** — `systemAPI.listSkills()` + each skill's `requiredSecrets` and category determines its capability bucket
+3. **Observed-at-runtime** — if the agent attempts a tool we've never seen (parsed from stream or failure), it gets auto-registered as `unknown:<name>` so the user can still gate it
 
-Three improvements to `listSubAgents()`:
+When a new skill is installed → next chat turn re-runs discovery → new row appears in Settings → no code changes needed.
 
-1. **Broaden log markers**: match `subagent`, `sub_agent`, `sub-agent`, `delegate_task`, `child agent`, `spawned agent`, `worker.start/complete`, plus any line with both `task` and one of `started/completed/failed`.
-2. **Add a "Failed" bucket** for denied/error sub-agents with the reason text.
-3. **Detect "logging not enabled"**: if `agent.log` is missing AND the parent chat mentioned spawning sub-agents, show a banner on the SubAgents tab:
-   > "Sub-agents ran during this chat but Hermes file logging is disabled, so we can't show their details."  
-   With a one-click **"Enable file logging"** button that writes `logging.file: ~/.hermes/logs/agent.log` into config.
+## What ships
 
-### D. Live in-chat feedback
+### Core
+- `src/lib/capabilities.ts` — registry types, built-in catalog, merge logic, risk classification
+- `src/contexts/CapabilitiesContext.tsx` — discovery on mount + after skill changes, exposes `useCapability(id)` hook, wraps PermissionsContext
+- Extend `settings.capabilityPolicy: Record<string, 'ask'|'allow'|'session'|'deny'>` in `SettingsContext`
 
-While a chat turn is streaming:
+### Detection (broadened)
+- `src/lib/toolUnavailable.ts` — add new patterns ("permission error in this environment", "can't access", "not available right now") and map to capability ids
+- New `src/lib/toolUseDetection.ts` — parse outbound tool-call markers from the agent stream (proactive gating)
 
-- Count `delegate_task` / sub-agent mentions and show a live pill above the message: **"🤖 4 sub-agents working…"** Click → SubAgents tab.
-- If the agent's reply contains "no internet" / "permission denied" while the relevant Ronbot setting is **Allow**, render a system bubble:
-  > "Agent reported no internet access, but Ronbot's setting is Allow. The permissions block may not have been applied. Open Diagnostics."
+### UI
+- `src/components/permissions/CapabilityApprovalDialog.tsx` — same look as existing ApprovalDialog but capability-aware (shows what the tool does, where to find docs)
+- `src/components/chat/CapabilityFixBubble.tsx` — post-failure guided checklist: permission status, missing key, missing skill, missing extras, with one-click actions
+- `src/components/chat/CapabilityChip.tsx` — tiny inline marker in chat showing which tools were used in a turn
+- New "Capabilities" panel in `SettingsPage.tsx` — auto-generated list, per-row 4-state selector + readiness badge + quick links
+- `src/pages/Skills.tsx` — top "Capability readiness" card driven by the same registry
+- `src/pages/Diagnostics.tsx` — capability matrix: id × policy × readiness × last-used
 
-## Files touched
+### Wiring
+- `src/contexts/ChatContext.tsx` — call gate before processing each detected tool marker; record capability usage on each turn for chips
+- `src/lib/systemAPI/hermes.ts` — when syncing permissions to `~/.hermes/config.yaml`, also write a `capability_policy:` block so the agent itself can pre-deny (saves a round trip)
+- `src/pages/Index.tsx` — installation wizard adds an optional "Pick capabilities to enable" step using the same registry, so users discover web/search/etc. up front
 
-- `src/lib/systemAPI/hermes.ts` — `writeHermesPermissions()`, hook into `chat()`, broaden `listSubAgents()` markers + Failed bucket + logging-disabled detection, expose `enableFileLogging()`.
-- `src/lib/approvalBridge.ts` — broaden `APPROVAL_PROMPT_RE`, capture 20-line context window.
-- `src/components/permissions/ApprovalDialog.tsx` — render the multi-line "What" context.
-- `src/contexts/ChatContext.tsx` — pass `settings.permissions` into `chat()`, count live sub-agent mentions, expose `liveSubAgentCount`, detect denial-vs-Allow mismatch.
-- `src/pages/AgentChat.tsx` — live "N sub-agents working" pill, internet-denied warning bubble.
-- `src/pages/SubAgents.tsx` — Failed bucket, "logging disabled" banner with Enable button.
-- `src/pages/Diagnostics.tsx` — "Permissions sent to agent" panel + "Log every prompt detection" toggle.
-- `src/pages/SettingsPage.tsx` — "Sync permissions to agent now" button in the Permissions panel.
-- `src/lib/diagnostics.ts` — log every permissions-block write and every prompt detection.
+## Technical notes
 
-## Safety
+- **Dynamic toggles**: the Settings list is rendered from `Object.values(registry)` — adding/removing a skill re-runs discovery and the list updates with no manual maintenance
+- **Backward compatibility**: existing `settings.permissions` (shell/fileRead/internet/etc.) stays as-is; capabilities is an additive layer that *references* those for the underlying built-ins
+- **Failure → policy loop**: every reactive detection offers "Always allow / Always deny" so repeated failures train the policy
+- **Privacy**: nothing leaves the machine; policy is stored client-side in settings and mirrored into Hermes config
 
-- The YAML write is **additive** — only the managed block is touched, never user-edited keys.
-- "Enable file logging" is opt-in, never automatic.
-- If Hermes ignores the YAML keys (older build), Diagnostics surfaces a one-line warning so you can see it instead of silently failing.
+## Outcome
+
+- One uniform UX for every capability the agent ever tries to use
+- The user always knows what's happening and can decide on the spot or in advance
+- The capability list grows with the agent — no code change needed when a new skill arrives
+- Failures stop being dead ends; they become one-click fix prompts
 
