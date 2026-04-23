@@ -726,6 +726,76 @@ export const hermesAPI = {
     return readHermesPermissionsBlock();
   },
 
+  /** Read live browser diagnostics: CDP reachability, what config.yaml says,
+   *  whether `hermes-web` is loaded, and the effective `internet` permission.
+   *  This is what the Diagnostics page shows under "Browser toolset". */
+  async getBrowserDiagnostics(): Promise<{
+    cdpUrl: string | null;
+    cdpReachable: boolean | null;
+    cdpVersion?: string;
+    browserEnabledInConfig: boolean;
+    hermesWebToolsetLoaded: boolean;
+    internetPermission: string | null;
+    rawBrowserBlock: string | null;
+    rawToolsetsBlock: string | null;
+  }> {
+    const cfg = await readHermesFile(HERMES_CONFIG);
+    const yaml = cfg.success && cfg.content ? cfg.content : '';
+
+    // Browser block
+    const bIdx = yaml.indexOf(BROWSER_BEGIN);
+    const bEnd = yaml.indexOf(BROWSER_END, bIdx);
+    const rawBrowserBlock = bIdx !== -1 && bEnd !== -1
+      ? yaml.slice(bIdx, bEnd + BROWSER_END.length)
+      : null;
+    const browserState = parseBrowserBlock(yaml);
+    const browserEnabledInConfig = rawBrowserBlock
+      ? /^\s*enabled:\s*true/m.test(rawBrowserBlock)
+      : false;
+
+    // Toolsets block (managed or unmanaged — we accept either)
+    const tIdx = yaml.indexOf(TOOLSETS_BEGIN);
+    const tEnd = yaml.indexOf(TOOLSETS_END, tIdx);
+    const rawToolsetsBlock = tIdx !== -1 && tEnd !== -1
+      ? yaml.slice(tIdx, tEnd + TOOLSETS_END.length)
+      : null;
+    const hermesWebToolsetLoaded = /(^|\n)\s*-\s*hermes-web\b/.test(yaml);
+
+    // Internet permission (from managed perms block)
+    const permsBlock = await readHermesPermissionsBlock();
+    const internetMatch = permsBlock?.match(/^\s*internet:\s*(\w+)/m);
+    const internetPermission = internetMatch ? internetMatch[1] : null;
+
+    // Probe CDP
+    let cdpReachable: boolean | null = null;
+    let cdpVersion: string | undefined;
+    if (browserState.cdpUrl) {
+      try {
+        // Hermes points cdp_url at e.g. http://127.0.0.1:9222 — append /json/version.
+        const probeUrl = browserState.cdpUrl.replace(/\/+$/, '') + '/json/version';
+        const resp = await fetch(probeUrl, { method: 'GET' });
+        cdpReachable = resp.ok;
+        if (resp.ok) {
+          const json = await resp.json().catch(() => ({} as { Browser?: string }));
+          cdpVersion = (json as { Browser?: string }).Browser;
+        }
+      } catch {
+        cdpReachable = false;
+      }
+    }
+
+    return {
+      cdpUrl: browserState.cdpUrl,
+      cdpReachable,
+      cdpVersion,
+      browserEnabledInConfig,
+      hermesWebToolsetLoaded,
+      internetPermission,
+      rawBrowserBlock,
+      rawToolsetsBlock,
+    };
+  },
+
   /** Toggle Camofox `managed_persistence` in the agent's config. */
   async setBrowserCamofoxPersistence(enabled: boolean) {
     return setBrowserCamofoxPersistence(enabled);
