@@ -61,6 +61,8 @@ const Diagnostics = () => {
   const [debugPrompts, setDebugPrompts] = useState<boolean>(isDebugPromptDetection());
   const [browserDiag, setBrowserDiag] = useState<Awaited<ReturnType<typeof systemAPI.getBrowserDiagnostics>> | null>(null);
   const [browserBusy, setBrowserBusy] = useState(false);
+  const [selfTest, setSelfTest] = useState<Awaited<ReturnType<typeof systemAPI.runBrowserSelfTest>> | null>(null);
+  const [selfTestBusy, setSelfTestBusy] = useState(false);
 
   useEffect(() => {
     const unsub = diagnostics.subscribe((all) => {
