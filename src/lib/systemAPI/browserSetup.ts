@@ -180,6 +180,14 @@ export const detectGit = async (): Promise<boolean> => {
   return r.success && !!r.stdout.trim();
 };
 
+export const detectCamofoxInstall = async (): Promise<boolean> => {
+  const platform = await coreAPI.getPlatform();
+  const manifestPath = platform.isWindows
+    ? `${CAMOFOX_DIR_WIN}\\package.json`
+    : `${CAMOFOX_DIR_POSIX}/package.json`;
+  return coreAPI.fileExists(manifestPath);
+};
+
 /**
  * Install Node.js (LTS) via the platform-native package manager.
  * macOS: brew (no sudo); Windows: winget (UAC); Linux: nodesource via apt.
