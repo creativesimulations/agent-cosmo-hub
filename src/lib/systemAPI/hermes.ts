@@ -533,7 +533,6 @@ export const writeHermesPermissions = async (
     `  file_write_scope: ${perms.fileWriteScope}`,
     `  internet: ${perms.internet}`,
     `  script: ${perms.script}`,
-    `  subagent: ${perms.subAgent}`,
     `  default: ${perms.fallback}`,
     `  allowed_paths:${yamlList(perms.allowedFolders)}`,
     `  blocked_paths:${yamlList(perms.blockedFolders)}`,
@@ -546,7 +545,7 @@ export const writeHermesPermissions = async (
     source: 'system',
     level: w.success ? 'info' : 'error',
     summary: w.success
-      ? `permissions synced to ~/.hermes/config.yaml (shell=${perms.shell}, internet=${perms.internet}, subagent=${perms.subAgent})`
+      ? `permissions synced to ~/.hermes/config.yaml (shell=${perms.shell}, internet=${perms.internet})`
       : 'failed to sync permissions to ~/.hermes/config.yaml',
   });
   return w.success

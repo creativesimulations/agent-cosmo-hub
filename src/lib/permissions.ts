@@ -22,8 +22,7 @@ export type PermissionAction =
   | 'fileRead'
   | 'fileWrite'
   | 'internet'
-  | 'script'       // python / node / bash scripts
-  | 'subAgent';
+  | 'script';      // python / node / bash scripts
 
 export type ApprovalChoice = 'once' | 'session' | 'always' | 'deny';
 
@@ -44,7 +43,6 @@ export interface PermissionsConfig {
 
   internet: PermissionDefault;
   script: PermissionDefault;
-  subAgent: PermissionDefault;
 
   /** Folders the agent may freely read/write inside (when scope = 'scoped'). */
   allowedFolders: string[];
@@ -64,7 +62,6 @@ export const DEFAULT_PERMISSIONS: PermissionsConfig = {
   fileWriteScope: 'scoped',
   internet: 'ask',
   script: 'ask',
-  subAgent: 'ask',
   allowedFolders: [],
   blockedFolders: [],
   fallback: 'ask',
@@ -77,7 +74,6 @@ export const PERMISSION_LABELS: Record<PermissionAction, string> = {
   fileWrite: 'File write',
   internet: 'Internet access',
   script: 'Script execution',
-  subAgent: 'Sub-agent spawn',
 };
 
 export const RISK_BY_ACTION: Record<PermissionAction, 'low' | 'medium' | 'high'> = {
@@ -87,7 +83,6 @@ export const RISK_BY_ACTION: Record<PermissionAction, 'low' | 'medium' | 'high'>
   fileWrite: 'medium',
   internet: 'medium',
   script: 'high',
-  subAgent: 'medium',
 };
 
 /** A single permission event recorded in history (and shown in chat/terminal). */
