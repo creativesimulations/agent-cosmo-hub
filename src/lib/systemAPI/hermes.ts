@@ -319,9 +319,12 @@ const parseProbeOutput = (stdout: string): Record<string, string> => {
   }, {});
 };
 
-/** One-shot in-place repair for configs left broken by an older build of this
- *  app that wrote `allowed_paths:[]` / `blocked_paths:[]` (no space → invalid
- *  YAML). Uses sed to insert the missing space. Safe to run repeatedly. */
+/** One-shot in-place repair for configs left broken by older builds of this
+ *  app:
+ *   1. `allowed_paths:[]` / `blocked_paths:[]` (no space → invalid YAML).
+ *   2. `browser:` followed only by a comment line — PyYAML loads it as None,
+ *      crashing Hermes' `if key in browser_config:`. Replace with `browser: {}`.
+ *  Safe to run repeatedly. */
 const repairBrokenYamlList = async (): Promise<void> => {
   await runHermesShell(
     [
@@ -331,6 +334,14 @@ const repairBrokenYamlList = async (): Promise<void> => {
       `if grep -Eq '^[[:space:]]*(allowed_paths|blocked_paths):\\[' "$CFG"; then`,
       '  echo "[repair] fixing missing space in allowed_paths/blocked_paths"',
       `  sed -i -E 's/^([[:space:]]*(allowed_paths|blocked_paths)):\\[/\\1: [/' "$CFG"`,
+      'fi',
+      // Heal the null-browser-block case: a bare `browser:` line whose only
+      // child is a comment ("  # (no overrides ...)") parses as None.
+      `if grep -Eq '^browser:[[:space:]]*$' "$CFG" && grep -Eq '^[[:space:]]+# \\(no overrides' "$CFG"; then`,
+      '  echo "[repair] replacing null browser: block with empty mapping {}"',
+      // Drop the placeholder comment line, then turn the bare `browser:` into `browser: {}`.
+      `  sed -i -E '/^[[:space:]]+# \\(no overrides[^)]*\\)[[:space:]]*$/d' "$CFG"`,
+      `  sed -i -E 's/^browser:[[:space:]]*$/browser: {}/' "$CFG"`,
       'fi',
     ].join('\n'),
     { timeout: 10000 },
@@ -716,21 +727,30 @@ const writeBrowserBlock = async (
   // hermes-web toolset is always loaded whenever a browser backend is wired.
   stripped = stripManagedBlock(stripped, TOOLSETS_BEGIN, TOOLSETS_END).replace(/\n+$/, '');
 
-  const lines: string[] = [BROWSER_BEGIN, 'browser:'];
+  const browserBodyLines: string[] = [];
   // Only emit keys that the documented Hermes browser schema understands.
   // The previous `enabled` / `allow_network` / `tool_allowlist` keys were
   // invented by us and were either ignored or actively blocked the agent's
   // permission system — they are intentionally NOT written anymore.
   if (next.cdpUrl) {
-    lines.push(`  cdp_url: "${next.cdpUrl}"`);
+    browserBodyLines.push(`  cdp_url: "${next.cdpUrl}"`);
   }
   if (next.camofoxPersistence) {
-    lines.push('  camofox:');
-    lines.push('    managed_persistence: true');
+    browserBodyLines.push('  camofox:');
+    browserBodyLines.push('    managed_persistence: true');
   }
-  // If neither field is set, leave the block as a placeholder so later edits
-  // round-trip cleanly.
-  if (lines.length === 2) lines.push('  # (no overrides — using Hermes defaults)');
+
+  // CRITICAL: Hermes' cli.py does `if key in browser_config:` — if we emit
+  // `browser:` with only a comment child, PyYAML parses it as None and the
+  // chat command crashes with `TypeError: argument of type 'NoneType' is not
+  // iterable`. Use an empty inline mapping `{}` (a real dict) when there are
+  // no overrides so `in` works.
+  const lines: string[] = [BROWSER_BEGIN];
+  if (browserBodyLines.length === 0) {
+    lines.push('browser: {}');
+  } else {
+    lines.push('browser:', ...browserBodyLines);
+  }
   lines.push(BROWSER_END);
 
   // Toolsets: load the official `hermes-cli` platform bundle so web,
