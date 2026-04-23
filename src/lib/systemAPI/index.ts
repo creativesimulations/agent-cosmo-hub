@@ -91,6 +91,8 @@ export const systemAPI = {
   // Config repair + skill/tool intake
   repairConfig: hermesAPI.repairConfig.bind(hermesAPI),
   reloadToolsets: hermesAPI.reloadToolsets.bind(hermesAPI),
+  configCheck: hermesAPI.configCheck.bind(hermesAPI),
+  chatPing: hermesAPI.chatPing.bind(hermesAPI),
   installSkillFromPath: hermesAPI.installSkillFromPath.bind(hermesAPI),
   installSkillFromGit: hermesAPI.installSkillFromGit.bind(hermesAPI),
   installToolFromPath: hermesAPI.installToolFromPath.bind(hermesAPI),

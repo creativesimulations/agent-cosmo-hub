@@ -25,13 +25,29 @@ export interface SecretPreset {
 
 export const SECRET_PRESETS: SecretPreset[] = [
   // ─── LLM providers ────────────────────────────────────────────────────
+  // Canonical env-var names match the official Hermes docs:
+  //   https://hermes-agent.nousresearch.com/docs/getting-started/quickstart/
+  { envVar: 'NOUS_API_KEY',       label: 'Nous Portal',    hint: "First-party provider — Hermes' default.",                      prefix: '',        docsUrl: 'https://portal.nousresearch.com/',            category: 'LLM provider' },
   { envVar: 'OPENROUTER_API_KEY', label: 'OpenRouter',     hint: '200+ models behind one key. Required for openrouter/* models.', prefix: 'sk-or-',  docsUrl: 'https://openrouter.ai/keys',                  category: 'LLM provider' },
   { envVar: 'OPENAI_API_KEY',     label: 'OpenAI',         hint: 'GPT-4o, GPT-5, o-series.',                                     prefix: 'sk-',     docsUrl: 'https://platform.openai.com/api-keys',        category: 'LLM provider' },
   { envVar: 'ANTHROPIC_API_KEY',  label: 'Anthropic',      hint: 'Claude Sonnet, Opus, Haiku.',                                  prefix: 'sk-ant-', docsUrl: 'https://console.anthropic.com/settings/keys', category: 'LLM provider' },
-  { envVar: 'GEMINI_API_KEY',     label: 'Google Gemini',  hint: 'Gemini 1.5 / 2.0 family.',                                     prefix: 'AIza',    docsUrl: 'https://aistudio.google.com/apikey',          category: 'LLM provider' },
+  { envVar: 'GOOGLE_API_KEY',     label: 'Google Gemini',  hint: 'Gemini 1.5 / 2.0 family. (Canonical Hermes name.)',            prefix: 'AIza',    docsUrl: 'https://aistudio.google.com/apikey',          category: 'LLM provider' },
+  { envVar: 'GEMINI_API_KEY',     label: 'Google Gemini (legacy alias)', hint: 'Auto-mirrored to GOOGLE_API_KEY for older builds.', prefix: 'AIza', docsUrl: 'https://aistudio.google.com/apikey',          category: 'LLM provider' },
   { envVar: 'DEEPSEEK_API_KEY',   label: 'DeepSeek',       hint: 'DeepSeek V3 and R1.',                                          prefix: 'sk-',     docsUrl: 'https://platform.deepseek.com/api_keys',      category: 'LLM provider' },
   { envVar: 'GROQ_API_KEY',       label: 'Groq',           hint: 'Ultra-fast Llama / Mixtral inference.',                        prefix: 'gsk_',    docsUrl: 'https://console.groq.com/keys',               category: 'LLM provider' },
   { envVar: 'MISTRAL_API_KEY',    label: 'Mistral',        hint: 'Mistral Large, Codestral.',                                    prefix: '',        docsUrl: 'https://console.mistral.ai/api-keys/',        category: 'LLM provider' },
+  { envVar: 'HF_TOKEN',           label: 'Hugging Face',   hint: 'Hosted inference + private models. (Canonical Hermes name.)',  prefix: 'hf_',     docsUrl: 'https://huggingface.co/settings/tokens',      category: 'LLM provider' },
+  { envVar: 'HUGGINGFACE_API_KEY',label: 'Hugging Face (legacy alias)', hint: 'Auto-mirrored to HF_TOKEN for older builds.',     prefix: 'hf_',     docsUrl: 'https://huggingface.co/settings/tokens',      category: 'LLM provider' },
+
+  // ─── Provider overrides (self-hosted / proxied / custom endpoints) ────
+  { envVar: 'HERMES_MODEL',         label: 'Hermes model override', hint: 'Overrides `model:` in config.yaml (e.g. openrouter/anthropic/claude-3.5-sonnet).', prefix: '', category: 'LLM provider' },
+  { envVar: 'OPENAI_BASE_URL',      label: 'OpenAI base URL',      hint: 'Custom OpenAI-compatible endpoint (proxy / self-hosted).', prefix: 'http', category: 'LLM provider' },
+  { envVar: 'ANTHROPIC_BASE_URL',   label: 'Anthropic base URL',   hint: 'Custom Anthropic-compatible endpoint.',                    prefix: 'http', category: 'LLM provider' },
+  { envVar: 'OPENROUTER_BASE_URL',  label: 'OpenRouter base URL',  hint: 'Custom OpenRouter-compatible endpoint.',                   prefix: 'http', category: 'LLM provider' },
+
+  // ─── Local LLM runtimes ───────────────────────────────────────────────
+  { envVar: 'OLLAMA_HOST',         label: 'Ollama host',          hint: 'Default http://127.0.0.1:11434.',                          prefix: 'http', category: 'Local runtime' },
+  { envVar: 'LMSTUDIO_BASE_URL',   label: 'LM Studio base URL',   hint: 'Default http://127.0.0.1:1234/v1.',                        prefix: 'http', category: 'Local runtime' },
 
   // ─── Search & web tools ───────────────────────────────────────────────
   { envVar: 'EXA_API_KEY',        label: 'Exa Search',     hint: 'Neural web search for agents.',                                prefix: '',        docsUrl: 'https://dashboard.exa.ai/api-keys',           category: 'Search & web' },

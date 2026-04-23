@@ -9,13 +9,14 @@ import {
   AlertTriangle,
   ChevronRight,
   RotateCcw,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { cn } from "@/lib/utils";
 import { systemAPI } from "@/lib/systemAPI";
 
 type CheckStatus = "pending" | "checking" | "found" | "missing" | "installing" | "installed" | "error" | "reboot_required";
+type Tier = "required" | "recommended" | "auto";
 
 interface Prerequisite {
   id: string;
@@ -24,25 +25,33 @@ interface Prerequisite {
   status: CheckStatus;
   version?: string;
   installProgress?: number;
-  required: boolean;
+  tier: Tier;
   windowsOnly?: boolean;
 }
 
+/**
+ * Per the official Hermes docs (https://hermes-agent.nousresearch.com/docs/getting-started/quickstart):
+ *  - Required (block install): OS, Git, Python 3.11+, WSL2 on Windows.
+ *  - Recommended (warn, don't block): ripgrep, curl, ffmpeg.
+ *  - Auto-installed by the Hermes installer (uv): pip, python-venv, Node.
+ */
 const initialPrereqs: Prerequisite[] = [
-  { id: "os", name: "Operating System", description: "Detecting platform...", status: "pending", required: true },
-  { id: "wsl2", name: "WSL2 (Windows)", description: "Windows Subsystem for Linux 2", status: "pending", required: true, windowsOnly: true },
-  { id: "git", name: "Git", description: "Version control — required by the installer", status: "pending", required: true },
-  { id: "curl", name: "curl", description: "Required to download the installer", status: "pending", required: true },
-  { id: "ripgrep", name: "ripgrep (rg)", description: "Fast file search — used by the agent's file tools", status: "pending", required: true },
-  // The official Hermes installer brings these in via uv. Listed for visibility only.
-  { id: "python", name: "Python 3.11+", description: "Auto-installed by Hermes if missing", status: "pending", required: false },
-  { id: "pip", name: "pip", description: "Auto-installed by Hermes if missing", status: "pending", required: false },
+  { id: "os", name: "Operating System", description: "Detecting platform...", status: "pending", tier: "required" },
+  { id: "wsl2", name: "WSL2 (Windows)", description: "Windows Subsystem for Linux 2", status: "pending", tier: "required", windowsOnly: true },
+  { id: "git", name: "Git", description: "Version control — required by the installer", status: "pending", tier: "required" },
+  { id: "python", name: "Python 3.11+", description: "Required runtime", status: "pending", tier: "required" },
+  // Recommended
+  { id: "ripgrep", name: "ripgrep (rg)", description: "Fast file search — used by the agent's file tools", status: "pending", tier: "recommended" },
+  { id: "curl", name: "curl", description: "Used to download the installer and updates", status: "pending", tier: "recommended" },
+  // Auto-installed
+  { id: "pip", name: "pip", description: "Auto-installed by Hermes (uv) into its own venv", status: "pending", tier: "auto" },
 ];
 
 const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
   const [prereqs, setPrereqs] = useState(initialPrereqs);
   const [scanning, setScanning] = useState(false);
   const [scanComplete, setScanComplete] = useState(false);
+  const [hermesInstalled, setHermesInstalled] = useState<{ installed: boolean; version?: string } | null>(null);
 
   const updatePrereq = (id: string, updates: Partial<Prerequisite>) => {
     setPrereqs((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
@@ -51,10 +60,22 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
   const runScan = async () => {
     setScanning(true);
 
+    // First — short-circuit if Hermes is already installed.
+    try {
+      const hermes = await systemAPI.checkHermes();
+      if (hermes.installed) {
+        setHermesInstalled(hermes);
+        setScanning(false);
+        setScanComplete(true);
+        return;
+      }
+    } catch {
+      /* keep scanning */
+    }
+
     updatePrereq("os", { status: "checking", description: "Detecting platform..." });
     try {
       const osInfo = await systemAPI.detectOS();
-      // Add macOS codename for friendlier label (Sonoma, Ventura, etc.).
       const macCodename = (v: string): string => {
         const major = parseInt(v.split(".")[0] || "0", 10);
         const map: Record<number, string> = {
@@ -84,8 +105,7 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
         updatePrereq("wsl2", { status: "missing", description: "WSL2 required — native Windows is not supported" });
       }
     } else {
-      // Hide the WSL2 row entirely on macOS/Linux — it's confusing to see a
-      // green check next to "Not required". Filter it out of state.
+      // Hide the WSL2 row entirely on macOS/Linux.
       setPrereqs((prev) => prev.filter((p) => p.id !== "wsl2"));
     }
 
@@ -95,22 +115,6 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
       updatePrereq("python", { status: "found", version: python.version, description: `Python ${python.version} found` });
     } else {
       updatePrereq("python", { status: "missing", description: "Python 3.11+ not found" });
-    }
-
-    updatePrereq("pip", { status: "checking", description: "Checking pip and upgrading to latest..." });
-    const pip = await systemAPI.checkPip();
-    if (pip.installed) {
-      updatePrereq("pip", { status: "found", version: pip.version, description: `pip ${pip.version} (upgraded to latest)` });
-    } else {
-      updatePrereq("pip", { status: "missing", description: "pip not found" });
-    }
-
-    updatePrereq("curl", { status: "checking", description: "Checking curl..." });
-    const curl = await systemAPI.checkCurl();
-    if (curl.installed) {
-      updatePrereq("curl", { status: "found", version: curl.version, description: `curl ${curl.version} available` });
-    } else {
-      updatePrereq("curl", { status: "missing", description: "curl not found" });
     }
 
     updatePrereq("git", { status: "checking", description: "Checking Git..." });
@@ -126,7 +130,23 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
     if (rg.installed) {
       updatePrereq("ripgrep", { status: "found", version: rg.version, description: `ripgrep ${rg.version} installed` });
     } else {
-      updatePrereq("ripgrep", { status: "missing", description: "ripgrep not found — required by the agent's file tools" });
+      updatePrereq("ripgrep", { status: "missing", description: "Recommended for fast file search — install later if you skip" });
+    }
+
+    updatePrereq("curl", { status: "checking", description: "Checking curl..." });
+    const curl = await systemAPI.checkCurl();
+    if (curl.installed) {
+      updatePrereq("curl", { status: "found", version: curl.version, description: `curl ${curl.version} available` });
+    } else {
+      updatePrereq("curl", { status: "missing", description: "Recommended — used to fetch updates" });
+    }
+
+    updatePrereq("pip", { status: "checking", description: "Checking pip (auto-installed by Hermes if missing)..." });
+    const pip = await systemAPI.checkPip();
+    if (pip.installed) {
+      updatePrereq("pip", { status: "found", version: pip.version, description: `pip ${pip.version}` });
+    } else {
+      updatePrereq("pip", { status: "found", description: "Will be auto-installed by Hermes (uv) — no action needed" });
     }
 
     setScanning(false);
@@ -192,11 +212,50 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
     }
   };
 
+  // Block install only on truly required items (the ones Hermes docs list).
   const allRequiredMet = prereqs
-    .filter((p) => p.required)
+    .filter((p) => p.tier === "required")
     .every((p) => p.status === "found" || p.status === "installed");
 
   const needsReboot = prereqs.some((p) => p.status === "reboot_required");
+
+  const required = prereqs.filter((p) => p.tier === "required");
+  const recommended = prereqs.filter((p) => p.tier === "recommended");
+  const auto = prereqs.filter((p) => p.tier === "auto");
+
+  // Hermes already installed — collapse the screen.
+  if (hermesInstalled?.installed) {
+    return (
+      <div className="space-y-4">
+        <div className="glass-subtle rounded-lg p-4 flex items-start gap-3 border border-success/20">
+          <CheckCircle2 className="w-5 h-5 text-success shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-foreground">
+              Hermes is already installed
+              {hermesInstalled.version && (
+                <span className="ml-2 text-xs font-mono text-accent">v{hermesInstalled.version}</span>
+              )}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Skip ahead — no system prerequisites needed.
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { setHermesInstalled(null); setScanComplete(false); }}
+          >
+            <RotateCcw className="w-3 h-3 mr-1" /> Re-scan
+          </Button>
+          <Button onClick={onComplete} className="gradient-primary text-primary-foreground flex-1">
+            Continue <ChevronRight className="w-4 h-4 ml-1" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -206,7 +265,8 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
           <h2 className="text-xl font-semibold text-foreground">System Prerequisites</h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          We'll scan your system and install everything needed to run the agent.
+          We'll scan your system. Only the items marked <span className="text-foreground font-medium">Required</span> block installation —
+          recommended packages can be added later.
         </p>
       </div>
 
@@ -216,51 +276,33 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
         </Button>
       )}
 
-      <div className="space-y-2">
-        {prereqs.map((prereq, i) => (
-          <motion.div
-            key={prereq.id}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.05 }}
-          >
-            <div className="glass-subtle rounded-lg p-3 flex items-start justify-between gap-2">
-              <div className="flex items-start gap-3 flex-1 min-w-0">
-                <div className="mt-0.5">
-                  <StatusIcon status={prereq.status} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-medium text-foreground">{prereq.name}</p>
-                    {prereq.version && (
-                      <span className="text-xs font-mono text-accent">{prereq.version}</span>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground break-words">{prereq.description}</p>
-                  {prereq.status === "installing" && prereq.installProgress !== undefined && (
-                    <Progress value={prereq.installProgress} className="h-1 mt-2" />
-                  )}
-                </div>
-              </div>
-              {prereq.status === "missing" && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-primary hover:text-primary shrink-0"
-                  onClick={() => installPrereq(prereq.id)}
-                >
-                  <Download className="w-3 h-3 mr-1" /> Install
-                </Button>
-              )}
-              {prereq.status === "reboot_required" && (
-                <span className="text-xs font-medium text-warning shrink-0 flex items-center gap-1">
-                  <RotateCcw className="w-3 h-3" /> Reboot needed
-                </span>
-              )}
-            </div>
-          </motion.div>
-        ))}
-      </div>
+      {(scanning || scanComplete) && (
+        <div className="space-y-5">
+          <PrereqGroup
+            title="Required"
+            subtitle="Hermes won't install without these"
+            items={required}
+            onInstall={installPrereq}
+          />
+          {recommended.length > 0 && (
+            <PrereqGroup
+              title="Recommended"
+              subtitle="Improves the agent's capabilities — not required"
+              items={recommended}
+              onInstall={installPrereq}
+            />
+          )}
+          {auto.length > 0 && (
+            <PrereqGroup
+              title="Auto-installed by Hermes"
+              subtitle="Bundled by the official installer (uv) — informational only"
+              items={auto}
+              onInstall={installPrereq}
+              dimmed
+            />
+          )}
+        </div>
+      )}
 
       {scanComplete && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -274,7 +316,7 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
           ) : allRequiredMet ? (
             <div className="glass-subtle rounded-lg p-3 flex items-center gap-2 border border-success/20">
               <CheckCircle2 className="w-4 h-4 text-success" />
-              <p className="text-sm text-success">All prerequisites are met!</p>
+              <p className="text-sm text-success">All required prerequisites are met!</p>
             </div>
           ) : (
             <div className="glass-subtle rounded-lg p-3 flex items-center gap-2 border border-warning/20">
@@ -295,6 +337,77 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
   );
 };
 
+const PrereqGroup = ({
+  title,
+  subtitle,
+  items,
+  onInstall,
+  dimmed,
+}: {
+  title: string;
+  subtitle: string;
+  items: Prerequisite[];
+  onInstall: (id: string) => void;
+  dimmed?: boolean;
+}) => {
+  if (items.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-baseline gap-2 px-1">
+        <h3 className={`text-xs font-semibold uppercase tracking-wide ${dimmed ? "text-muted-foreground" : "text-foreground"}`}>
+          {title}
+        </h3>
+        <span className="text-[11px] text-muted-foreground">{subtitle}</span>
+      </div>
+      <div className="space-y-2">
+        {items.map((prereq, i) => (
+          <motion.div
+            key={prereq.id}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.04 }}
+          >
+            <div className={`glass-subtle rounded-lg p-3 flex items-start justify-between gap-2 ${dimmed ? "opacity-70" : ""}`}>
+              <div className="flex items-start gap-3 flex-1 min-w-0">
+                <div className="mt-0.5">
+                  <StatusIcon status={prereq.status} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-medium text-foreground">{prereq.name}</p>
+                    {prereq.version && (
+                      <span className="text-xs font-mono text-accent">{prereq.version}</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground break-words">{prereq.description}</p>
+                  {prereq.status === "installing" && prereq.installProgress !== undefined && (
+                    <Progress value={prereq.installProgress} className="h-1 mt-2" />
+                  )}
+                </div>
+              </div>
+              {prereq.status === "missing" && prereq.id !== "pip" && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-primary hover:text-primary shrink-0"
+                  onClick={() => onInstall(prereq.id)}
+                >
+                  <Download className="w-3 h-3 mr-1" /> Install
+                </Button>
+              )}
+              {prereq.status === "reboot_required" && (
+                <span className="text-xs font-medium text-warning shrink-0 flex items-center gap-1">
+                  <RotateCcw className="w-3 h-3" /> Reboot needed
+                </span>
+              )}
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const StatusIcon = ({ status }: { status: CheckStatus }) => {
   switch (status) {
     case "found":
@@ -310,7 +423,7 @@ const StatusIcon = ({ status }: { status: CheckStatus }) => {
     case "installing":
       return <Loader2 className="w-4 h-4 text-primary animate-spin shrink-0" />;
     default:
-      return <div className="w-4 h-4 rounded-full bg-white/10 shrink-0" />;
+      return <Sparkles className="w-4 h-4 text-muted-foreground shrink-0 opacity-40" />;
   }
 };
 

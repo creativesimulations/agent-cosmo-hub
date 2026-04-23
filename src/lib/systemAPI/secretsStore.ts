@@ -23,6 +23,19 @@ export interface BackendInfo {
 // In-memory fallback for browser dev
 const memoryStore = new Map<string, string>();
 
+/**
+ * Bidirectional alias map. When the user saves one side, we also write the
+ * other so both old and new Hermes builds find the key in ~/.hermes/.env.
+ *
+ * Canonical (per official docs) ↔ legacy alias.
+ */
+const SECRET_ALIASES: Record<string, string> = {
+  GOOGLE_API_KEY: 'GEMINI_API_KEY',
+  GEMINI_API_KEY: 'GOOGLE_API_KEY',
+  HF_TOKEN: 'HUGGINGFACE_API_KEY',
+  HUGGINGFACE_API_KEY: 'HF_TOKEN',
+};
+
 function devBackend(): BackendInfo {
   return { backend: 'memory', label: 'In-memory (dev preview only)' };
 }
@@ -69,10 +82,7 @@ export const secretsStore = {
   },
 
   async set(key: string, value: string): Promise<boolean> {
-    // Hard-block invalid env var names. Hyphens / spaces / dots break bash
-    // (it tries to execute `OPENROUTER-API-KEY=...` as a command). Callers
-    // should normalize via normalizeEnvVarName() before calling — this is a
-    // last-line safety net.
+    // Hard-block invalid env var names.
     const normalized = normalizeEnvVarName(key);
     if (!isValidEnvVarName(normalized)) {
       agentLogs.push({
@@ -91,6 +101,25 @@ export const secretsStore = {
         detail: 'Env var names cannot contain hyphens, spaces, or dots — they break bash parsing.',
       });
     }
+    const ok = await this._setRaw(normalized, value);
+    // Alias mirroring: keep legacy/canonical pairs in sync so both old and
+    // new Hermes builds find the key in ~/.hermes/.env.
+    if (ok) {
+      const alias = SECRET_ALIASES[normalized];
+      if (alias) {
+        await this._setRaw(alias, value);
+        agentLogs.push({
+          source: 'system',
+          level: 'debug',
+          summary: `secretsStore.set: mirrored ${normalized} → ${alias}`,
+          detail: 'Hermes docs ↔ legacy alias kept in sync for cross-version compatibility.',
+        });
+      }
+    }
+    return ok;
+  },
+
+  async _setRaw(normalized: string, value: string): Promise<boolean> {
     if (isElectron()) {
       const r = await window.electronAPI!.secretsSet(normalized, value);
       agentLogs.push({
@@ -262,8 +291,10 @@ export const secretsStore = {
       'TELEGRAM_BOT_TOKEN', 'DISCORD_BOT_TOKEN', 'SLACK_BOT_TOKEN',
       'EXA_API_KEY', 'FIRECRAWL_API_KEY', 'ELEVENLABS_API_KEY',
       'BROWSERBASE_API_KEY', 'BROWSERBASE_PROJECT_ID',
-      'HUGGINGFACE_API_KEY', 'REPLICATE_API_TOKEN',
-      'DEEPSEEK_API_KEY',
+      'HF_TOKEN', 'HUGGINGFACE_API_KEY', 'REPLICATE_API_TOKEN',
+      'DEEPSEEK_API_KEY', 'HERMES_MODEL',
+      'OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL', 'OPENROUTER_BASE_URL',
+      'OLLAMA_HOST', 'LMSTUDIO_BASE_URL',
     ];
     if (KNOWN.includes(k)) return true;
     if (/(_API_KEY|_SECRET|_TOKEN|_PASSWORD|_PRIVATE_KEY|_ACCESS_KEY)$/.test(k)) return true;
