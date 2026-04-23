@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   Puzzle, AlertCircle, CheckCircle2, Loader2, RefreshCw, Search, Package, Wrench,
   ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal,
@@ -27,6 +27,7 @@ type Skill = {
 
 const Skills = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { connected: agentConnected } = useAgentConnection();
   const [loading, setLoading] = useState(true);
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -36,6 +37,21 @@ const Skills = () => {
   const [disabledSet, setDisabledSet] = useState<Set<string>>(new Set());
   const [secretKeys, setSecretKeys] = useState<Set<string>>(new Set());
   const [savingToggle, setSavingToggle] = useState<string | null>(null);
+  const [focusCap, setFocusCap] = useState<string | null>(null);
+
+  // Read ?focus=<capId> from the URL — drives a scroll + highlight of any
+  // skill rows whose names match the capability's candidate skill list.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || (location.hash.split("?")[1] || ""));
+    const f = params.get("focus");
+    if (f) {
+      setFocusCap(f);
+      // Pre-fill search to surface matching rows immediately.
+      setQuery(f.replace(/^skill:/, ""));
+      const t = window.setTimeout(() => setFocusCap(null), 4000);
+      return () => window.clearTimeout(t);
+    }
+  }, [location.search, location.hash]);
 
   const load = useCallback(async () => {
     if (!agentConnected) {
