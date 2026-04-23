@@ -319,8 +319,27 @@ const parseProbeOutput = (stdout: string): Record<string, string> => {
   }, {});
 };
 
+/** One-shot in-place repair for configs left broken by an older build of this
+ *  app that wrote `allowed_paths:[]` / `blocked_paths:[]` (no space → invalid
+ *  YAML). Uses sed to insert the missing space. Safe to run repeatedly. */
+const repairBrokenYamlList = async (): Promise<void> => {
+  await runHermesShell(
+    [
+      `CFG="${HERMES_CONFIG}"`,
+      '[ -f "$CFG" ] || exit 0',
+      // Match keys followed immediately by `[` (no space) and insert one.
+      `if grep -Eq '^[[:space:]]*(allowed_paths|blocked_paths):\\[' "$CFG"; then`,
+      '  echo "[repair] fixing missing space in allowed_paths/blocked_paths"',
+      `  sed -i -E 's/^([[:space:]]*(allowed_paths|blocked_paths)):\\[/\\1: [/' "$CFG"`,
+      'fi',
+    ].join('\n'),
+    { timeout: 10000 },
+  ).catch(() => undefined);
+};
+
 const inspectHermesInstall = async (): Promise<HermesInstallState> => {
   await repairLegacyWindowsInstall();
+  await repairBrokenYamlList();
   const result = await runHermesShell([
     'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
     `if [ -d "${HERMES_DIR}" ]; then echo "HAS_DIR=1"; else echo "HAS_DIR=0"; fi`,
@@ -553,7 +572,7 @@ const stripManagedBlock = (yaml: string, begin: string, end: string): string => 
 };
 
 const yamlList = (items: string[]): string => {
-  if (!items.length) return '[]';
+  if (!items.length) return ' []';
   return '\n' + items.map((p) => `    - "${p.replace(/"/g, '\\"')}"`).join('\n');
 };
 
