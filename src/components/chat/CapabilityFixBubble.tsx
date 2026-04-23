@@ -171,6 +171,10 @@ const CapabilityFixBubble = ({ hit }: { hit: ToolUnavailableHit }) => {
         </div>
       )}
     </div>
+    {isBrowser && (
+      <BrowserSetupDialog open={browserOpen} onOpenChange={setBrowserOpen} />
+    )}
+    </>
   );
 };
 
