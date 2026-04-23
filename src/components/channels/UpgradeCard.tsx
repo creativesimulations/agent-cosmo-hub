@@ -2,18 +2,9 @@ import { useState } from "react";
 import { ExternalLink, KeyRound, Loader2, Lock, Sparkles, CheckCircle2 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Upgrade, enterLicenseKey, removeLicenseKey } from "@/lib/licenses";
+import { Upgrade, removeLicenseKey } from "@/lib/licenses";
+import EnterLicenseKeyDialog from "@/components/upgrades/EnterLicenseKeyDialog";
 
 interface UpgradeCardProps {
   upgrade: Upgrade;
@@ -29,30 +20,6 @@ const openExternal = (url: string) => {
 
 const UpgradeCard = ({ upgrade, unlocked, loading, onChange }: UpgradeCardProps) => {
   const [enterOpen, setEnterOpen] = useState(false);
-  const [keyInput, setKeyInput] = useState("");
-  const [validating, setValidating] = useState(false);
-
-  const handleSubmit = async () => {
-    setValidating(true);
-    const result = await enterLicenseKey(upgrade.id, keyInput);
-    setValidating(false);
-    if (result === "ok") {
-      toast.success(`${upgrade.name} unlocked`, {
-        description: "Yours forever — including future updates.",
-      });
-      setEnterOpen(false);
-      setKeyInput("");
-      onChange();
-    } else if (result === "wrong") {
-      toast.error("Wrong upgrade", {
-        description: `That license key is for a different upgrade, not "${upgrade.name}".`,
-      });
-    } else {
-      toast.error("Invalid license key", {
-        description: "Double-check the key from your purchase email. Whitespace is OK.",
-      });
-    }
-  };
 
   const handleRemove = async () => {
     const ok = await removeLicenseKey(upgrade.id);
@@ -111,36 +78,12 @@ const UpgradeCard = ({ upgrade, unlocked, loading, onChange }: UpgradeCardProps)
         )}
       </GlassCard>
 
-      <Dialog open={enterOpen} onOpenChange={setEnterOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Enter your {upgrade.name} license key</DialogTitle>
-            <DialogDescription>
-              Paste the key from your purchase email. It will be stored securely on this device — and
-              you can re-enter it on any device you own.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="license-key">License key</Label>
-            <Input
-              id="license-key"
-              value={keyInput}
-              onChange={(e) => setKeyInput(e.target.value)}
-              placeholder="e.g. discord.eyJ1Ijoi…"
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setEnterOpen(false)} disabled={validating}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmit} disabled={validating || !keyInput.trim()}>
-              {validating ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Verifying…</> : "Unlock"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EnterLicenseKeyDialog
+        upgradeId={upgrade.id}
+        open={enterOpen}
+        onOpenChange={setEnterOpen}
+        onUnlocked={onChange}
+      />
     </>
   );
 };
