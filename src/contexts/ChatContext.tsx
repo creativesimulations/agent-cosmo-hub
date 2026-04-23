@@ -453,6 +453,24 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
               setLiveSubAgentCount(liveCount);
             }
 
+            // Deferred goal capture — Hermes often emits the spawn marker on
+            // one chunk and the args (containing the goal) a few chunks later.
+            // Re-scan the buffer and back-fill any "(no goal captured)" ids
+            // that are still pending in this turn.
+            if (turnLiveIds.length) {
+              const lateGoal = extractGoal(streamBuf);
+              if (lateGoal !== "(no goal captured)") {
+                for (const id of turnLiveIds) {
+                  // updateGoal is a no-op if the entry already has a real goal
+                  // (we only want to overwrite the placeholder).
+                  const current = liveSubAgents.list().find((s) => s.id === id);
+                  if (current && current.goal === "(no goal captured)") {
+                    liveSubAgents.updateGoal(id, lateGoal);
+                  }
+                }
+              }
+            }
+
             // Completion detection.
             const completeRe = /\b(sub[-_ ]?agent\.complete|delegation\s+(?:complete|finished|done)|child[-_ ]?agent\b[^.\n]*\b(?:complete|finished|done))\b/gi;
             const completeMatches = chunk.data.match(completeRe);
