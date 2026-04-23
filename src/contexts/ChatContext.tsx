@@ -2,12 +2,14 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, Re
 import { useLocation } from "react-router-dom";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
+import { toast as sonnerToast } from "sonner";
 import { useSettings } from "./SettingsContext";
 import { handleAgentReplyArrived } from "@/lib/notify";
 import { liveSubAgents } from "@/lib/liveSubAgents";
 import { detectToolUnavailable, type ToolUnavailableHit } from "@/lib/toolUnavailable";
 import { detectToolCalls } from "@/lib/toolUseDetection";
 import { useCapabilities } from "./CapabilitiesContext";
+import { capabilityProbe } from "@/lib/capabilityProbe";
 
 /**
  * Chat is hoisted into a top-level context so:
@@ -162,7 +164,7 @@ const loadStoredSessionId = (): string | null => {
 
 export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const { settings } = useSettings();
-  const { recordUse } = useCapabilities();
+  const { recordUse, openCapabilityDecision } = useCapabilities();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadStoredMessages());
   const [isStreaming, setIsStreaming] = useState(false);
   const [queuedCount, setQueuedCount] = useState(0);
@@ -649,6 +651,43 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                 : m,
             ),
           );
+
+          // ── LOUD notice: when tool is reported unavailable, run the real
+          // readiness probe and surface a persistent toast + modal so the
+          // user is never left wondering. The probe overrides the agent's
+          // (often hallucinated) self-diagnosis with ground truth.
+          if (toolUnavailable) {
+            const idMap: Record<string, string> = {
+              browser: "webBrowser",
+              webSearch: "webSearch",
+              imageGen: "imageGen",
+              voice: "voice",
+              email: "email",
+              messaging: "messaging",
+              memory: "memory",
+              codeInterpreter: "script",
+              filesystem: "fileWrite",
+            };
+            const capId = idMap[toolUnavailable.capability] ?? toolUnavailable.capability;
+            void (async () => {
+              try {
+                const probe = await capabilityProbe(capId);
+                sonnerToast(`Ron tried to use ${toolUnavailable.label} and was blocked`, {
+                  description: probe.message,
+                  duration: 30_000,
+                  action: {
+                    label: "Fix it",
+                    onClick: () => openCapabilityDecision(capId, probe, `The agent reported: "${toolUnavailable.matchedText.slice(0, 120)}…"`),
+                  },
+                });
+              } catch { /* probe failed — toast still useful, fall back */
+                sonnerToast(`Ron tried to use ${toolUnavailable.label} and was blocked`, {
+                  description: toolUnavailable.hint,
+                  duration: 30_000,
+                });
+              }
+            })();
+          }
 
           if (!result.success && !result.missingKey) {
             toast({

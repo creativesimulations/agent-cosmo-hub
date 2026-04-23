@@ -2,6 +2,7 @@ import { Outlet } from "react-router-dom";
 import AppSidebar from "./AppSidebar";
 import InstallStatusPill from "@/components/install/InstallStatusPill";
 import SudoPasswordDialog from "@/components/install/SudoPasswordDialog";
+import CapabilityApprovalDialog from "@/components/permissions/CapabilityApprovalDialog";
 import { useInstall } from "@/contexts/InstallContext";
 
 const AppLayout = () => {
@@ -21,6 +22,7 @@ const AppLayout = () => {
         onPassword={submitSudoPassword}
         onPasswordless={sudoPasswordless}
       />
+      <CapabilityApprovalDialog />
     </div>
   );
 };

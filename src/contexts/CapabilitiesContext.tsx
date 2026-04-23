@@ -22,6 +22,7 @@ import {
 import { useSettings } from "./SettingsContext";
 import { usePermissions } from "./PermissionsContext";
 import { useAgentConnection } from "./AgentConnectionContext";
+import { capabilityProbe, type CapabilityProbeResult } from "@/lib/capabilityProbe";
 
 /**
  * CapabilitiesContext is the runtime façade for the Capability Registry.
@@ -53,6 +54,13 @@ interface ObservedToolUse {
   count: number;
 }
 
+interface PendingDecision {
+  capabilityId: string;
+  probe: CapabilityProbeResult;
+  /** Optional human-readable context shown above the checklist. */
+  context?: string;
+}
+
 interface CapabilitiesContextValue {
   /** Live merged registry: built-ins + skills + observed. */
   registry: Record<string, CapabilityDefinition>;
@@ -76,6 +84,20 @@ interface CapabilitiesContextValue {
   gate: (capabilityId: string, target: string, reason?: string) => Promise<boolean>;
   /** Record that a capability was used (for chat-chip display). */
   recordUse: (capabilityId: string) => void;
+  /** Currently open capability decision dialog (null if none). */
+  pendingDecision: PendingDecision | null;
+  /** Open the capability approval/fix dialog with a probe result. */
+  openCapabilityDecision: (capabilityId: string, probe: CapabilityProbeResult, context?: string) => void;
+  /** Close the dialog without changing policy. */
+  closePendingDecision: () => void;
+  /** Grant a capability for this session only. */
+  grantSession: (capabilityId: string) => void;
+  /** Number of capabilities currently in a "needs setup" state — drives the sidebar dot. */
+  pendingDecisionsCount: number;
+  /** Latest probe results, keyed by capability id (for badge counting). */
+  probeResults: Record<string, CapabilityProbeResult>;
+  /** Re-run probes for all web-class capabilities (refreshes badge count). */
+  refreshProbes: () => Promise<void>;
 }
 
 const CapabilitiesContext = createContext<CapabilitiesContextValue | null>(null);
@@ -268,6 +290,52 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
     [policy, registry, requestApproval, recordEvent, setPolicy, persistSessionGrants, recordUse],
   );
 
+  // ── Capability decision dialog state ──
+  const [pendingDecision, setPendingDecision] = useState<PendingDecision | null>(null);
+  const [probeResults, setProbeResults] = useState<Record<string, CapabilityProbeResult>>({});
+
+  const openCapabilityDecision = useCallback(
+    (capabilityId: string, probe: CapabilityProbeResult, context?: string) => {
+      setProbeResults((prev) => ({ ...prev, [capabilityId]: probe }));
+      setPendingDecision({ capabilityId, probe, context });
+    },
+    [],
+  );
+  const closePendingDecision = useCallback(() => setPendingDecision(null), []);
+  const grantSession = useCallback(
+    (capabilityId: string) => {
+      sessionGrantsRef.current.add(capabilityId);
+      persistSessionGrants();
+    },
+    [persistSessionGrants],
+  );
+
+  const refreshProbes = useCallback(async () => {
+    // Probe every web/media/communication capability so the sidebar badge
+    // reflects everything the user might want to set up.
+    const targets = Object.values(registry).filter(
+      (c) => c.group === "web" || c.group === "media" || c.group === "communication",
+    );
+    const next: Record<string, CapabilityProbeResult> = {};
+    for (const cap of targets) {
+      try {
+        next[cap.id] = await capabilityProbe(cap.id);
+      } catch { /* skip */ }
+    }
+    setProbeResults((prev) => ({ ...prev, ...next }));
+  }, [registry]);
+
+  // Re-run probes whenever the underlying inputs change (skills, secrets,
+  // agent reconnect). Cheap thanks to the 60s probe cache.
+  useEffect(() => {
+    void refreshProbes();
+  }, [refreshProbes, installedSkills, storedSecretKeys, agentConnected]);
+
+  const pendingDecisionsCount = useMemo(
+    () => Object.values(probeResults).filter((p) => !p.ready && p.reason !== "ready").length,
+    [probeResults],
+  );
+
   const value = useMemo(
     () => ({
       registry,
@@ -279,8 +347,19 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
       rediscover,
       gate,
       recordUse,
+      pendingDecision,
+      openCapabilityDecision,
+      closePendingDecision,
+      grantSession,
+      pendingDecisionsCount,
+      probeResults,
+      refreshProbes,
     }),
-    [registry, policy, setPolicy, resetAll, recentlyUsed, readinessFor, rediscover, gate, recordUse],
+    [
+      registry, policy, setPolicy, resetAll, recentlyUsed, readinessFor, rediscover, gate, recordUse,
+      pendingDecision, openCapabilityDecision, closePendingDecision, grantSession,
+      pendingDecisionsCount, probeResults, refreshProbes,
+    ],
   );
 
   return <CapabilitiesContext.Provider value={value}>{children}</CapabilitiesContext.Provider>;
