@@ -438,6 +438,11 @@ const AgentChat = () => {
           </form>
         </div>
       </GlassCard>
+
+      <BrowserSetupDialog
+        open={browserSetupOpen}
+        onOpenChange={setBrowserSetupOpen}
+      />
     </div>
   );
 };
