@@ -622,11 +622,11 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
 
       <div className="space-y-2 p-3 rounded-md border border-white/10 bg-background/20">
         <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Status</p>
-        <StatusRow label="Docker" status={dockerStatus} detail={dockerDetail} />
+        <StatusRow label="Node.js & git" status={nodeStatus} detail={nodeDetail} />
         <StatusRow
-          label="Container"
-          status={containerStatus}
-          detail={containerStatus === "ok" ? "ronbot-camofox running" : undefined}
+          label="Camofox server"
+          status={serverStatus}
+          detail={serverStatus === "ok" ? "running on port 9377" : undefined}
         />
         <StatusRow
           label="Health"
@@ -656,14 +656,14 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           )}
           Install &amp; start Camofox
         </Button>
-        {containerStatus === "ok" && (
+        {serverStatus === "ok" && (
           <Button variant="outline" onClick={handleInstallCamofox} disabled={camofoxBusy}>
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Restart container
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Restart
           </Button>
         )}
-        {containerStatus === "ok" && (
+        {serverStatus === "ok" && (
           <Button variant="outline" onClick={handleStopCamofox} disabled={camofoxBusy}>
-            <Square className="w-3.5 h-3.5 mr-1.5" /> Stop container
+            <Square className="w-3.5 h-3.5 mr-1.5" /> Stop
           </Button>
         )}
       </div>
