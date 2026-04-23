@@ -378,9 +378,10 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       // Save URL secret + persistence config regardless of health (URL is correct).
       await secretsStore.set("CAMOFOX_URL", camofoxUrl.trim() || "http://localhost:9377");
       await systemAPI.setBrowserCamofoxPersistence(camofoxPersist).catch(() => undefined);
+      await ensureBrowserSkillEnabled(log);
       invalidateCapabilityProbeCache();
       if (healthy) {
-        toast.success("Camofox is running", { description: "Restart Ron to take effect." });
+        toast.success("Camofox is running", { description: "Send Ron a new message — config is reloaded each turn." });
         onConfigured?.();
       } else {
         toast.warning("Camofox started but health check timed out", {
