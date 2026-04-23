@@ -228,7 +228,7 @@ const AgentChat = () => {
       )}
 
       <GlassCard className="flex-1 flex flex-col overflow-hidden p-0">
-
+        {!agentConnected ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center space-y-3">
               <AlertCircle className="w-10 h-10 text-muted-foreground/40 mx-auto" />
