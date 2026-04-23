@@ -210,11 +210,17 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [messages, settings.maxStoredMessages]);
 
-  // On mount, if localStorage was empty (fresh install OR localStorage was
-  // wiped by Electron) but the disk mirror has history, hydrate from disk.
+  // On mount: ensure Hermes file logging is enabled (one-time, idempotent)
+  // so the SubAgents tab can show post-hoc activity, and hydrate from disk
+  // mirror if localStorage was empty.
   useEffect(() => {
     if (typeof window === "undefined" || !window.electronAPI) return;
-    if (messages.length > 0) return; // localStorage already gave us history
+    // Best-effort: enable file logging silently. The managed-block writer
+    // is a no-op when the block is already present.
+    void systemAPI.enableHermesFileLogging?.().catch(() => undefined);
+    // Periodically prune completed live sub-agent entries older than 24h.
+    const pruneId = window.setInterval(() => liveSubAgents.prune(), 60_000);
+    if (messages.length > 0) return () => window.clearInterval(pruneId);
     let cancelled = false;
     void (async () => {
       const histPath = await resolveHomePath(DISK_HISTORY_PATH);
