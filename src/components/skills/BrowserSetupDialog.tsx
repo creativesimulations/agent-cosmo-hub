@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Cloud,
   Server,
-  Chrome as ChromeIcon,
+  Globe,
   MousePointerClick,
   Flame,
   Lock,
@@ -57,7 +57,7 @@ interface BrowserSetupDialogProps {
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Cloud,
   Server,
-  Chrome,
+  Chrome: Globe,
   MousePointerClick,
   Flame,
 };
@@ -91,7 +91,7 @@ const CopyBlock = ({ children }: { children: string }) => {
 };
 
 const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDialogProps) => {
-  const { setSetting, settings } = useSettings();
+  const { update, settings } = useSettings();
   const [step, setStep] = useState<"pick" | "configure">("pick");
   const [picked, setPicked] = useState<BrowserBackendId | null>(null);
   const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
@@ -210,9 +210,11 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
 
   const handleSaveLocalChrome = async () => {
     // No secrets — just record that the user is managing this manually.
-    setSetting("capabilityPolicy", {
-      ...(settings.capabilityPolicy || {}),
-      webBrowser: "allow",
+    update({
+      capabilityPolicy: {
+        ...(settings.capabilityPolicy || {}),
+        webBrowser: "allow",
+      },
     });
     toast.success("Local Chrome marked as configured", {
       description: "Run the launch command in your terminal, then issue `/browser connect` from inside Ron.",
