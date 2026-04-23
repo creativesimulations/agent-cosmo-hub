@@ -294,7 +294,7 @@ const PermissionsPanel = () => {
           icon={FolderOpen}
           paths={perms.allowedFolders}
           onChange={(next) => setPerms({ allowedFolders: next })}
-          placeholder="~/Documents/RonbotWork"
+          pickerTitle="Choose a folder to allow"
         />
         <FolderList
           title="Blocked folders"
@@ -302,7 +302,7 @@ const PermissionsPanel = () => {
           icon={FolderX}
           paths={perms.blockedFolders}
           onChange={(next) => setPerms({ blockedFolders: next })}
-          placeholder="~/.ssh"
+          pickerTitle="Choose a folder to block"
         />
       </div>
     </GlassCard>
