@@ -43,6 +43,8 @@ declare global {
       writeFile: (path: string, content: string, options?: { mode?: number }) => Promise<{ success: boolean; error?: string }>;
       mkdir: (path: string) => Promise<{ success: boolean; error?: string }>;
       getDiskSpace: () => Promise<DiskSpaceInfo>;
+      revealInFolder?: (targetPath: string) => Promise<{ success: boolean; error?: string }>;
+      selectFolder?: (options?: { title?: string; defaultPath?: string }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
 
       // Secure secrets storage
       secretsBackend: () => Promise<{ backend: string; label: string }>;

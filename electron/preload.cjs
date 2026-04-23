@@ -46,6 +46,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Open or highlight a path in the OS file manager (Finder/Explorer/Nautilus)
   revealInFolder: (targetPath) => ipcRenderer.invoke('reveal-in-folder', targetPath),
 
+  // Open native folder picker (macOS/Windows/Linux). Returns the chosen
+  // absolute path (collapsed to ~ when under $HOME) or { canceled: true }.
+  selectFolder: (options) => ipcRenderer.invoke('select-folder', options),
+
   // Secure secrets storage (OS keychain → safeStorage → plaintext fallback)
   secretsBackend: () => ipcRenderer.invoke('secrets-backend'),
   secretsList: () => ipcRenderer.invoke('secrets-list'),
