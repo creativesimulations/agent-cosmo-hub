@@ -97,6 +97,8 @@ export const systemAPI = {
   installSkillFromGit: hermesAPI.installSkillFromGit.bind(hermesAPI),
   installToolFromPath: hermesAPI.installToolFromPath.bind(hermesAPI),
   revealSkillsFolder: hermesAPI.revealSkillsFolder.bind(hermesAPI),
+  probeBrowserNavigate: hermesAPI.probeBrowserNavigate.bind(hermesAPI),
+  runBrowserSelfTest: hermesAPI.runBrowserSelfTest.bind(hermesAPI),
   // Prereqs (extras)
   checkRipgrep: prereqAPI.checkRipgrep.bind(prereqAPI),
   installRipgrep: prereqAPI.installRipgrep.bind(prereqAPI),

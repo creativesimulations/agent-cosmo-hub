@@ -155,6 +155,13 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   const [chromeDetail, setChromeDetail] = useState<string | undefined>();
   const [cdpStatus, setCdpStatus] = useState<StatusKind>("idle");
   const [chromeRunning, setChromeRunning] = useState(false);
+  const [navStatus, setNavStatus] = useState<StatusKind>("idle");
+
+  // ─── Post-config web-search backend CTA ────────────────────────
+  const [showSearchCta, setShowSearchCta] = useState(false);
+  const [tavilyKey, setTavilyKey] = useState("");
+  const [exaKey, setExaKey] = useState("");
+  const [searchSaving, setSearchSaving] = useState(false);
 
   const appendLog = (setter: React.Dispatch<React.SetStateAction<string[]>>) =>
     (line: string) =>
@@ -184,6 +191,10 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     setHealthStatus("idle");
     setChromeStatus("idle");
     setCdpStatus("idle");
+    setNavStatus("idle");
+    setShowSearchCta(false);
+    setTavilyKey("");
+    setExaKey("");
     void refreshUnlocks();
   }, [open]);
 
@@ -221,50 +232,71 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   };
 
   /**
-   * After ANY backend is configured, the agent also needs a browser-class
-   * skill enabled, otherwise it has no tool to drive the backend with —
-   * which is exactly the "browser permission error" the agent reports.
-   * Tries the canonical names in order; first hit wins.
+   * Make sure the agent will actually have a browser tool when it boots.
+   *
+   * The `browser` tool ships INSIDE the `hermes-cli` toolset bundle (it lives
+   * in the Python package, not in `~/.hermes/skills/`), so listing skills on
+   * disk would return an empty result and falsely abort. The real source of
+   * truth is the managed `toolsets:` block in `~/.hermes/config.yaml` plus
+   * the user's explicit-disable list.
    */
   const ensureBrowserSkillEnabled = async (
     log: (line: string) => void,
   ): Promise<boolean> => {
     try {
-      const res = await systemAPI.listSkills();
-      if (!res.success) {
-        log("⚠ Couldn't list installed skills — skipped auto-enable.");
-        return false;
+      // 1. Confirm the hermes-cli toolset is loaded. setBrowserCdpUrl /
+      //    setBrowserCamofoxPersistence both rewrite the managed block on
+      //    every save, so this is normally already true — but a user who
+      //    nuked their config.yaml could be missing it.
+      const diag = await systemAPI.getBrowserDiagnostics().catch(() => null);
+      if (!diag?.hermesWebToolsetLoaded) {
+        log("⚠ hermes-cli toolset missing from config.yaml — running repair…");
+        const repair = await systemAPI.repairConfig().catch(() => null);
+        if (!repair?.success) {
+          log("✗ Couldn't add hermes-cli toolset automatically. Open Diagnostics → Repair config.");
+          toast.error("Browser tool not registered", {
+            description: "Open Diagnostics and click Repair config, then re-run setup.",
+          });
+          return false;
+        }
+        log("✓ hermes-cli toolset added (browser, web, terminal, file… now registered).");
+      } else {
+        log("✓ hermes-cli toolset is loaded — browser tool is registered.");
       }
-      const cfg = await systemAPI.getSkillsConfig();
+
+      // 2. Check the user hasn't explicitly disabled `browser` in skills config.
+      //    The bundled tool can be force-disabled by adding it to the disabled
+      //    list; if so, re-enable it transparently.
+      const cfg = await systemAPI.getSkillsConfig().catch(() => ({ disabled: [] as string[] }));
       const disabled = new Set((cfg.disabled || []).map((s) => s.toLowerCase()));
-      const candidates = ["browser", "web_browser", "browser_use", "playwright"];
-      const installed = res.skills.map((s) => s.name);
-      const installedLower = installed.map((s) => s.toLowerCase());
-      const matchIdx = installedLower.findIndex((s) => candidates.includes(s));
-      if (matchIdx === -1) {
-        log(`✗ Ron has no browser skill installed. Looked for: ${candidates.join(", ")}.`);
-        log("  Open Skills & Tools, add a browser skill, then re-run setup.");
-        toast.error("Ron has no browser skill installed", {
-          description: "Open Skills & Tools to add 'browser' or 'playwright', then re-run setup.",
-        });
-        return false;
+      for (const name of ["browser", "web_browser"]) {
+        if (disabled.has(name)) {
+          log(`→ "${name}" was disabled in skills config — re-enabling…`);
+          const r = await systemAPI.setSkillEnabled(name, true).catch(() => ({ success: false }));
+          if (r.success) log(`✓ Re-enabled "${name}".`);
+        }
       }
-      const realName = installed[matchIdx];
-      const lower = installedLower[matchIdx];
-      if (!disabled.has(lower)) {
-        log(`✓ Browser skill "${realName}" is already enabled.`);
-        return true;
-      }
-      const enable = await systemAPI.setSkillEnabled(realName, true);
-      if (enable.success) {
-        log(`✓ Enabled browser skill "${realName}".`);
-        return true;
-      }
-      log(`✗ Failed to enable "${realName}": ${enable.error || "unknown error"}`);
-      return false;
+
+      // 3. As a fallback for installs that DO ship a `browser` skill folder
+      //    (legacy / community variants), enable it too — never block on
+      //    its absence though.
+      try {
+        const res = await systemAPI.listSkills();
+        if (res.success) {
+          const candidates = ["browser", "web_browser", "browser_use", "playwright"];
+          for (const sk of res.skills) {
+            if (candidates.includes(sk.name.toLowerCase()) && disabled.has(sk.name.toLowerCase())) {
+              await systemAPI.setSkillEnabled(sk.name, true).catch(() => undefined);
+            }
+          }
+        }
+      } catch { /* fallback only — never block */ }
+
+      return true;
     } catch (e) {
-      log(`⚠ Skill auto-enable failed: ${e instanceof Error ? e.message : String(e)}`);
-      return false;
+      log(`⚠ Browser tool verification failed: ${e instanceof Error ? e.message : String(e)}`);
+      // Don't block — the toolset write is idempotent and will be retried on next save.
+      return true;
     }
   };
 
@@ -318,7 +350,28 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     );
   };
 
-  // ─── Camofox automation ───────────────────────────────────────────────────
+  /** Save a search-backend key inline (without closing the dialog) so the
+   *  user can wire CDP and search in one sitting. */
+  const handleSaveSearchKey = async (envVar: string, value: string, label: string) => {
+    if (!value.trim()) return;
+    setSearchSaving(true);
+    try {
+      const ok = await secretsStore.set(envVar, value.trim());
+      if (!ok) {
+        toast.error(`Failed to save ${envVar}`);
+        return;
+      }
+      toast.success(`${label} configured`, {
+        description: "Ron will use it for web search on the next message.",
+      });
+      invalidateCapabilityProbeCache();
+      setShowSearchCta(false);
+      setTavilyKey("");
+      setExaKey("");
+    } finally {
+      setSearchSaving(false);
+    }
+  };
   // We install Camofox via `git clone + npm install + npm start` (the project's
   // own README install path) so no Docker is required. The previous Docker-pull
   // approach failed because the upstream image isn't published publicly
@@ -409,6 +462,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       invalidateCapabilityProbeCache();
       if (healthy) {
         toast.success("Camofox is running", { description: "Send Ron a new message — config is reloaded each turn." });
+        setShowSearchCta(true);
         onConfigured?.();
       } else {
         toast.warning("Camofox started but health check timed out", {
@@ -494,19 +548,30 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           webBrowser: "allow",
         },
       });
-      // CRITICAL: the agent needs an actual browser skill enabled, otherwise
-      // setting cdp_url does nothing and the agent reports a "browser permission error".
-      const skillOk = await ensureBrowserSkillEnabled(log);
-      invalidateCapabilityProbeCache();
-      if (skillOk) {
-        toast.success("Local Chrome connected", {
-          description: "Send Ron a new message to use it — config is reloaded each turn.",
-        });
+      // Make sure the agent's `browser` tool is registered (via hermes-cli toolset).
+      await ensureBrowserSkillEnabled(log);
+
+      // Real CDP round-trip — proves the agent can actually drive Chrome.
+      setNavStatus("busy");
+      const probe = await systemAPI.probeBrowserNavigate("http://127.0.0.1:9222").catch((e) => ({
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      }));
+      if (probe.ok) {
+        setNavStatus("ok");
+        log("✓ Real browser navigation works (Page.navigate → example.com).");
       } else {
-        toast.warning("Chrome is connected, but no browser skill is enabled in Ron", {
-          description: "Open Skills & Tools to enable one.",
-        });
+        setNavStatus("warn");
+        log(`⚠ CDP navigation probe failed: ${probe.error || "unknown"}`);
       }
+
+      invalidateCapabilityProbeCache();
+      toast.success("Local Chrome connected", {
+        description: probe.ok
+          ? "Real browser navigation verified. Send Ron a new message to use it."
+          : "Connected, but the navigation probe didn't complete. Open Diagnostics → Browser self-test for details.",
+      });
+      setShowSearchCta(true);
       onConfigured?.();
     } finally {
       setChromeBusy(false);
@@ -788,6 +853,17 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           status={cdpStatus}
           detail={cdpStatus === "ok" ? "http://127.0.0.1:9222" : undefined}
         />
+        <StatusRow
+          label="Real navigation"
+          status={navStatus}
+          detail={
+            navStatus === "ok"
+              ? "Page.navigate → example.com succeeded"
+              : navStatus === "warn"
+              ? "probe failed — see log"
+              : undefined
+          }
+        />
       </div>
 
       <LogPanel lines={chromeLog} />
@@ -921,6 +997,80 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           )}
 
           {step === "pick" ? renderPick() : renderConfigure()}
+
+          {step === "configure" && showSearchCta && (
+            <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
+              <div className="flex items-start gap-2">
+                <Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                <div className="text-xs">
+                  <p className="font-semibold text-foreground">
+                    Browser is ready. Want Ron to <em>find</em> pages too?
+                  </p>
+                  <p className="text-muted-foreground mt-0.5">
+                    A search backend lets Ron discover URLs (not just open known ones). Tavily
+                    has a generous free tier and works in seconds — paste a key below.
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tavily-key" className="text-xs">Tavily API key (recommended, free tier)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="tavily-key"
+                    value={tavilyKey}
+                    onChange={(e) => setTavilyKey(e.target.value)}
+                    placeholder="tvly-…"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="font-mono text-xs"
+                  />
+                  <Button
+                    onClick={() => handleSaveSearchKey("TAVILY_API_KEY", tavilyKey, "Tavily")}
+                    disabled={searchSaving || !tavilyKey.trim()}
+                    size="sm"
+                  >
+                    Save
+                  </Button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openExternal("https://tavily.com/")}
+                  className="text-[11px] text-primary hover:underline inline-flex items-center gap-1"
+                >
+                  Get a free Tavily key <ExternalLink className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="space-y-2 pt-2 border-t border-white/5">
+                <Label htmlFor="exa-key" className="text-xs">Or use Exa (more advanced)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="exa-key"
+                    value={exaKey}
+                    onChange={(e) => setExaKey(e.target.value)}
+                    placeholder="exa-…"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="font-mono text-xs"
+                  />
+                  <Button
+                    onClick={() => handleSaveSearchKey("EXA_API_KEY", exaKey, "Exa")}
+                    disabled={searchSaving || !exaKey.trim()}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSearchCta(false)}
+                className="text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                Skip — basic HTTP only
+              </button>
+            </div>
+          )}
 
           {step === "configure" && backend && usesFooterSave(backend) && (
             <DialogFooter className="pt-2">

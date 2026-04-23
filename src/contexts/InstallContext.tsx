@@ -447,6 +447,34 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
         }
       }
 
+      // Browser self-test — non-blocking, informational only.
+      if (result.success) {
+        setDoctorProgress(99);
+        try {
+          const bst = await systemAPI.runBrowserSelfTest();
+          setDoctorOutput((prev) => [
+            ...prev,
+            "",
+            "── Browser stack ──────────────────────────────",
+            bst.hermesCliToolsetLoaded
+              ? "✓ Browser tool registered (hermes-cli toolset loaded)"
+              : "✗ Browser tool NOT registered — run Diagnostics → Repair config",
+            bst.cdpUrl
+              ? bst.cdpReachable
+                ? `✓ CDP reachable at ${bst.cdpUrl}${bst.cdpVersion ? ` (${bst.cdpVersion})` : ""}`
+                : `✗ CDP set to ${bst.cdpUrl} but not responding`
+              : "ℹ No CDP backend configured — set up Camofox or local Chrome from Skills if Ron needs deep web access",
+            ...(bst.navigateOk === true ? ["✓ Real browser navigation works"] : []),
+            ...(bst.navigateOk === false ? [`⚠ Browser navigation probe failed: ${bst.navigateError ?? "unknown"}`] : []),
+            bst.webSearchBackend
+              ? `✓ Web-search backend configured (${bst.webSearchBackend.toUpperCase()})`
+              : "ℹ No web-search backend (Tavily/Exa/Firecrawl) — Ron can read URLs but can't discover new ones",
+          ]);
+        } catch (e) {
+          setDoctorOutput((prev) => [...prev, `⚠ Browser self-test crashed: ${e instanceof Error ? e.message : String(e)}`]);
+        }
+      }
+
       setDoctorProgress(100);
 
       if (result.success && configOk && pingOk) {
