@@ -1,79 +1,96 @@
 
 
-# Make capability blockers impossible to miss + fix the silent web-access failure
+# Browser backend selector for Ron — with Browserbase as a paid upgrade
 
-## Two real problems to solve
+Combines the three-backend setup wizard with the paid-unlock pattern already used by the Discord channel.
 
-**1. The user got NO notice** even though the agent failed.
-Today, when `detectToolUnavailable(reply)` finds a hit, we only attach a `<CapabilityFixBubble>` *inside the assistant message*. If the user has scrolled, isn't on the chat tab, or the bubble looks like more chat text, it's invisible. There is no toast, no modal, no badge, no sound.
+## What gets built
 
-**2. The "permission error" isn't actually a permission error.**
-Config shows `internet: allow`. Ronbot didn't block anything. The LLM said *"permission error in this environment"* on its own — most likely because **no browser/fetch skill is actually installed**, so the model has no tool to call and rationalises the failure as a permission issue. We have to stop trusting the agent's self-diagnosis and run our own check.
+### 1. Backend catalog (`src/lib/browserBackends.ts` — new)
+Typed registry of all backends with a `tier` field:
 
-## Fix plan
+| Backend | Tier | Required env | Notes |
+|---|---|---|---|
+| Browserbase | **paid** (`upgradeId: 'browserbase'`) | `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` (+ optional stealth/proxy/keep-alive vars) | Cloud, strongest anti-bot |
+| Camofox | free | `CAMOFOX_URL` (default `http://localhost:9377`) + optional `managed_persistence` toggle | Local, self-hosted |
+| Local Chrome (CDP) | free | none stored — manual `/browser connect` | Uses user's own Chrome |
+| Browser Use | free | `BROWSER_USE_API_KEY` | Quick-add chip |
+| Firecrawl | free | `FIRECRAWL_API_KEY` | Quick-add chip |
 
-### A. Loud, unmissable notice when a capability fails or needs a decision
+Plus `getActiveBrowserBackend(secretKeys)` following Hermes precedence (Browserbase → Browser Use → Camofox → Firecrawl → default).
 
-Anywhere a `toolUnavailable` is detected OR a proactive tool-call is gated:
+### 2. Browserbase added to upgrades catalog (`src/lib/licenses.ts`)
+Append a second `UPGRADES` entry:
+```ts
+{
+  id: 'browserbase',
+  name: 'Browserbase browser',
+  tagline: 'Strongest anti-bot — cloud browsers with stealth, proxies & CAPTCHA solving.',
+  description: 'Browserbase is a paid cloud browser service. This upgrade unlocks the in-app setup wizard so Ron can use Browserbase as its backend without touching a config file. Camofox and Local Chrome remain free.',
+  buyUrl: 'https://ronbot.com/upgrades/browserbase',
+  priceLabel: 'One-time · $29',
+}
+```
+Auto-renders on `/upgrades` via the existing loop.
 
-1. **Toast** (sonner) — top-right, persistent until clicked: *"The agent tried to use Web browsing and was blocked. Click to fix."* Click → opens the new dialog.
-2. **Modal dialog** — same 4-button layout as `ApprovalDialog` but capability-aware. Title: *"Web browsing isn't ready"*. Body: the existing `CapabilityFixBubble` checklist (permission / policy / key / skill / extras). Actions: **Always allow / Allow this session / Always deny / Dismiss**, plus inline *"Add key", "Install skill", "Open Permissions"* buttons.
-3. **Sidebar badge** — small red dot on the Skills nav item until the user opens it. Number = count of capabilities currently in a "needs setup" state.
-4. **Optional desktop notification** if `runInBackground` is on (reuse `notify.ts`).
-5. **Existing inline bubble stays** as the in-chat record, but is no longer the only signal.
+### 3. Shared license-key dialog (`src/components/upgrades/EnterLicenseKeyDialog.tsx` — new)
+Extract the key-entry dialog out of `UpgradeCard.tsx` so both the Upgrades page and the new browser wizard use one component. `UpgradeCard.tsx` updated to consume it (no UX change).
 
-### B. Real readiness check, not the agent's word
+### 4. Browser setup wizard (`src/components/skills/BrowserSetupDialog.tsx` — new)
+One dialog, multi-step:
 
-Add `src/lib/capabilityProbe.ts` that runs whenever:
-- a chat fails with `toolUnavailable`, OR
-- the user opens Skills/Settings, OR
-- after install/skill changes.
+**Step 1 — Pick backend**
+- Three primary cards: Browserbase (with **Paid · $29** chip + lock icon if locked), Camofox (Free · Local), Local Chrome (Free · Advanced)
+- Secondary "quick add" chips: Browser Use, Firecrawl
 
-For each web-related capability it checks:
-- Internet permission in current `~/.hermes/config.yaml` (read via `hermesAPI.readConfig`).
-- Whether any `candidateSkills` are present in `listSkills()` AND not in the disabled list.
-- Whether any `candidateSecrets` exist in the secrets store.
-- For `webBrowser`: whether the `hermes-agent[web]` extras Python package is importable (best-effort `python -c "import playwright"` shell check; cached for 60s).
+**Step 2 — Configure**
+- **Browserbase + locked** → mini paywall: *Buy ($29)* button (opens `buyUrl`) and *Enter key* button (opens shared `EnterLicenseKeyDialog`). On unlock, auto-advances to the API-key form.
+- **Browserbase + unlocked** → two inputs (API key + project ID) + "Get keys" link → save to secrets → "Restart Ron" toast.
+- **Camofox** → URL field (default `http://localhost:9377`) + persistent-sessions toggle (writes `browser.camofox.managed_persistence: true` via new `hermesAPI.setBrowserCamofoxPersistence`) + collapsible "How to run Camofox" with copyable docker/git commands.
+- **Local Chrome** → OS-detected launch command + "Open terminal" helper + marks capability as "manually configured" in `capabilityPolicy` so the probe stops nagging.
 
-It returns a typed `CapabilityProbeResult` with a precise reason: `noSkill | noKey | noExtras | permissionDenied | ready`.
+After any successful save: invalidate `capabilityProbe` cache, re-run probe, close dialog.
 
-### C. Use the probe to override the agent's self-diagnosis
+### 5. Active-backend badge (`src/components/skills/BrowserBackendBadge.tsx` — new)
+Small pill on the Web Browsing capability row: *Active: Browserbase* / *Camofox @ localhost:9377* / *Local Chrome (manual)* / *Default (no anti-bot)*. Includes "Switch backend" link that reopens the wizard.
 
-In `ChatContext` after a reply:
-- Run `detectToolUnavailable` as today.
-- If it matches `webBrowser`/`webSearch`/etc., immediately run `capabilityProbe(id)`.
-- The probe's reason replaces the agent's vague "permission error" wording in the bubble/dialog: *"Ron has no browser skill installed. Install `browser_use` or add a Firecrawl key."*
-- If the probe says `ready`, we still surface the failure but label it *"Agent reported a block but Ron's setup looks fine — try rephrasing or check the agent log."* with a one-click *Open log* button. No more silent dead end.
+### 6. Entry points
+- **Skills page** (`src/pages/Skills.tsx`) — Web Browsing row gets **Set up browser** (replaces generic "Add key" when no backend configured) + the badge.
+- **Capability fix bubble** (`src/components/chat/CapabilityFixBubble.tsx`) — for `webBrowser` hits, primary CTA becomes "Set up browser" → opens wizard.
+- **First-run banner** (`src/pages/AgentChat.tsx`) — banner CTA opens the wizard directly.
 
-### D. Proactive gating gets the same treatment
-
-`detectToolCalls` (already wired in `ChatContext`) on `policy === "ask"` currently only records — we'll switch it to actually call the **modal** before the next chunk renders, so the user is asked *before* the agent claims failure. Same modal as B.
-
-### E. First-run web-access nudge
-
-After install completes, if no web skill / web key is present, show a one-time banner on the Chat page: *"Ron can't browse the web yet — set it up in Skills."* Single click → Skills with the Web Browsing row scrolled into view and highlighted.
+### 7. Probe + presets updates
+- `src/lib/capabilities.ts` — extend `webBrowser.candidateSecrets` with `BROWSER_USE_API_KEY`, `CAMOFOX_URL`. Add `webBrowserReadyVia(keys)` helper.
+- `src/lib/secretPresets.ts` — add presets for `BROWSERBASE_PROJECT_ID`, `BROWSER_USE_API_KEY`, `CAMOFOX_URL`, plus optional Browserbase tuning vars.
+- `src/lib/capabilityProbe.ts` — webBrowser branch returns `ready` when any backend env var is present (names the active backend in `message`); otherwise `noKey` with *"No browser backend configured. Click Set up browser to pick Browserbase, Camofox, or Local Chrome."*
+- `src/lib/systemAPI/hermes.ts` — add `setBrowserCamofoxPersistence(enabled: boolean)` that surgically updates the `browser.camofox.managed_persistence` block in `config.yaml` (same pattern as the permissions block).
 
 ## Files
 
 **New**
-- `src/lib/capabilityProbe.ts` — real readiness probe (reads config, skills, secrets, extras).
-- `src/components/permissions/CapabilityApprovalDialog.tsx` — capability-aware approval modal (reuses Dialog + 4 buttons + checklist body).
-- `src/components/chat/CapabilityNotice.tsx` — toast + sidebar-badge driver, mounted once in `AppLayout`.
+- `src/lib/browserBackends.ts`
+- `src/components/skills/BrowserSetupDialog.tsx`
+- `src/components/skills/BrowserBackendBadge.tsx`
+- `src/components/upgrades/EnterLicenseKeyDialog.tsx`
 
 **Edited**
-- `src/contexts/ChatContext.tsx` — invoke probe after `detectToolUnavailable`; trigger toast + modal; switch proactive `detectToolCalls` to await the modal on `ask`.
-- `src/contexts/CapabilitiesContext.tsx` — expose `openApprovalModal(capId, context)`; expose `pendingDecisionsCount` for the sidebar badge.
-- `src/components/chat/CapabilityFixBubble.tsx` — accept a `probe` prop and render the precise reason instead of generic checks.
-- `src/components/layout/AppSidebar.tsx` — red-dot badge on Skills nav.
-- `src/components/layout/AppLayout.tsx` — mount `<CapabilityNotice />` and the global `<CapabilityApprovalDialog />`.
-- `src/lib/toolUnavailable.ts` — keep, but its output is now a *hint* the probe verifies.
-- `src/pages/AgentChat.tsx` — first-run web-access banner; deep-link target highlight.
-- `src/pages/Skills.tsx` — accept `?focus=<capId>` to scroll/flash a row.
+- `src/lib/licenses.ts` — add Browserbase upgrade
+- `src/lib/capabilities.ts` — extend webBrowser candidates + helper
+- `src/lib/secretPresets.ts` — new env-var presets
+- `src/lib/capabilityProbe.ts` — backend-aware readiness
+- `src/lib/systemAPI/hermes.ts` — Camofox config writer
+- `src/pages/Skills.tsx` — wizard entry + backend badge
+- `src/components/chat/CapabilityFixBubble.tsx` — "Set up browser" CTA
+- `src/pages/AgentChat.tsx` — first-run banner CTA opens wizard
+- `src/components/channels/UpgradeCard.tsx` — consume shared key dialog
+
+**Untouched**
+- `src/pages/Upgrades.tsx`, all gating/probe/sidebar-badge logic, license verification.
 
 ## Outcome
 
-- The user can never again be left wondering why the agent failed: a toast + a modal + a sidebar dot all surface the issue.
-- The fix message tells the truth (skill missing / key missing / extras missing), not the agent's hallucinated *"permission error"*.
-- Decisions made from the modal are written straight into `capabilityPolicy`, just like the existing flow.
-- All existing capability-merge-into-Skills work from the prior plan continues unchanged — this layers loud notices and accurate diagnostics on top.
+- Three working browser options the user can pick from one screen.
+- Browserbase is gated by the same one-time license-key flow as the Discord channel — Camofox and Local Chrome stay free so there's always a no-cost path to working web access.
+- The Web Browsing row always shows which backend is active and offers a one-click switch.
+- The "permission error" dead end now ends in a button that fixes it.
 
