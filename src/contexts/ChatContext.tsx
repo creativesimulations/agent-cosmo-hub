@@ -162,6 +162,7 @@ const loadStoredSessionId = (): string | null => {
 
 export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const { settings } = useSettings();
+  const { recordUse } = useCapabilities();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadStoredMessages());
   const [isStreaming, setIsStreaming] = useState(false);
   const [queuedCount, setQueuedCount] = useState(0);
@@ -389,6 +390,10 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           // Buffer the tail of the stream so we can match multi-line patterns
           // like a delegate_task tool call followed by its `task: "..."` arg.
           let streamBuf = "";
+
+          // Per-turn list of capability ids invoked by the agent (used for
+          // capability chips on the assistant message).
+          const usedCapsThisTurn = new Set<string>();
 
           const extractGoal = (buf: string): string => {
             // Try the broadest set of phrasings Hermes (and its forks) emit
