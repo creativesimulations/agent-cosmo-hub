@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Cloud,
   Server,
@@ -10,11 +10,13 @@ import {
   KeyRound,
   Loader2,
   ArrowLeft,
-  Copy,
-  CheckCircle2,
   Sparkles,
-  ChevronDown,
-  ChevronRight,
+  Play,
+  Square,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  Circle,
 } from "lucide-react";
 import {
   Dialog,
@@ -31,21 +33,18 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { systemAPI, secretsStore } from "@/lib/systemAPI";
+import { systemAPI, secretsStore, browserSetup } from "@/lib/systemAPI";
 import {
   BROWSER_BACKENDS,
   BrowserBackend,
   BrowserBackendId,
-  camofoxDockerSnippet,
-  camofoxGitSnippet,
-  detectOS,
   getBrowserBackend,
-  localChromeLaunchCommand,
 } from "@/lib/browserBackends";
 import { isUpgradeUnlocked, getUpgrade } from "@/lib/licenses";
 import EnterLicenseKeyDialog from "@/components/upgrades/EnterLicenseKeyDialog";
 import { invalidateCapabilityProbeCache } from "@/lib/capabilityProbe";
 import { useSettings } from "@/contexts/SettingsContext";
+import { useSudoPrompt } from "@/contexts/SudoPromptContext";
 
 interface BrowserSetupDialogProps {
   open: boolean;
@@ -66,32 +65,65 @@ const openExternal = (url: string) => {
   window.open(url, "_blank", "noopener,noreferrer");
 };
 
-const CopyBlock = ({ children }: { children: string }) => {
-  const [copied, setCopied] = useState(false);
+const MAX_LOG_LINES = 200;
+
+/** Streaming log panel — auto-scrolls, capped at MAX_LOG_LINES. */
+const LogPanel = ({ lines }: { lines: string[] }) => {
+  const ref = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [lines]);
+  if (lines.length === 0) return null;
   return (
-    <div className="relative group">
-      <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-background/40 border border-white/10 rounded-md p-3 pr-10 text-foreground/90">
-        {children}
-      </pre>
-      <button
-        type="button"
-        onClick={() => {
-          navigator.clipboard.writeText(children).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          });
-        }}
-        className="absolute top-2 right-2 p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
-        aria-label="Copy to clipboard"
-      >
-        {copied ? <CheckCircle2 className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
-      </button>
+    <pre
+      ref={ref}
+      className="text-[11px] font-mono whitespace-pre-wrap break-all bg-background/40 border border-white/10 rounded-md p-3 max-h-48 overflow-y-auto text-foreground/90"
+    >
+      {lines.join("\n")}
+    </pre>
+  );
+};
+
+type StatusKind = "idle" | "ok" | "warn" | "err" | "busy";
+const StatusRow = ({
+  label,
+  status,
+  detail,
+}: {
+  label: string;
+  status: StatusKind;
+  detail?: string;
+}) => {
+  const Icon =
+    status === "ok"
+      ? CheckCircle2
+      : status === "err"
+      ? XCircle
+      : status === "busy"
+      ? Loader2
+      : Circle;
+  const color =
+    status === "ok"
+      ? "text-success"
+      : status === "err"
+      ? "text-destructive"
+      : status === "warn"
+      ? "text-warning"
+      : status === "busy"
+      ? "text-primary"
+      : "text-muted-foreground";
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <Icon className={cn("w-3.5 h-3.5 shrink-0", color, status === "busy" && "animate-spin")} />
+      <span className="font-medium text-foreground">{label}</span>
+      {detail && <span className="text-muted-foreground">— {detail}</span>}
     </div>
   );
 };
 
 const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDialogProps) => {
   const { update, settings } = useSettings();
+  const { requestSudoPassword } = useSudoPrompt();
   const [step, setStep] = useState<"pick" | "configure">("pick");
   const [picked, setPicked] = useState<BrowserBackendId | null>(null);
   const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
@@ -103,12 +135,31 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   const [bbProjectId, setBbProjectId] = useState("");
   const [camofoxUrl, setCamofoxUrl] = useState("http://localhost:9377");
   const [camofoxPersist, setCamofoxPersist] = useState(false);
-  const [camofoxHowto, setCamofoxHowto] = useState(false);
   const [browserUseKey, setBrowserUseKey] = useState("");
   const [firecrawlKey, setFirecrawlKey] = useState("");
 
-  const os = useMemo(() => detectOS(), []);
-  const chromeCmd = useMemo(() => localChromeLaunchCommand(os), [os]);
+  // ─── Camofox automation state ──────────────────────────────────
+  const [camofoxLog, setCamofoxLog] = useState<string[]>([]);
+  const [camofoxBusy, setCamofoxBusy] = useState(false);
+  const [dockerStatus, setDockerStatus] = useState<StatusKind>("idle");
+  const [dockerDetail, setDockerDetail] = useState<string | undefined>();
+  const [containerStatus, setContainerStatus] = useState<StatusKind>("idle");
+  const [healthStatus, setHealthStatus] = useState<StatusKind>("idle");
+
+  // ─── Local Chrome automation state ─────────────────────────────
+  const [chromeLog, setChromeLog] = useState<string[]>([]);
+  const [chromeBusy, setChromeBusy] = useState(false);
+  const [chromeStatus, setChromeStatus] = useState<StatusKind>("idle");
+  const [chromeDetail, setChromeDetail] = useState<string | undefined>();
+  const [cdpStatus, setCdpStatus] = useState<StatusKind>("idle");
+  const [chromeRunning, setChromeRunning] = useState(false);
+
+  const appendLog = (setter: React.Dispatch<React.SetStateAction<string[]>>) =>
+    (line: string) =>
+      setter((prev) => {
+        const next = [...prev, ...line.split("\n").map((l) => l.replace(/\r$/, "")).filter(Boolean)];
+        return next.length > MAX_LOG_LINES ? next.slice(next.length - MAX_LOG_LINES) : next;
+      });
 
   const refreshUnlocks = async () => {
     const next: Record<string, boolean> = {};
@@ -124,6 +175,13 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     if (!open) return;
     setStep("pick");
     setPicked(null);
+    setCamofoxLog([]);
+    setChromeLog([]);
+    setDockerStatus("idle");
+    setContainerStatus("idle");
+    setHealthStatus("idle");
+    setChromeStatus("idle");
+    setCdpStatus("idle");
     void refreshUnlocks();
   }, [open]);
 
@@ -151,9 +209,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     }
     setSaving(false);
     if (allOk) {
-      toast.success(successMsg, {
-        description: "Restart Ron to take effect.",
-      });
+      toast.success(successMsg, { description: "Restart Ron to take effect." });
       invalidateCapabilityProbeCache();
       onConfigured?.();
       onOpenChange(false);
@@ -172,26 +228,6 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     );
   };
 
-  const handleSaveCamofox = async () => {
-    if (!camofoxUrl.trim()) return;
-    setSaving(true);
-    const ok = await secretsStore.set("CAMOFOX_URL", camofoxUrl.trim());
-    if (!ok) {
-      setSaving(false);
-      toast.error("Failed to save CAMOFOX_URL");
-      return;
-    }
-    // Update Hermes config block (best-effort).
-    await systemAPI.setBrowserCamofoxPersistence?.(camofoxPersist).catch(() => undefined);
-    setSaving(false);
-    toast.success("Camofox configured", {
-      description: "Restart Ron to take effect.",
-    });
-    invalidateCapabilityProbeCache();
-    onConfigured?.();
-    onOpenChange(false);
-  };
-
   const handleSaveBrowserUse = async () => {
     if (!browserUseKey.trim()) return;
     await handleSaveSecrets(
@@ -208,20 +244,184 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     );
   };
 
-  const handleSaveLocalChrome = async () => {
-    // No secrets — just record that the user is managing this manually.
-    update({
-      capabilityPolicy: {
-        ...(settings.capabilityPolicy || {}),
-        webBrowser: "allow",
-      },
-    });
-    toast.success("Local Chrome marked as configured", {
-      description: "Run the launch command in your terminal, then issue `/browser connect` from inside Ron.",
-    });
-    invalidateCapabilityProbeCache();
-    onConfigured?.();
-    onOpenChange(false);
+  // ─── Camofox automation ───────────────────────────────────────────────────
+  const ensureDocker = async (logFn: (line: string) => void): Promise<boolean> => {
+    setDockerStatus("busy");
+    setDockerDetail("checking…");
+    let status = await browserSetup.detectDocker();
+    if (!status.installed) {
+      setDockerDetail("not installed — installing…");
+      logFn("Docker not found. Installing now…");
+      const platform = await systemAPI.getPlatform();
+      let pw: string | null = null;
+      if (platform.isLinux || platform.isWSL) {
+        pw = await requestSudoPassword("install Docker (needed to run Camofox)");
+        if (pw === null) {
+          setDockerStatus("err");
+          setDockerDetail("install cancelled");
+          return false;
+        }
+      }
+      const inst = await browserSetup.installDocker(
+        (e) => e.data && logFn(e.data),
+        pw,
+      );
+      if (!inst.success) {
+        setDockerStatus("err");
+        setDockerDetail("install failed");
+        return false;
+      }
+      // re-detect; on macOS without brew the user may need to drag-to-install — bail with a helpful message.
+      status = await browserSetup.detectDocker();
+      if (!status.installed) {
+        setDockerStatus("warn");
+        setDockerDetail("installer launched — finish install, then click Install & start Camofox again");
+        return false;
+      }
+    }
+    if (!status.running) {
+      setDockerDetail("starting daemon…");
+      logFn("Starting Docker daemon…");
+      const up = await browserSetup.startDockerDaemon((e) => e.data && logFn(e.data));
+      if (!up) {
+        setDockerStatus("err");
+        setDockerDetail("daemon failed to start");
+        return false;
+      }
+    }
+    setDockerStatus("ok");
+    setDockerDetail(status.version ? `running (server ${status.version})` : "running");
+    return true;
+  };
+
+  const handleInstallCamofox = async () => {
+    setCamofoxBusy(true);
+    setCamofoxLog([]);
+    const log = appendLog(setCamofoxLog);
+    try {
+      const dockerReady = await ensureDocker(log);
+      if (!dockerReady) {
+        toast.error("Docker is not ready", { description: "See the log for details." });
+        return;
+      }
+      setContainerStatus("busy");
+      const run = await browserSetup.runCamofoxContainer((e) => e.data && log(e.data));
+      if (!run.success) {
+        setContainerStatus("err");
+        toast.error("Failed to start Camofox container");
+        return;
+      }
+      setContainerStatus("ok");
+      setHealthStatus("busy");
+      const healthy = await browserSetup.pollCamofox(60000, (e) => e.data && log(e.data));
+      setHealthStatus(healthy ? "ok" : "warn");
+      // Save URL secret + persistence config regardless of health (URL is correct).
+      await secretsStore.set("CAMOFOX_URL", camofoxUrl.trim() || "http://localhost:9377");
+      await systemAPI.setBrowserCamofoxPersistence(camofoxPersist).catch(() => undefined);
+      invalidateCapabilityProbeCache();
+      if (healthy) {
+        toast.success("Camofox is running", { description: "Restart Ron to take effect." });
+        onConfigured?.();
+      } else {
+        toast.warning("Camofox container started but health check timed out", {
+          description: "It may still be initializing — try again in a minute.",
+        });
+      }
+    } finally {
+      setCamofoxBusy(false);
+    }
+  };
+
+  const handleStopCamofox = async () => {
+    setCamofoxBusy(true);
+    const log = appendLog(setCamofoxLog);
+    await browserSetup.stopCamofoxContainer((e) => e.data && log(e.data));
+    setContainerStatus("idle");
+    setHealthStatus("idle");
+    setCamofoxBusy(false);
+    toast.success("Camofox container stopped");
+  };
+
+  // ─── Local Chrome automation ──────────────────────────────────────────────
+  const handleLaunchChrome = async () => {
+    setChromeBusy(true);
+    setChromeLog([]);
+    const log = appendLog(setChromeLog);
+    try {
+      setChromeStatus("busy");
+      setChromeDetail("checking…");
+      let chromePath = await browserSetup.detectChrome();
+      if (!chromePath) {
+        setChromeDetail("not installed — installing…");
+        log("Chrome not found. Installing now…");
+        const platform = await systemAPI.getPlatform();
+        let pw: string | null = null;
+        if (platform.isLinux || platform.isWSL) {
+          pw = await requestSudoPassword("install Google Chrome (needed for the local browser backend)");
+          if (pw === null) {
+            setChromeStatus("err");
+            setChromeDetail("install cancelled");
+            return;
+          }
+        }
+        const inst = await browserSetup.installChrome(
+          (e) => e.data && log(e.data),
+          pw,
+        );
+        if (!inst.success) {
+          setChromeStatus("err");
+          setChromeDetail("install failed");
+          toast.error("Chrome install failed", { description: "See the log for details." });
+          return;
+        }
+        chromePath = await browserSetup.detectChrome();
+        if (!chromePath) {
+          setChromeStatus("warn");
+          setChromeDetail("installer launched — finish install, then click Launch Chrome & connect again");
+          return;
+        }
+      }
+      setChromeStatus("ok");
+      setChromeDetail(chromePath);
+
+      setCdpStatus("busy");
+      await browserSetup.launchChromeWithCdp(chromePath, 9222, (e) => e.data && log(e.data));
+      const cdpUp = await browserSetup.pollCdp(9222, 30000, (e) => e.data && log(e.data));
+      if (!cdpUp) {
+        setCdpStatus("err");
+        toast.error("Chrome started but the CDP endpoint did not respond");
+        return;
+      }
+      setCdpStatus("ok");
+      setChromeRunning(true);
+
+      // Wire it into Hermes config.
+      await systemAPI.setBrowserCdpUrl("http://127.0.0.1:9222").catch(() => undefined);
+      // Mark capability as user-managed so the probe stops nagging.
+      update({
+        capabilityPolicy: {
+          ...(settings.capabilityPolicy || {}),
+          webBrowser: "allow",
+        },
+      });
+      invalidateCapabilityProbeCache();
+      log("✓ Hermes config updated: browser.cdp_url = http://127.0.0.1:9222");
+      toast.success("Local Chrome connected", { description: "Restart Ron to take effect." });
+      onConfigured?.();
+    } finally {
+      setChromeBusy(false);
+    }
+  };
+
+  const handleStopChrome = async () => {
+    setChromeBusy(true);
+    const log = appendLog(setChromeLog);
+    await browserSetup.stopLaunchedChrome((e) => e.data && log(e.data));
+    await systemAPI.setBrowserCdpUrl(null).catch(() => undefined);
+    setCdpStatus("idle");
+    setChromeRunning(false);
+    setChromeBusy(false);
+    toast.success("Chrome stopped");
   };
 
   const browserbaseUpgrade = getUpgrade("browserbase");
@@ -270,11 +470,6 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
                       {b.surface === "local" && (
                         <Badge variant="outline" className="border-white/10 text-muted-foreground text-[10px]">
                           Local
-                        </Badge>
-                      )}
-                      {b.surface === "manual" && (
-                        <Badge variant="outline" className="border-white/10 text-muted-foreground text-[10px]">
-                          Advanced
                         </Badge>
                       )}
                     </div>
@@ -339,8 +534,10 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           </Button>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Prefer a free option? Use <button onClick={() => handlePick("camofox")} className="text-primary hover:underline">Camofox</button>
-          {" "}or <button onClick={() => handlePick("localChrome")} className="text-primary hover:underline">Local Chrome</button>.
+          Prefer a free option? Use{" "}
+          <button onClick={() => handlePick("camofox")} className="text-primary hover:underline">Camofox</button>
+          {" "}or{" "}
+          <button onClick={() => handlePick("localChrome")} className="text-primary hover:underline">Local Chrome</button>.
         </p>
       </div>
     );
@@ -395,7 +592,12 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           spellCheck={false}
           className="font-mono text-xs"
         />
+        <p className="text-[11px] text-muted-foreground">
+          Default points at the local container Ron will install for you. Only change this if you're
+          running Camofox on another machine.
+        </p>
       </div>
+
       <div className="flex items-start justify-between gap-3 p-3 rounded-md border border-white/10 bg-background/30">
         <div className="space-y-0.5">
           <p className="text-sm font-medium text-foreground">Persistent sessions</p>
@@ -405,33 +607,52 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
         </div>
         <Switch checked={camofoxPersist} onCheckedChange={setCamofoxPersist} />
       </div>
-      <div className="border border-white/5 rounded-md">
-        <button
-          type="button"
-          onClick={() => setCamofoxHowto((v) => !v)}
-          className="w-full flex items-center justify-between p-3 text-xs text-muted-foreground hover:text-foreground transition-colors"
+
+      <div className="space-y-2 p-3 rounded-md border border-white/10 bg-background/20">
+        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Status</p>
+        <StatusRow label="Docker" status={dockerStatus} detail={dockerDetail} />
+        <StatusRow
+          label="Container"
+          status={containerStatus}
+          detail={containerStatus === "ok" ? "ronbot-camofox running" : undefined}
+        />
+        <StatusRow
+          label="Health"
+          status={healthStatus}
+          detail={
+            healthStatus === "ok"
+              ? "responding on /health"
+              : healthStatus === "warn"
+              ? "no response yet — give it a minute"
+              : undefined
+          }
+        />
+      </div>
+
+      <LogPanel lines={camofoxLog} />
+
+      <div className="flex flex-wrap gap-2">
+        <Button
+          onClick={handleInstallCamofox}
+          disabled={camofoxBusy}
+          className="gradient-primary text-primary-foreground"
         >
-          <span className="font-medium">How to run Camofox</span>
-          {camofoxHowto ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-        </button>
-        {camofoxHowto && (
-          <div className="px-3 pb-3 space-y-3">
-            <div className="space-y-1.5">
-              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Docker (recommended)</p>
-              <CopyBlock>{camofoxDockerSnippet()}</CopyBlock>
-            </div>
-            <div className="space-y-1.5">
-              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Or from source</p>
-              <CopyBlock>{camofoxGitSnippet()}</CopyBlock>
-            </div>
-            <button
-              type="button"
-              onClick={() => openExternal("https://github.com/jo-inc/camofox-browser")}
-              className="text-[11px] text-primary hover:underline inline-flex items-center gap-1"
-            >
-              Camofox docs <ExternalLink className="w-3 h-3" />
-            </button>
-          </div>
+          {camofoxBusy ? (
+            <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+          ) : (
+            <Play className="w-3.5 h-3.5 mr-1.5" />
+          )}
+          Install &amp; start Camofox
+        </Button>
+        {containerStatus === "ok" && (
+          <Button variant="outline" onClick={handleInstallCamofox} disabled={camofoxBusy}>
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Restart container
+          </Button>
+        )}
+        {containerStatus === "ok" && (
+          <Button variant="outline" onClick={handleStopCamofox} disabled={camofoxBusy}>
+            <Square className="w-3.5 h-3.5 mr-1.5" /> Stop container
+          </Button>
         )}
       </div>
     </div>
@@ -439,30 +660,46 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
 
   const renderLocalChrome = () => (
     <div className="space-y-4">
-      <div className="space-y-2">
-        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Step 1 — Launch Chrome with remote debugging ({os})
-        </p>
-        <CopyBlock>{chromeCmd}</CopyBlock>
-        <p className="text-[11px] text-muted-foreground">
-          Use a fresh user-data dir so it doesn't conflict with your normal Chrome profile.
-          Log into any sites you want Ron to access.
-        </p>
+      <p className="text-xs text-muted-foreground leading-relaxed">
+        Ron will install Chrome (if missing), launch it with remote debugging on port 9222, and
+        write the connection URL into the agent's config. You don't need to touch a terminal.
+      </p>
+
+      <div className="space-y-2 p-3 rounded-md border border-white/10 bg-background/20">
+        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Status</p>
+        <StatusRow label="Chrome" status={chromeStatus} detail={chromeDetail} />
+        <StatusRow
+          label="CDP endpoint"
+          status={cdpStatus}
+          detail={cdpStatus === "ok" ? "http://127.0.0.1:9222" : undefined}
+        />
       </div>
-      <div className="space-y-2">
-        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Step 2 — Connect from the agent terminal
-        </p>
-        <CopyBlock>{`hermes\n/browser connect`}</CopyBlock>
-        <p className="text-[11px] text-muted-foreground">
-          The <code className="text-foreground">/browser connect</code> command must be issued from
-          a terminal session of the agent — not from this chat. Once connected, Ron will use that
-          Chrome for all browsing in this app too.
-        </p>
+
+      <LogPanel lines={chromeLog} />
+
+      <div className="flex flex-wrap gap-2">
+        <Button
+          onClick={handleLaunchChrome}
+          disabled={chromeBusy}
+          className="gradient-primary text-primary-foreground"
+        >
+          {chromeBusy ? (
+            <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+          ) : (
+            <Play className="w-3.5 h-3.5 mr-1.5" />
+          )}
+          Launch Chrome &amp; connect
+        </Button>
+        {chromeRunning && (
+          <Button variant="outline" onClick={handleStopChrome} disabled={chromeBusy}>
+            <Square className="w-3.5 h-3.5 mr-1.5" /> Stop Chrome
+          </Button>
+        )}
       </div>
+
       <div className="p-3 rounded-md border border-warning/30 bg-warning/5 text-[11px] text-foreground/90">
-        Marking this option as configured tells Ronbot to stop showing the "no browser configured"
-        warning. If you switch backends later, set <code>Web browsing</code> back to "Ask" in Settings.
+        Ron uses a fresh user-data directory at <code>~/.ronbot-chrome</code> so it doesn't conflict
+        with your normal Chrome profile. Sign in to any sites you want Ron to access in that window.
       </div>
     </div>
   );
@@ -484,7 +721,6 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
 
   const renderConfigure = () => {
     if (!backend) return null;
-
     if (backend.id === "browserbase") {
       return isLocked(backend) ? renderBrowserbasePaywall() : renderBrowserbaseForm();
     }
@@ -497,11 +733,13 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     return null;
   };
 
+  /** Whether the footer Save button applies to the current backend. */
+  const usesFooterSave = (b: BrowserBackend | null): boolean =>
+    !!b && (b.id === "browserbase" || b.id === "browserUse" || b.id === "firecrawl");
+
   const canSave = (): boolean => {
     if (!backend) return false;
     if (backend.id === "browserbase") return !isLocked(backend) && !!bbApiKey.trim() && !!bbProjectId.trim();
-    if (backend.id === "camofox") return !!camofoxUrl.trim();
-    if (backend.id === "localChrome") return true;
     if (backend.id === "browserUse") return !!browserUseKey.trim();
     if (backend.id === "firecrawl") return !!firecrawlKey.trim();
     return false;
@@ -510,8 +748,6 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   const handleSave = async () => {
     if (!backend) return;
     if (backend.id === "browserbase") return handleSaveBrowserbase();
-    if (backend.id === "camofox") return handleSaveCamofox();
-    if (backend.id === "localChrome") return handleSaveLocalChrome();
     if (backend.id === "browserUse") return handleSaveBrowserUse();
     if (backend.id === "firecrawl") return handleSaveFirecrawl();
   };
@@ -543,7 +779,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
 
           {step === "pick" ? renderPick() : renderConfigure()}
 
-          {step === "configure" && backend && backend.id !== "localChrome" && (
+          {step === "configure" && backend && usesFooterSave(backend) && (
             <DialogFooter className="pt-2">
               <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>
                 Cancel
@@ -561,12 +797,12 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
               )}
             </DialogFooter>
           )}
-          {step === "configure" && backend?.id === "localChrome" && (
+
+          {step === "configure" && backend && !usesFooterSave(backend) && (
             <DialogFooter className="pt-2">
               <Button variant="ghost" onClick={() => onOpenChange(false)}>
-                Cancel
+                Close
               </Button>
-              <Button onClick={handleSave}>Mark as configured</Button>
             </DialogFooter>
           )}
         </DialogContent>
