@@ -221,50 +221,71 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   };
 
   /**
-   * After ANY backend is configured, the agent also needs a browser-class
-   * skill enabled, otherwise it has no tool to drive the backend with —
-   * which is exactly the "browser permission error" the agent reports.
-   * Tries the canonical names in order; first hit wins.
+   * Make sure the agent will actually have a browser tool when it boots.
+   *
+   * The `browser` tool ships INSIDE the `hermes-cli` toolset bundle (it lives
+   * in the Python package, not in `~/.hermes/skills/`), so listing skills on
+   * disk would return an empty result and falsely abort. The real source of
+   * truth is the managed `toolsets:` block in `~/.hermes/config.yaml` plus
+   * the user's explicit-disable list.
    */
   const ensureBrowserSkillEnabled = async (
     log: (line: string) => void,
   ): Promise<boolean> => {
     try {
-      const res = await systemAPI.listSkills();
-      if (!res.success) {
-        log("⚠ Couldn't list installed skills — skipped auto-enable.");
-        return false;
+      // 1. Confirm the hermes-cli toolset is loaded. setBrowserCdpUrl /
+      //    setBrowserCamofoxPersistence both rewrite the managed block on
+      //    every save, so this is normally already true — but a user who
+      //    nuked their config.yaml could be missing it.
+      const diag = await systemAPI.getBrowserDiagnostics().catch(() => null);
+      if (!diag?.hermesWebToolsetLoaded) {
+        log("⚠ hermes-cli toolset missing from config.yaml — running repair…");
+        const repair = await systemAPI.repairConfig().catch(() => null);
+        if (!repair?.success) {
+          log("✗ Couldn't add hermes-cli toolset automatically. Open Diagnostics → Repair config.");
+          toast.error("Browser tool not registered", {
+            description: "Open Diagnostics and click Repair config, then re-run setup.",
+          });
+          return false;
+        }
+        log("✓ hermes-cli toolset added (browser, web, terminal, file… now registered).");
+      } else {
+        log("✓ hermes-cli toolset is loaded — browser tool is registered.");
       }
-      const cfg = await systemAPI.getSkillsConfig();
+
+      // 2. Check the user hasn't explicitly disabled `browser` in skills config.
+      //    The bundled tool can be force-disabled by adding it to the disabled
+      //    list; if so, re-enable it transparently.
+      const cfg = await systemAPI.getSkillsConfig().catch(() => ({ disabled: [] as string[] }));
       const disabled = new Set((cfg.disabled || []).map((s) => s.toLowerCase()));
-      const candidates = ["browser", "web_browser", "browser_use", "playwright"];
-      const installed = res.skills.map((s) => s.name);
-      const installedLower = installed.map((s) => s.toLowerCase());
-      const matchIdx = installedLower.findIndex((s) => candidates.includes(s));
-      if (matchIdx === -1) {
-        log(`✗ Ron has no browser skill installed. Looked for: ${candidates.join(", ")}.`);
-        log("  Open Skills & Tools, add a browser skill, then re-run setup.");
-        toast.error("Ron has no browser skill installed", {
-          description: "Open Skills & Tools to add 'browser' or 'playwright', then re-run setup.",
-        });
-        return false;
+      for (const name of ["browser", "web_browser"]) {
+        if (disabled.has(name)) {
+          log(`→ "${name}" was disabled in skills config — re-enabling…`);
+          const r = await systemAPI.setSkillEnabled(name, true).catch(() => ({ success: false }));
+          if (r.success) log(`✓ Re-enabled "${name}".`);
+        }
       }
-      const realName = installed[matchIdx];
-      const lower = installedLower[matchIdx];
-      if (!disabled.has(lower)) {
-        log(`✓ Browser skill "${realName}" is already enabled.`);
-        return true;
-      }
-      const enable = await systemAPI.setSkillEnabled(realName, true);
-      if (enable.success) {
-        log(`✓ Enabled browser skill "${realName}".`);
-        return true;
-      }
-      log(`✗ Failed to enable "${realName}": ${enable.error || "unknown error"}`);
-      return false;
+
+      // 3. As a fallback for installs that DO ship a `browser` skill folder
+      //    (legacy / community variants), enable it too — never block on
+      //    its absence though.
+      try {
+        const res = await systemAPI.listSkills();
+        if (res.success) {
+          const candidates = ["browser", "web_browser", "browser_use", "playwright"];
+          for (const sk of res.skills) {
+            if (candidates.includes(sk.name.toLowerCase()) && disabled.has(sk.name.toLowerCase())) {
+              await systemAPI.setSkillEnabled(sk.name, true).catch(() => undefined);
+            }
+          }
+        }
+      } catch { /* fallback only — never block */ }
+
+      return true;
     } catch (e) {
-      log(`⚠ Skill auto-enable failed: ${e instanceof Error ? e.message : String(e)}`);
-      return false;
+      log(`⚠ Browser tool verification failed: ${e instanceof Error ? e.message : String(e)}`);
+      // Don't block — the toolset write is idempotent and will be retried on next save.
+      return true;
     }
   };
 
