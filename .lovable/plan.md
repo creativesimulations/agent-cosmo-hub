@@ -1,104 +1,79 @@
 
 
-# Universal capability gating: never silently fail again
+# Make capability blockers impossible to miss + fix the silent web-access failure
 
-## Goal
+## Two real problems to solve
 
-Every time the agent tries to use ANY feature/skill/tool — browser, search, image gen, voice, messaging, custom skills the user installs later — the user gets ONE consistent experience:
+**1. The user got NO notice** even though the agent failed.
+Today, when `detectToolUnavailable(reply)` finds a hit, we only attach a `<CapabilityFixBubble>` *inside the assistant message*. If the user has scrolled, isn't on the chat tab, or the bubble looks like more chat text, it's invisible. There is no toast, no modal, no badge, no sound.
 
-1. A clear notice (modal or chat bubble) explaining what the agent wants and why
-2. Four choices: **Allow once / Allow this session / Always allow / Always deny**
-3. The decision is remembered per-capability, surfaced in Settings, and revocable
-4. The list of capabilities updates itself as skills are added/removed — no hardcoded toggles to maintain
+**2. The "permission error" isn't actually a permission error.**
+Config shows `internet: allow`. Ronbot didn't block anything. The LLM said *"permission error in this environment"* on its own — most likely because **no browser/fetch skill is actually installed**, so the model has no tool to call and rationalises the failure as a permission issue. We have to stop trusting the agent's self-diagnosis and run our own check.
 
-## Three-layer model
+## Fix plan
 
-```text
-┌─────────────────────────────────────────────────────────────┐
-│  Layer 1: CAPABILITY REGISTRY  (single source of truth)     │
-│  - Auto-discovered from installed skills + known tool list   │
-│  - Each entry: id, label, risk, requiredSecrets, extras     │
-└─────────────────────────────────────────────────────────────┘
-            │
-            ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Layer 2: CAPABILITY POLICY  (user's stored decisions)      │
-│  - Per-capability default: ask | allow | session | deny     │
-│  - Stored in settings.capabilityPolicy (Map<id, choice>)    │
-└─────────────────────────────────────────────────────────────┘
-            │
-            ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Layer 3: RUNTIME GATE                                      │
-│  - Before/during agent action: check policy                 │
-│  - If "ask" → show modal → record decision                  │
-│  - If failure detected post-hoc → guided fix bubble         │
-└─────────────────────────────────────────────────────────────┘
-```
+### A. Loud, unmissable notice when a capability fails or needs a decision
 
-## How the user experiences it
+Anywhere a `toolUnavailable` is detected OR a proactive tool-call is gated:
 
-### Proactive (preferred): when the agent announces a tool call
-- Detect tool-use markers in the agent's stream (`tool: web_search`, `Calling browser…`, `using image_gen`, etc.)
-- If policy = `ask` → pause stream, show modal with capability name, what it does, risk level, four buttons
-- If policy = `allow`/`session` → silent, but a small chip appears in the message ("🌐 Used web search")
-- If policy = `deny` → inject a system note telling the agent it's blocked, so it stops trying
+1. **Toast** (sonner) — top-right, persistent until clicked: *"The agent tried to use Web browsing and was blocked. Click to fix."* Click → opens the new dialog.
+2. **Modal dialog** — same 4-button layout as `ApprovalDialog` but capability-aware. Title: *"Web browsing isn't ready"*. Body: the existing `CapabilityFixBubble` checklist (permission / policy / key / skill / extras). Actions: **Always allow / Allow this session / Always deny / Dismiss**, plus inline *"Add key", "Install skill", "Open Permissions"* buttons.
+3. **Sidebar badge** — small red dot on the Skills nav item until the user opens it. Number = count of capabilities currently in a "needs setup" state.
+4. **Optional desktop notification** if `runInBackground` is on (reuse `notify.ts`).
+5. **Existing inline bubble stays** as the in-chat record, but is no longer the only signal.
 
-### Reactive (fallback): when detection misses and agent fails
-- The existing `toolUnavailable` detector catches the failure phrasing
-- Same four-button modal pops up retroactively: "The agent tried to use **Web Browser** and was blocked. What should happen next time?"
-- One click to allow + offer to retry the message
+### B. Real readiness check, not the agent's word
 
-### Configurable in Settings
-- New "Capabilities" section in Settings (alongside Permissions)
-- Auto-generated list — one row per discovered capability with the four-state selector
-- Shows readiness: ✅ Ready / ⚠️ Needs key / ⚠️ Skill missing
-- "Reset all to Ask" button
+Add `src/lib/capabilityProbe.ts` that runs whenever:
+- a chat fails with `toolUnavailable`, OR
+- the user opens Skills/Settings, OR
+- after install/skill changes.
 
-## Capability registry (auto-discovery)
+For each web-related capability it checks:
+- Internet permission in current `~/.hermes/config.yaml` (read via `hermesAPI.readConfig`).
+- Whether any `candidateSkills` are present in `listSkills()` AND not in the disabled list.
+- Whether any `candidateSecrets` exist in the secrets store.
+- For `webBrowser`: whether the `hermes-agent[web]` extras Python package is importable (best-effort `python -c "import playwright"` shell check; cached for 60s).
 
-Built from three sources, merged at runtime:
-1. **Built-in catalog** — well-known capabilities the agent ships with: `shell`, `fileRead`, `fileWrite`, `internet`, `script`, `webBrowser`, `webSearch`, `imageGen`, `voice`, `messaging`, `email`, `calendar`
-2. **Installed skills** — `systemAPI.listSkills()` + each skill's `requiredSecrets` and category determines its capability bucket
-3. **Observed-at-runtime** — if the agent attempts a tool we've never seen (parsed from stream or failure), it gets auto-registered as `unknown:<name>` so the user can still gate it
+It returns a typed `CapabilityProbeResult` with a precise reason: `noSkill | noKey | noExtras | permissionDenied | ready`.
 
-When a new skill is installed → next chat turn re-runs discovery → new row appears in Settings → no code changes needed.
+### C. Use the probe to override the agent's self-diagnosis
 
-## What ships
+In `ChatContext` after a reply:
+- Run `detectToolUnavailable` as today.
+- If it matches `webBrowser`/`webSearch`/etc., immediately run `capabilityProbe(id)`.
+- The probe's reason replaces the agent's vague "permission error" wording in the bubble/dialog: *"Ron has no browser skill installed. Install `browser_use` or add a Firecrawl key."*
+- If the probe says `ready`, we still surface the failure but label it *"Agent reported a block but Ron's setup looks fine — try rephrasing or check the agent log."* with a one-click *Open log* button. No more silent dead end.
 
-### Core
-- `src/lib/capabilities.ts` — registry types, built-in catalog, merge logic, risk classification
-- `src/contexts/CapabilitiesContext.tsx` — discovery on mount + after skill changes, exposes `useCapability(id)` hook, wraps PermissionsContext
-- Extend `settings.capabilityPolicy: Record<string, 'ask'|'allow'|'session'|'deny'>` in `SettingsContext`
+### D. Proactive gating gets the same treatment
 
-### Detection (broadened)
-- `src/lib/toolUnavailable.ts` — add new patterns ("permission error in this environment", "can't access", "not available right now") and map to capability ids
-- New `src/lib/toolUseDetection.ts` — parse outbound tool-call markers from the agent stream (proactive gating)
+`detectToolCalls` (already wired in `ChatContext`) on `policy === "ask"` currently only records — we'll switch it to actually call the **modal** before the next chunk renders, so the user is asked *before* the agent claims failure. Same modal as B.
 
-### UI
-- `src/components/permissions/CapabilityApprovalDialog.tsx` — same look as existing ApprovalDialog but capability-aware (shows what the tool does, where to find docs)
-- `src/components/chat/CapabilityFixBubble.tsx` — post-failure guided checklist: permission status, missing key, missing skill, missing extras, with one-click actions
-- `src/components/chat/CapabilityChip.tsx` — tiny inline marker in chat showing which tools were used in a turn
-- New "Capabilities" panel in `SettingsPage.tsx` — auto-generated list, per-row 4-state selector + readiness badge + quick links
-- `src/pages/Skills.tsx` — top "Capability readiness" card driven by the same registry
-- `src/pages/Diagnostics.tsx` — capability matrix: id × policy × readiness × last-used
+### E. First-run web-access nudge
 
-### Wiring
-- `src/contexts/ChatContext.tsx` — call gate before processing each detected tool marker; record capability usage on each turn for chips
-- `src/lib/systemAPI/hermes.ts` — when syncing permissions to `~/.hermes/config.yaml`, also write a `capability_policy:` block so the agent itself can pre-deny (saves a round trip)
-- `src/pages/Index.tsx` — installation wizard adds an optional "Pick capabilities to enable" step using the same registry, so users discover web/search/etc. up front
+After install completes, if no web skill / web key is present, show a one-time banner on the Chat page: *"Ron can't browse the web yet — set it up in Skills."* Single click → Skills with the Web Browsing row scrolled into view and highlighted.
 
-## Technical notes
+## Files
 
-- **Dynamic toggles**: the Settings list is rendered from `Object.values(registry)` — adding/removing a skill re-runs discovery and the list updates with no manual maintenance
-- **Backward compatibility**: existing `settings.permissions` (shell/fileRead/internet/etc.) stays as-is; capabilities is an additive layer that *references* those for the underlying built-ins
-- **Failure → policy loop**: every reactive detection offers "Always allow / Always deny" so repeated failures train the policy
-- **Privacy**: nothing leaves the machine; policy is stored client-side in settings and mirrored into Hermes config
+**New**
+- `src/lib/capabilityProbe.ts` — real readiness probe (reads config, skills, secrets, extras).
+- `src/components/permissions/CapabilityApprovalDialog.tsx` — capability-aware approval modal (reuses Dialog + 4 buttons + checklist body).
+- `src/components/chat/CapabilityNotice.tsx` — toast + sidebar-badge driver, mounted once in `AppLayout`.
+
+**Edited**
+- `src/contexts/ChatContext.tsx` — invoke probe after `detectToolUnavailable`; trigger toast + modal; switch proactive `detectToolCalls` to await the modal on `ask`.
+- `src/contexts/CapabilitiesContext.tsx` — expose `openApprovalModal(capId, context)`; expose `pendingDecisionsCount` for the sidebar badge.
+- `src/components/chat/CapabilityFixBubble.tsx` — accept a `probe` prop and render the precise reason instead of generic checks.
+- `src/components/layout/AppSidebar.tsx` — red-dot badge on Skills nav.
+- `src/components/layout/AppLayout.tsx` — mount `<CapabilityNotice />` and the global `<CapabilityApprovalDialog />`.
+- `src/lib/toolUnavailable.ts` — keep, but its output is now a *hint* the probe verifies.
+- `src/pages/AgentChat.tsx` — first-run web-access banner; deep-link target highlight.
+- `src/pages/Skills.tsx` — accept `?focus=<capId>` to scroll/flash a row.
 
 ## Outcome
 
-- One uniform UX for every capability the agent ever tries to use
-- The user always knows what's happening and can decide on the spot or in advance
-- The capability list grows with the agent — no code change needed when a new skill arrives
-- Failures stop being dead ends; they become one-click fix prompts
+- The user can never again be left wondering why the agent failed: a toast + a modal + a sidebar dot all surface the issue.
+- The fix message tells the truth (skill missing / key missing / extras missing), not the agent's hallucinated *"permission error"*.
+- Decisions made from the modal are written straight into `capabilityPolicy`, just like the existing flow.
+- All existing capability-merge-into-Skills work from the prior plan continues unchanged — this layers loud notices and accurate diagnostics on top.
 
