@@ -606,6 +606,19 @@ interface BrowserBlockState {
   cdpUrl: string | null;
 }
 
+const BROWSER_DEFAULT_TOOLSETS = ['hermes-web'];
+const BROWSER_DEFAULT_ALLOWED_TOOLS = [
+  'browser',
+  'browser_navigate',
+  'browser_click',
+  'browser_type',
+  'browser_snapshot',
+  'browser_wait',
+  'web',
+];
+
+const quoteYamlScalar = (value: string): string => `"${value.replace(/"/g, '\\"')}"`;
+
 const parseBrowserBlock = (yaml: string): BrowserBlockState => {
   const startIdx = yaml.indexOf(BROWSER_BEGIN);
   const state: BrowserBlockState = { camofoxPersistence: false, cdpUrl: null };
@@ -639,6 +652,11 @@ const writeBrowserBlock = async (
     // some Hermes builds short-circuit `browser_*` tool calls with a "browser
     // permission error" even when the toolset is loaded and the CDP url is set.
     lines.push('  enabled: true');
+    lines.push('  allow_network: true');
+    lines.push('  tool_allowlist:');
+    for (const tool of BROWSER_DEFAULT_ALLOWED_TOOLS) {
+      lines.push(`    - ${quoteYamlScalar(tool)}`);
+    }
     if (next.cdpUrl) {
       lines.push(`  cdp_url: "${next.cdpUrl}"`);
     }
@@ -654,7 +672,7 @@ const writeBrowserBlock = async (
     const toolsetLines = [
       TOOLSETS_BEGIN,
       'toolsets:',
-      '  - hermes-web',
+      ...BROWSER_DEFAULT_TOOLSETS.map((toolset) => `  - ${toolset}`),
       TOOLSETS_END,
     ];
     out = `${stripped}\n\n${lines.join('\n')}\n\n${toolsetLines.join('\n')}\n`;
@@ -1636,6 +1654,23 @@ the user is **${trimmed}**.
 model: ${options.model || 'openrouter/auto'}
 `;
     const configResult = await this.writeConfig(configYaml);
+    if (configResult.success) {
+      await writeHermesPermissions({
+        shell: 'ask',
+        shellAllowReadOnly: true,
+        fileRead: 'allow',
+        fileReadScope: 'scoped',
+        fileWrite: 'ask',
+        fileWriteScope: 'scoped',
+        internet: 'allow',
+        script: 'ask',
+        allowedFolders: [],
+        blockedFolders: [],
+        fallback: 'ask',
+      }).catch(() => undefined);
+      await writeBrowserBlock({ camofoxPersistence: false, cdpUrl: null }).catch(() => undefined);
+      await this.setSkillEnabled('browser', true).catch(() => undefined);
+    }
 
     if (options.name && options.name.trim()) {
       await this.setAgentName(options.name);
