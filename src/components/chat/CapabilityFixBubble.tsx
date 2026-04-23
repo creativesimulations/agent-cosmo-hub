@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
-import { Wrench, KeyRound, Puzzle, ShieldAlert, CheckCircle2, AlertTriangle } from "lucide-react";
+import { useState } from "react";
+import { Wrench, KeyRound, Puzzle, ShieldAlert, CheckCircle2, AlertTriangle, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCapabilities } from "@/contexts/CapabilitiesContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import type { ToolUnavailableHit } from "@/lib/toolUnavailable";
 import { cn } from "@/lib/utils";
+import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 
 /**
  * REACTIVE capability fix bubble — replaces the previous generic

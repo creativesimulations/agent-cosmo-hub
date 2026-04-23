@@ -523,6 +523,15 @@ const Skills = () => {
           ))}
         </div>
       )}
+
+      <BrowserSetupDialog
+        open={browserSetupOpen}
+        onOpenChange={setBrowserSetupOpen}
+        onConfigured={() => {
+          setBrowserRefreshKey((k) => k + 1);
+          void load();
+        }}
+      />
     </div>
   );
 };
