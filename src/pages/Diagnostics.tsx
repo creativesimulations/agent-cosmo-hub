@@ -509,6 +509,73 @@ const Diagnostics = () => {
             </pre>
           </details>
         )}
+
+        <div className="pt-2 border-t border-white/5 space-y-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-xs font-semibold text-foreground">End-to-end browser self-test</p>
+            <Button
+              onClick={handleBrowserSelfTest}
+              disabled={selfTestBusy}
+              variant="outline"
+              size="sm"
+            >
+              <Activity className={cn("w-3 h-3 mr-1", selfTestBusy && "animate-pulse")} />
+              {selfTestBusy ? "Testing…" : "Run self-test"}
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Opens a real CDP tab, navigates to example.com, and reports what the agent will actually
+            be able to do.
+          </p>
+          {selfTest && (
+            <ul className="text-xs space-y-1.5 mt-2">
+              <li className="flex items-center gap-2">
+                {selfTest.hermesCliToolsetLoaded
+                  ? <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
+                  : <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />}
+                <span>Browser tool registered (hermes-cli toolset)</span>
+              </li>
+              {selfTest.cdpUrl && (
+                <li className="flex items-center gap-2">
+                  {selfTest.cdpReachable
+                    ? <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
+                    : <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />}
+                  <span>CDP reachable {selfTest.cdpVersion ? `(${selfTest.cdpVersion})` : ""}</span>
+                </li>
+              )}
+              {selfTest.navigateOk !== null && (
+                <li className="flex items-center gap-2">
+                  {selfTest.navigateOk
+                    ? <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
+                    : <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />}
+                  <span>
+                    Real navigation: {selfTest.navigateOk
+                      ? `landed on ${selfTest.navigateFinalUrl ?? "example.com"}`
+                      : (selfTest.navigateError ?? "failed")}
+                  </span>
+                </li>
+              )}
+              <li className="flex items-center gap-2">
+                {selfTest.webSearchBackend
+                  ? <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
+                  : <XCircle className="w-3.5 h-3.5 text-warning shrink-0" />}
+                <span>
+                  Web-search backend: {selfTest.webSearchBackend
+                    ? selfTest.webSearchBackend.toUpperCase()
+                    : "none — Ron can read URLs but can't discover new ones"}
+                </span>
+              </li>
+              {selfTest.doctorReportsBrowser !== null && (
+                <li className="flex items-center gap-2">
+                  {selfTest.doctorReportsBrowser
+                    ? <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
+                    : <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />}
+                  <span>hermes doctor reports browser tool</span>
+                </li>
+              )}
+            </ul>
+          )}
+        </div>
       </GlassCard>
 
       <GlassCard className="p-4 space-y-3">
