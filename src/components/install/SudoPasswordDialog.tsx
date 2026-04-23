@@ -29,7 +29,7 @@ interface Props {
  *  4. no-password-set → offer to set one (uses passwordless sudo + chpasswd)
  *  5. no-sudo → show manual instructions
  */
-export default function SudoPasswordDialog({ open, reason, onCancel, onPassword, onPasswordless }: Props) {
+function SudoPasswordDialogImpl({ open, reason, onCancel, onPassword, onPasswordless }: Props) {
   const [state, setState] = useState<SudoState | null>(null);
   const [probing, setProbing] = useState(false);
   const [password, setPassword] = useState("");
