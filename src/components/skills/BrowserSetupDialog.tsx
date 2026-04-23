@@ -141,9 +141,9 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   // ─── Camofox automation state ──────────────────────────────────
   const [camofoxLog, setCamofoxLog] = useState<string[]>([]);
   const [camofoxBusy, setCamofoxBusy] = useState(false);
-  const [dockerStatus, setDockerStatus] = useState<StatusKind>("idle");
-  const [dockerDetail, setDockerDetail] = useState<string | undefined>();
-  const [containerStatus, setContainerStatus] = useState<StatusKind>("idle");
+  const [nodeStatus, setNodeStatus] = useState<StatusKind>("idle");
+  const [nodeDetail, setNodeDetail] = useState<string | undefined>();
+  const [serverStatus, setServerStatus] = useState<StatusKind>("idle");
   const [healthStatus, setHealthStatus] = useState<StatusKind>("idle");
 
   // ─── Local Chrome automation state ─────────────────────────────
@@ -177,8 +177,8 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     setPicked(null);
     setCamofoxLog([]);
     setChromeLog([]);
-    setDockerStatus("idle");
-    setContainerStatus("idle");
+    setNodeStatus("idle");
+    setServerStatus("idle");
     setHealthStatus("idle");
     setChromeStatus("idle");
     setCdpStatus("idle");
