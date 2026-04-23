@@ -2164,4 +2164,205 @@ model: ${options.model || 'openrouter/auto'}
         })),
     };
   },
+
+  /**
+   * One-shot config repair for installs broken by older versions of this app.
+   *
+   * - Rewrites the managed `toolsets:` block to the official `hermes-cli`.
+   * - Strips the bogus `browser.enabled` / `browser.allow_network` /
+   *   `browser.tool_allowlist` keys we used to write.
+   * - Re-chmods `node_modules/.bin/*` so `agent-browser` / `playwright` are
+   *   executable (Errno 13 fix).
+   * - Re-runs `hermes doctor` and reports the result.
+   */
+  async repairConfig(): Promise<{ success: boolean; doctorOutput: string; error?: string }> {
+    try {
+      // 1. Re-write toolsets + browser block (this picks up the new schema).
+      const cfg = await readHermesFile(HERMES_CONFIG);
+      const existing = cfg.success && cfg.content ? cfg.content : '';
+      const current = parseBrowserBlock(existing);
+
+      // Also surgically strip any legacy `enabled:` / `allow_network:` /
+      // `tool_allowlist:` lines that might be sitting outside our managed
+      // block (left over from an older config).
+      let cleaned = existing
+        .replace(/^\s*enabled:\s*true\s*$/gim, '')
+        .replace(/^\s*allow_network:\s*true\s*$/gim, '')
+        .replace(/^\s*tool_allowlist:[\s\S]*?(?=\n\S|\n#|$)/gim, '');
+      if (cleaned !== existing) {
+        await writeHermesFile(HERMES_CONFIG, cleaned, '600').catch(() => undefined);
+      }
+
+      const browserResult = await writeBrowserBlock(current);
+      if (!browserResult.success) {
+        return { success: false, doctorOutput: '', error: browserResult.error };
+      }
+
+      // 2. Fix executable permissions on shipped binaries.
+      await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }).catch(() => undefined);
+
+      // 3. Run doctor to verify.
+      const doc = await this.doctor();
+      return {
+        success: doc.success,
+        doctorOutput: doc.stdout || doc.stderr || '(no output)',
+      };
+    } catch (e) {
+      return { success: false, doctorOutput: '', error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+
+  /** Reload toolsets without restarting the agent (best-effort). */
+  async reloadToolsets(): Promise<CommandResult> {
+    return runHermesCli('hermes toolsets reload 2>/dev/null || hermes reload 2>/dev/null || echo "Toolsets will reload on next agent start"');
+  },
+
+  /**
+   * Install a Hermes skill from a local folder. Copies `srcPath` to
+   * `~/.hermes/skills/<basename>/`, validates a manifest exists, fixes
+   * executable permissions, and enables the skill in config.yaml.
+   */
+  async installSkillFromPath(srcPath: string): Promise<{
+    success: boolean;
+    skillName?: string;
+    hasManifest?: boolean;
+    requiredSecrets?: string[];
+    error?: string;
+  }> {
+    if (!srcPath || !srcPath.trim()) {
+      return { success: false, error: 'No source path provided' };
+    }
+    const platform = await coreAPI.getPlatform();
+    const wslSrc = platform.isWindows ? toWslMountedPath(srcPath) ?? srcPath : srcPath;
+    const escaped = wslSrc.replace(/"/g, '\\"');
+    const script = [
+      'set -e',
+      `SRC="${escaped}"`,
+      '[ -d "$SRC" ] || { echo "ERR_NOT_DIR" >&2; exit 2; }',
+      'NAME="$(basename "$SRC")"',
+      'DEST="$HOME/.hermes/skills/$NAME"',
+      'mkdir -p "$HOME/.hermes/skills"',
+      'rm -rf "$DEST"',
+      'cp -R "$SRC" "$DEST"',
+      'find "$DEST" -type f \\( -name "*.sh" -o -name "*.py" \\) -exec chmod +x {} + 2>/dev/null || true',
+      // Validation
+      'HAS_MANIFEST=0',
+      'for f in manifest.yaml skill.yaml SKILL.md skill.md __init__.py; do',
+      '  [ -f "$DEST/$f" ] && HAS_MANIFEST=1 && break',
+      'done',
+      'echo "NAME=$NAME"',
+      'echo "HAS_MANIFEST=$HAS_MANIFEST"',
+      // Best-effort secret extraction from manifest
+      'SECRETS=""',
+      'for f in "$DEST/manifest.yaml" "$DEST/skill.yaml"; do',
+      '  if [ -f "$f" ]; then',
+      '    SECRETS="$(grep -E "^\\s*-\\s*[A-Z][A-Z0-9_]+\\s*$" "$f" 2>/dev/null | sed -E "s/^\\s*-\\s*//" | tr "\\n" "," || true)"',
+      '    break',
+      '  fi',
+      'done',
+      'echo "SECRETS=$SECRETS"',
+    ].join('\n');
+    const r = await runHermesShell(script, { timeout: 60000 });
+    if (!r.success) {
+      return { success: false, error: r.stderr || r.stdout || 'Failed to install skill' };
+    }
+    const nameMatch = r.stdout.match(/NAME=(.+)/);
+    const manifestMatch = r.stdout.match(/HAS_MANIFEST=(\d)/);
+    const secretsMatch = r.stdout.match(/SECRETS=(.*)/);
+    const skillName = nameMatch?.[1].trim();
+    const hasManifest = manifestMatch?.[1] === '1';
+    const requiredSecrets = secretsMatch?.[1]
+      ? secretsMatch[1].split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    if (skillName) {
+      await this.setSkillEnabled(skillName, true).catch(() => undefined);
+    }
+    return { success: true, skillName, hasManifest, requiredSecrets };
+  },
+
+  /** Install a Hermes skill by cloning a Git URL into ~/.hermes/skills/. */
+  async installSkillFromGit(url: string): Promise<{
+    success: boolean;
+    skillName?: string;
+    hasManifest?: boolean;
+    requiredSecrets?: string[];
+    error?: string;
+  }> {
+    if (!url || !url.trim()) {
+      return { success: false, error: 'No Git URL provided' };
+    }
+    const escaped = url.replace(/"/g, '\\"');
+    const script = [
+      'set -e',
+      `URL="${escaped}"`,
+      'NAME="$(basename "$URL" .git)"',
+      'DEST="$HOME/.hermes/skills/$NAME"',
+      'mkdir -p "$HOME/.hermes/skills"',
+      'rm -rf "$DEST"',
+      'git clone --depth=1 "$URL" "$DEST" 2>&1',
+      'find "$DEST" -type f \\( -name "*.sh" -o -name "*.py" \\) -exec chmod +x {} + 2>/dev/null || true',
+      'HAS_MANIFEST=0',
+      'for f in manifest.yaml skill.yaml SKILL.md skill.md __init__.py; do',
+      '  [ -f "$DEST/$f" ] && HAS_MANIFEST=1 && break',
+      'done',
+      'echo "NAME=$NAME"',
+      'echo "HAS_MANIFEST=$HAS_MANIFEST"',
+    ].join('\n');
+    const r = await runHermesShell(script, { timeout: 120000 });
+    if (!r.success) {
+      return { success: false, error: r.stderr || r.stdout || 'Failed to clone skill' };
+    }
+    const nameMatch = r.stdout.match(/NAME=(.+)/);
+    const manifestMatch = r.stdout.match(/HAS_MANIFEST=(\d)/);
+    const skillName = nameMatch?.[1].trim();
+    const hasManifest = manifestMatch?.[1] === '1';
+    if (skillName) {
+      await this.setSkillEnabled(skillName, true).catch(() => undefined);
+    }
+    return { success: true, skillName, hasManifest, requiredSecrets: [] };
+  },
+
+  /** Install a Hermes tool from a local folder into ~/.hermes/tools/. */
+  async installToolFromPath(srcPath: string): Promise<{
+    success: boolean;
+    toolName?: string;
+    error?: string;
+  }> {
+    if (!srcPath || !srcPath.trim()) {
+      return { success: false, error: 'No source path provided' };
+    }
+    const platform = await coreAPI.getPlatform();
+    const wslSrc = platform.isWindows ? toWslMountedPath(srcPath) ?? srcPath : srcPath;
+    const escaped = wslSrc.replace(/"/g, '\\"');
+    const script = [
+      'set -e',
+      `SRC="${escaped}"`,
+      '[ -d "$SRC" ] || { echo "ERR_NOT_DIR" >&2; exit 2; }',
+      'NAME="$(basename "$SRC")"',
+      'DEST="$HOME/.hermes/tools/$NAME"',
+      'mkdir -p "$HOME/.hermes/tools"',
+      'rm -rf "$DEST"',
+      'cp -R "$SRC" "$DEST"',
+      'find "$DEST" -type f \\( -name "*.sh" -o -name "*.py" -o -name "*.js" \\) -exec chmod +x {} + 2>/dev/null || true',
+      'echo "NAME=$NAME"',
+    ].join('\n');
+    const r = await runHermesShell(script, { timeout: 60000 });
+    if (!r.success) {
+      return { success: false, error: r.stderr || r.stdout || 'Failed to install tool' };
+    }
+    const nameMatch = r.stdout.match(/NAME=(.+)/);
+    return { success: true, toolName: nameMatch?.[1].trim() };
+  },
+
+  /** Open the user's ~/.hermes/skills folder in the OS file manager. */
+  async revealSkillsFolder(): Promise<{ success: boolean; error?: string }> {
+    const platform = await coreAPI.getPlatform();
+    const cmd = platform.isWindows
+      ? 'explorer.exe "%USERPROFILE%\\.hermes\\skills"'
+      : platform.isMac
+      ? 'open "$HOME/.hermes/skills"'
+      : 'xdg-open "$HOME/.hermes/skills" 2>/dev/null || true';
+    const r = await coreAPI.runCommand(cmd, { timeout: 5000 });
+    return { success: r.success || true }; // file managers often return non-zero
+  },
 };
