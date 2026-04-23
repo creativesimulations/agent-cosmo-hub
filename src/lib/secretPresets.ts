@@ -36,7 +36,10 @@ export const SECRET_PRESETS: SecretPreset[] = [
   // ─── Search & web tools ───────────────────────────────────────────────
   { envVar: 'EXA_API_KEY',        label: 'Exa Search',     hint: 'Neural web search for agents.',                                prefix: '',        docsUrl: 'https://dashboard.exa.ai/api-keys',           category: 'Search & web' },
   { envVar: 'FIRECRAWL_API_KEY',  label: 'Firecrawl',      hint: 'Convert web pages to LLM-ready data.',                         prefix: 'fc-',     docsUrl: 'https://www.firecrawl.dev/app/api-keys',      category: 'Search & web' },
-  { envVar: 'BROWSERBASE_API_KEY',label: 'Browserbase',    hint: 'Cloud browsers for agentic workflows.',                        prefix: 'bb_',     docsUrl: 'https://www.browserbase.com/dashboard',       category: 'Search & web' },
+  { envVar: 'BROWSERBASE_API_KEY',label: 'Browserbase API key', hint: 'Cloud browsers for agentic workflows (paid upgrade).',    prefix: 'bb_',     docsUrl: 'https://www.browserbase.com/dashboard',       category: 'Search & web' },
+  { envVar: 'BROWSERBASE_PROJECT_ID', label: 'Browserbase Project ID', hint: 'Project UUID from your Browserbase dashboard.',    prefix: '',        docsUrl: 'https://www.browserbase.com/dashboard',       category: 'Search & web' },
+  { envVar: 'BROWSER_USE_API_KEY',label: 'Browser Use',    hint: 'Hosted agentic browser API.',                                  prefix: '',        docsUrl: 'https://browser-use.com',                     category: 'Search & web' },
+  { envVar: 'CAMOFOX_URL',        label: 'Camofox URL',    hint: 'Local Camofox server, e.g. http://localhost:9377.',            prefix: 'http',    docsUrl: 'https://github.com/jo-inc/camofox-browser',   category: 'Search & web' },
 
   // ─── Voice & media ────────────────────────────────────────────────────
   { envVar: 'ELEVENLABS_API_KEY', label: 'ElevenLabs',     hint: 'Text-to-speech.',                                              prefix: '',        docsUrl: 'https://elevenlabs.io/app/settings/api-keys', category: 'Voice & media' },

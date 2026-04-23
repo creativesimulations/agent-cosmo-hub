@@ -50,6 +50,15 @@ export const UPGRADES: Upgrade[] = [
     buyUrl: 'https://ronbot.com/upgrades/discord', // TODO: replace with real URL
     priceLabel: 'One-time · $19',
   },
+  {
+    id: 'browserbase',
+    name: 'Browserbase browser',
+    tagline: 'Strongest anti-bot — cloud browsers with stealth, proxies & CAPTCHA solving.',
+    description:
+      "Browserbase is a paid third-party cloud browser with built-in stealth, residential proxies, and CAPTCHA solving — the most reliable backend for sites that block bots. This upgrade unlocks the in-app setup wizard so Ron can use Browserbase as its browser backend without you touching a config file. Camofox and Local Chrome remain free.",
+    buyUrl: 'https://ronbot.com/upgrades/browserbase', // TODO: replace with real URL
+    priceLabel: 'One-time · $29',
+  },
 ];
 
 /** Look up an upgrade by id. */

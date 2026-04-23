@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Puzzle, AlertCircle, CheckCircle2, Loader2, RefreshCw, Search, Package, Wrench,
-  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal,
+  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal, Globe,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,8 @@ import {
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { systemAPI, secretsStore } from "@/lib/systemAPI";
 import { toast } from "sonner";
+import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
+import BrowserBackendBadge from "@/components/skills/BrowserBackendBadge";
 
 type Skill = {
   name: string;
@@ -38,6 +40,8 @@ const Skills = () => {
   const [secretKeys, setSecretKeys] = useState<Set<string>>(new Set());
   const [savingToggle, setSavingToggle] = useState<string | null>(null);
   const [focusCap, setFocusCap] = useState<string | null>(null);
+  const [browserSetupOpen, setBrowserSetupOpen] = useState(false);
+  const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
 
   // Read ?focus=<capId> from the URL — drives a scroll + highlight of any
   // skill rows whose names match the capability's candidate skill list.
@@ -330,6 +334,39 @@ const Skills = () => {
         />
       </div>
 
+      <GlassCard className="p-4 space-y-3">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-md bg-primary/15 text-primary flex items-center justify-center shrink-0">
+              <Globe className="w-4.5 h-4.5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-semibold text-foreground">Web browsing</h3>
+                <Badge variant="outline" className="border-white/10 text-muted-foreground text-[10px]">
+                  Capability
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Pick a browser backend so Ron can actually load web pages.
+                Most modern sites block plain HTTP — a real browser fixes this.
+              </p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => setBrowserSetupOpen(true)}
+            className="gradient-primary text-primary-foreground shrink-0"
+          >
+            <Globe className="w-3.5 h-3.5 mr-1.5" /> Set up browser
+          </Button>
+        </div>
+        <BrowserBackendBadge
+          refreshKey={browserRefreshKey}
+          onSwitch={() => setBrowserSetupOpen(true)}
+        />
+      </GlassCard>
+
       {loading ? (
         <GlassCard className="flex items-center justify-center py-16">
           <div className="text-center space-y-3">
@@ -486,6 +523,15 @@ const Skills = () => {
           ))}
         </div>
       )}
+
+      <BrowserSetupDialog
+        open={browserSetupOpen}
+        onOpenChange={setBrowserSetupOpen}
+        onConfigured={() => {
+          setBrowserRefreshKey((k) => k + 1);
+          void load();
+        }}
+      />
     </div>
   );
 };

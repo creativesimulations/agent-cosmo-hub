@@ -188,16 +188,32 @@ export const capabilityProbe = async (
   }
 
   // 3. Secret present?
-  const hasSecret =
+  // Special-case webBrowser: any one configured backend (Browserbase pair,
+  // Browser Use, Camofox URL, or Firecrawl) is enough to be considered ready.
+  // Browserbase requires BOTH api key + project id, so a generic "any one of
+  // candidateSecrets" check isn't enough.
+  let hasSecret =
     cap.candidateSecrets.length === 0 ||
     cap.candidateSecrets.some((k) => ctx.storedSecrets.has(k));
+  if (capabilityId === "webBrowser") {
+    const bbase =
+      ctx.storedSecrets.has("BROWSERBASE_API_KEY") &&
+      ctx.storedSecrets.has("BROWSERBASE_PROJECT_ID");
+    const buse = ctx.storedSecrets.has("BROWSER_USE_API_KEY");
+    const cam = ctx.storedSecrets.has("CAMOFOX_URL");
+    const fc = ctx.storedSecrets.has("FIRECRAWL_API_KEY");
+    hasSecret = bbase || buse || cam || fc;
+  }
   if (!hasSecret) {
-    const keyList = cap.candidateSecrets.slice(0, 3).join(" / ");
+    const message =
+      capabilityId === "webBrowser"
+        ? 'No browser backend configured. Click "Set up browser" to pick Browserbase, Camofox, or Local Chrome.'
+        : `Ron needs an API key to use ${cap.label.toLowerCase()}. Add one of: ${cap.candidateSecrets.slice(0, 3).join(" / ")} in Secrets.`;
     const result: CapabilityProbeResult = {
       capabilityId,
       ready: false,
       reason: "noKey",
-      message: `Ron needs an API key to use ${cap.label.toLowerCase()}. Add one of: ${keyList} in Secrets.`,
+      message,
       candidateSkills: cap.candidateSkills,
       candidateSecrets: cap.candidateSecrets,
     };

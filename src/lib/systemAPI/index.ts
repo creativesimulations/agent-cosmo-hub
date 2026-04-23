@@ -85,6 +85,7 @@ export const systemAPI = {
   syncPermissions: hermesAPI.syncPermissions.bind(hermesAPI),
   enableHermesFileLogging: hermesAPI.enableFileLogging.bind(hermesAPI),
   readPermissionsBlock: hermesAPI.readPermissionsBlock.bind(hermesAPI),
+  setBrowserCamofoxPersistence: hermesAPI.setBrowserCamofoxPersistence.bind(hermesAPI),
 };
 
 export default systemAPI;

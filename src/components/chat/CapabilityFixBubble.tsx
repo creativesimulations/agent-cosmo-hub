@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
-import { Wrench, KeyRound, Puzzle, ShieldAlert, CheckCircle2, AlertTriangle } from "lucide-react";
+import { useState } from "react";
+import { Wrench, KeyRound, Puzzle, ShieldAlert, CheckCircle2, AlertTriangle, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCapabilities } from "@/contexts/CapabilitiesContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import type { ToolUnavailableHit } from "@/lib/toolUnavailable";
 import { cn } from "@/lib/utils";
+import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 
 /**
  * REACTIVE capability fix bubble — replaces the previous generic
@@ -22,6 +23,7 @@ import { cn } from "@/lib/utils";
 const CapabilityFixBubble = ({ hit }: { hit: ToolUnavailableHit }) => {
   const { registry, policy, setPolicy, readinessFor } = useCapabilities();
   const { settings } = useSettings();
+  const [browserOpen, setBrowserOpen] = useState(false);
   // toolUnavailable.capability ids: "browser" → "webBrowser", "webSearch" → "webSearch"
   const idMap: Record<string, string> = {
     browser: "webBrowser",
@@ -39,6 +41,7 @@ const CapabilityFixBubble = ({ hit }: { hit: ToolUnavailableHit }) => {
   const choice = policy[capId] ?? "ask";
   const readiness = capId in registry ? readinessFor(capId) : null;
   const internetSetting = settings.permissions?.internet;
+  const isBrowser = capId === "webBrowser";
 
   const checks = [
     {
@@ -93,7 +96,27 @@ const CapabilityFixBubble = ({ hit }: { hit: ToolUnavailableHit }) => {
   }
 
   return (
+    <>
     <div className="mt-2 p-3 rounded-md border border-warning/40 bg-warning/10 text-xs space-y-2">
+      {isBrowser && (
+        <div className="flex items-start gap-2 p-2 rounded-md border border-primary/30 bg-primary/5">
+          <Globe className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-foreground">Ron has no browser backend configured.</p>
+            <p className="text-muted-foreground">
+              Plain HTTP gets blocked by most modern sites. Pick a real browser — Browserbase (paid),
+              Camofox (free, local), or your own Chrome.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => setBrowserOpen(true)}
+            className="gradient-primary text-primary-foreground shrink-0 h-7"
+          >
+            Set up browser
+          </Button>
+        </div>
+      )}
       <div className="flex items-start gap-2">
         <Wrench className="w-4 h-4 text-warning shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
@@ -148,6 +171,10 @@ const CapabilityFixBubble = ({ hit }: { hit: ToolUnavailableHit }) => {
         </div>
       )}
     </div>
+    {isBrowser && (
+      <BrowserSetupDialog open={browserOpen} onOpenChange={setBrowserOpen} />
+    )}
+    </>
   );
 };
 

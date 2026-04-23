@@ -2,12 +2,16 @@ import { useRef, useEffect, useState } from "react";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { useChat } from "@/contexts/ChatContext";
 import { motion } from "framer-motion";
-import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw, Square, Clock, Network, ShieldAlert, Wrench } from "lucide-react";
+import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw, Square, Clock, Network, ShieldAlert, Wrench, Globe } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import CapabilityFixBubble from "@/components/chat/CapabilityFixBubble";
 import CapabilityChips from "@/components/chat/CapabilityChips";
+import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
+import { secretsStore } from "@/lib/systemAPI";
+import { useSettings } from "@/contexts/SettingsContext";
+import { isAnyBackendConfigured } from "@/lib/browserBackends";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,10 +45,32 @@ const AgentChat = () => {
   } = useChat();
   const input = draft;
   const setInput = setDraft;
+  const { settings } = useSettings();
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const didInitialScrollRef = useRef(false);
+  const [browserSetupOpen, setBrowserSetupOpen] = useState(false);
+  const [secretKeys, setSecretKeys] = useState<Set<string>>(new Set());
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  // Detect whether *any* browser backend is configured to drive the
+  // first-run banner. Re-checks when the dialog closes.
+  useEffect(() => {
+    if (!agentConnected) return;
+    let cancelled = false;
+    void secretsStore.list().then((r) => {
+      if (!cancelled) setSecretKeys(new Set(r.keys || []));
+    });
+    return () => { cancelled = true; };
+  }, [agentConnected, browserSetupOpen]);
+
+  const localChromeManual = settings.capabilityPolicy?.webBrowser === "allow"
+    && !["BROWSERBASE_API_KEY", "BROWSER_USE_API_KEY", "CAMOFOX_URL", "FIRECRAWL_API_KEY"]
+      .some((k) => secretKeys.has(k));
+  const showBrowserBanner = agentConnected
+    && !bannerDismissed
+    && !isAnyBackendConfigured(secretKeys, { localChromeManual });
 
   // On first mount, jump (no smooth) to the first unread message — or the
   // last message if everything is already read. After that initial jump,
@@ -177,6 +203,29 @@ const AgentChat = () => {
           )}
         </div>
       </div>
+
+      {showBrowserBanner && (
+        <div className="mb-3 p-3 rounded-lg border border-primary/30 bg-primary/5 flex items-start gap-3">
+          <Globe className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-foreground">Ron can't browse the web yet</p>
+            <p className="text-xs text-muted-foreground">
+              Pick a browser backend so Ron can actually load pages. Free options available.
+            </p>
+          </div>
+          <Button size="sm" onClick={() => setBrowserSetupOpen(true)} className="gradient-primary text-primary-foreground shrink-0">
+            Set up browser
+          </Button>
+          <button
+            type="button"
+            onClick={() => setBannerDismissed(true)}
+            className="text-muted-foreground hover:text-foreground p-1"
+            aria-label="Dismiss"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       <GlassCard className="flex-1 flex flex-col overflow-hidden p-0">
         {!agentConnected ? (
@@ -389,6 +438,11 @@ const AgentChat = () => {
           </form>
         </div>
       </GlassCard>
+
+      <BrowserSetupDialog
+        open={browserSetupOpen}
+        onOpenChange={setBrowserSetupOpen}
+      />
     </div>
   );
 };
