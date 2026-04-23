@@ -96,7 +96,27 @@ const CapabilityFixBubble = ({ hit }: { hit: ToolUnavailableHit }) => {
   }
 
   return (
+    <>
     <div className="mt-2 p-3 rounded-md border border-warning/40 bg-warning/10 text-xs space-y-2">
+      {isBrowser && (
+        <div className="flex items-start gap-2 p-2 rounded-md border border-primary/30 bg-primary/5">
+          <Globe className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-foreground">Ron has no browser backend configured.</p>
+            <p className="text-muted-foreground">
+              Plain HTTP gets blocked by most modern sites. Pick a real browser — Browserbase (paid),
+              Camofox (free, local), or your own Chrome.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => setBrowserOpen(true)}
+            className="gradient-primary text-primary-foreground shrink-0 h-7"
+          >
+            Set up browser
+          </Button>
+        </div>
+      )}
       <div className="flex items-start gap-2">
         <Wrench className="w-4 h-4 text-warning shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
