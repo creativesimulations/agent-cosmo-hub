@@ -832,6 +832,17 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           status={cdpStatus}
           detail={cdpStatus === "ok" ? "http://127.0.0.1:9222" : undefined}
         />
+        <StatusRow
+          label="Real navigation"
+          status={navStatus}
+          detail={
+            navStatus === "ok"
+              ? "Page.navigate → example.com succeeded"
+              : navStatus === "warn"
+              ? "probe failed — see log"
+              : undefined
+          }
+        />
       </div>
 
       <LogPanel lines={chromeLog} />
