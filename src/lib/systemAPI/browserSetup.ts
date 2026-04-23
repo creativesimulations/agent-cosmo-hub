@@ -281,24 +281,29 @@ export const setupAndStartCamofox = async (onOutput?: StreamLogger): Promise<Com
   if (!inst.success) return inst;
 
   // 4. Start `npm start` in the background, redirecting output to a log file.
+  //    On Windows we use PowerShell's Start-Process which detaches cleanly
+  //    without the nested-quote pitfalls of `cmd /c start /B cmd /c "..."`.
+  //    On POSIX we use `nohup ... & disown` so the child survives the parent
+  //    shell exiting in milliseconds.
   log(onOutput, 'Starting Camofox server (npm start)…');
-  const startCmd = platform.isWindows
-    ? `cmd /c "cd /d ${dir} && start /B cmd /c "npm start > ${logPath} 2>&1""`
-    : `bash -lc 'cd "${dir}" && nohup npm start > "${logPath}" 2>&1 &'`;
-  const start = await coreAPI.runCommandStream(
-    startCmd,
-    {
-      timeout: 8000,
-      onStreamId: (id) => {
-        camofoxStreamId = id;
-      },
-    },
-    onOutput,
-  );
-  // We don't fail on non-zero from the spawn wrapper because the background
-  // process is what matters — pollCamofox() decides if it actually came up.
+  if (platform.isWindows) {
+    // PowerShell handles quoting + detachment reliably. -WindowStyle Hidden
+    // keeps the spawned cmd window invisible.
+    const psCmd =
+      `powershell -NoProfile -Command "Start-Process -WindowStyle Hidden -WorkingDirectory '${dir}' ` +
+      `-FilePath cmd.exe -ArgumentList '/c','npm start > \\\"${logPath}\\\" 2>&1'"`;
+    const start = await coreAPI.runCommand(psCmd, { timeout: 15000 });
+    if (start.stdout) log(onOutput, start.stdout);
+    if (start.stderr) log(onOutput, start.stderr, 'stderr');
+  } else {
+    const shCmd = `bash -lc 'cd "${dir}" && nohup npm start > "${logPath}" 2>&1 & disown'`;
+    const start = await coreAPI.runCommand(shCmd, { timeout: 8000 });
+    if (start.stdout) log(onOutput, start.stdout);
+    if (start.stderr) log(onOutput, start.stderr, 'stderr');
+  }
   log(onOutput, `Camofox launched in the background. Log file: ${logPath}`);
-  return start;
+  log(onOutput, 'Polling http://localhost:9377/health (this can take 30–90s on first run)…');
+  return { success: true, stdout: '', stderr: '', code: 0 };
 };
 
 export const stopCamofoxServer = async (onOutput?: StreamLogger): Promise<void> => {
