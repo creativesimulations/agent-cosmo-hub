@@ -87,12 +87,11 @@ export const BROWSER_BACKENDS: BrowserBackend[] = [
     name: 'Local Chrome (CDP)',
     tagline: 'Use your own Chrome — keeps your existing logins & cookies.',
     description:
-      "Connects to a Chrome instance on your machine using the Chrome DevTools Protocol. Best when you're already logged in to the sites Ron needs to use. Setup is CLI-only — we'll guide you through the launch command.",
+      "Connects to a Chrome instance on your machine using the Chrome DevTools Protocol. Best when you're already logged in to the sites Ron needs to use. Ron will install Chrome (if missing), launch it with remote debugging, and wire up the connection — no terminal needed.",
     tier: 'free',
     icon: 'Chrome',
-    surface: 'manual',
+    surface: 'local',
     requiredEnv: [],
-    manualOnly: true,
   },
   {
     id: 'browserUse',
@@ -180,24 +179,6 @@ export const isAnyBackendConfigured = (
   opts?: { localChromeManual?: boolean },
 ): boolean => getActiveBrowserBackend(secretKeys, opts).backend != null;
 
-/**
- * OS-specific Chrome launch command for the Local Chrome backend. We auto-
- * detect at render time using `navigator.userAgent` (crude but sufficient).
- */
-export const localChromeLaunchCommand = (
-  os: 'mac' | 'windows' | 'linux',
-): string => {
-  switch (os) {
-    case 'mac':
-      return `/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome \\\n  --remote-debugging-port=9222 \\\n  --user-data-dir="$HOME/.ronbot-chrome"`;
-    case 'windows':
-      return `"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" ^\n  --remote-debugging-port=9222 ^\n  --user-data-dir="%USERPROFILE%\\.ronbot-chrome"`;
-    case 'linux':
-    default:
-      return `google-chrome \\\n  --remote-debugging-port=9222 \\\n  --user-data-dir="$HOME/.ronbot-chrome"`;
-  }
-};
-
 export const detectOS = (): 'mac' | 'windows' | 'linux' => {
   if (typeof navigator === 'undefined') return 'linux';
   const ua = navigator.userAgent.toLowerCase();
@@ -205,9 +186,3 @@ export const detectOS = (): 'mac' | 'windows' | 'linux' => {
   if (ua.includes('win')) return 'windows';
   return 'linux';
 };
-
-export const camofoxDockerSnippet = (): string =>
-  `docker run -d --name camofox -p 9377:9377 ghcr.io/jo-inc/camofox-browser:latest`;
-
-export const camofoxGitSnippet = (): string =>
-  `git clone https://github.com/jo-inc/camofox-browser.git\ncd camofox-browser\n./run.sh`;
