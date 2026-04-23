@@ -458,6 +458,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
 
       // Wire it into Hermes config.
       await systemAPI.setBrowserCdpUrl("http://127.0.0.1:9222").catch(() => undefined);
+      log("✓ Hermes config updated: browser.cdp_url = http://127.0.0.1:9222");
       // Mark capability as user-managed so the probe stops nagging.
       update({
         capabilityPolicy: {
@@ -465,9 +466,19 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           webBrowser: "allow",
         },
       });
+      // CRITICAL: the agent needs an actual browser skill enabled, otherwise
+      // setting cdp_url does nothing and the agent reports a "browser permission error".
+      const skillOk = await ensureBrowserSkillEnabled(log);
       invalidateCapabilityProbeCache();
-      log("✓ Hermes config updated: browser.cdp_url = http://127.0.0.1:9222");
-      toast.success("Local Chrome connected", { description: "Restart Ron to take effect." });
+      if (skillOk) {
+        toast.success("Local Chrome connected", {
+          description: "Send Ron a new message to use it — config is reloaded each turn.",
+        });
+      } else {
+        toast.warning("Chrome is connected, but no browser skill is enabled in Ron", {
+          description: "Open Skills & Tools to enable one.",
+        });
+      }
       onConfigured?.();
     } finally {
       setChromeBusy(false);
