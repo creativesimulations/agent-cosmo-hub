@@ -48,6 +48,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import PermissionsPanel from "@/components/permissions/PermissionsPanel";
+import CapabilitiesPanel from "@/components/permissions/CapabilitiesPanel";
 
 /** A labelled toggle row — keeps the page readable when there are 8+ settings. */
 const ToggleRow = ({
@@ -407,6 +408,9 @@ const SettingsPage = () => {
 
       {/* ─── Permissions ───────────────────────────────────────── */}
       <PermissionsPanel />
+
+      {/* ─── Capabilities (auto-discovered) ────────────────────── */}
+      <CapabilitiesPanel />
 
       <GlassCard className="p-6 space-y-4">
         <div className="flex items-center gap-2">
