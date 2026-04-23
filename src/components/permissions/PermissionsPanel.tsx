@@ -211,74 +211,142 @@ const PermissionsPanel = () => {
         message — sub-agents inherit them too. Use "Sync to agent now" to push them immediately.
       </p>
 
-      <div className="-mt-1">
-        <PermRow
-          title={PERMISSION_LABELS.shell}
-          description="Run shell commands like `python3 script.py`, `git push`, package installs."
-          value={perms.shell}
-          onChange={(v) => setPerms({ shell: v })}
-          trailing={
-            <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground mr-2">
-              <Switch
-                checked={perms.shellAllowReadOnly}
-                onCheckedChange={(v) => setPerms({ shellAllowReadOnly: v })}
-              />
-              auto-allow read-only (ls, cat…)
-            </label>
-          }
-        />
-        <PermRow
-          title={PERMISSION_LABELS.fileRead}
-          description="Read files from disk. With scoped mode, only the allow-listed folders below."
-          value={perms.fileRead}
-          onChange={(v) => setPerms({ fileRead: v })}
-          trailing={
-            perms.fileRead === "allow" && (
+      <div className="-mt-1 space-y-4">
+        <div>
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground/70 mb-1 mt-1">
+            System
+          </p>
+          <PermRow
+            title={PERMISSION_LABELS.shell}
+            description="Run shell commands like `python3 script.py`, `git push`, package installs."
+            value={perms.shell}
+            onChange={(v) => setPerms({ shell: v })}
+            trailing={
               <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground mr-2">
                 <Switch
-                  checked={perms.fileReadScope === "scoped"}
-                  onCheckedChange={(v) => setPerms({ fileReadScope: v ? "scoped" : "anywhere" })}
+                  checked={perms.shellAllowReadOnly}
+                  onCheckedChange={(v) => setPerms({ shellAllowReadOnly: v })}
                 />
-                scoped only
+                auto-allow read-only (ls, cat…)
               </label>
-            )
-          }
-        />
-        <PermRow
-          title={PERMISSION_LABELS.fileWrite}
-          description="Create, modify, or delete files. With scoped mode, only the allow-listed folders below."
-          value={perms.fileWrite}
-          onChange={(v) => setPerms({ fileWrite: v })}
-          trailing={
-            perms.fileWrite === "allow" && (
-              <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground mr-2">
-                <Switch
-                  checked={perms.fileWriteScope === "scoped"}
-                  onCheckedChange={(v) => setPerms({ fileWriteScope: v ? "scoped" : "anywhere" })}
-                />
-                scoped only
-              </label>
-            )
-          }
-        />
-        <PermRow
-          title={PERMISSION_LABELS.internet}
-          description="Fetch URLs, hit APIs, download files."
-          value={perms.internet}
-          onChange={(v) => setPerms({ internet: v })}
-        />
-        <PermRow
-          title={PERMISSION_LABELS.script}
-          description="Execute Python / Node / Bash scripts the agent has authored."
-          value={perms.script}
-          onChange={(v) => setPerms({ script: v })}
-        />
-        <PermRow
-          title="Default fallback"
-          description="What to do when an action doesn't match any of the categories above."
-          value={perms.fallback}
-          onChange={(v) => setPerms({ fallback: v })}
-        />
+            }
+          />
+          <PermRow
+            title={PERMISSION_LABELS.fileRead}
+            description="Read files from disk. With scoped mode, only the allow-listed folders below."
+            value={perms.fileRead}
+            onChange={(v) => setPerms({ fileRead: v })}
+            trailing={
+              perms.fileRead === "allow" && (
+                <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground mr-2">
+                  <Switch
+                    checked={perms.fileReadScope === "scoped"}
+                    onCheckedChange={(v) => setPerms({ fileReadScope: v ? "scoped" : "anywhere" })}
+                  />
+                  scoped only
+                </label>
+              )
+            }
+          />
+          <PermRow
+            title={PERMISSION_LABELS.fileWrite}
+            description="Create, modify, or delete files. With scoped mode, only the allow-listed folders below."
+            value={perms.fileWrite}
+            onChange={(v) => setPerms({ fileWrite: v })}
+            trailing={
+              perms.fileWrite === "allow" && (
+                <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground mr-2">
+                  <Switch
+                    checked={perms.fileWriteScope === "scoped"}
+                    onCheckedChange={(v) => setPerms({ fileWriteScope: v ? "scoped" : "anywhere" })}
+                  />
+                  scoped only
+                </label>
+              )
+            }
+          />
+          <PermRow
+            title={PERMISSION_LABELS.script}
+            description="Execute Python / Node / Bash scripts the agent has authored."
+            value={perms.script}
+            onChange={(v) => setPerms({ script: v })}
+          />
+          <PermRow
+            title={PERMISSION_LABELS.codeExecution}
+            description="Run code in Hermes' built-in code_execution sandbox."
+            value={perms.codeExecution}
+            onChange={(v) => setPerms({ codeExecution: v })}
+          />
+        </div>
+
+        <div>
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground/70 mb-1">
+            Web & browsing
+          </p>
+          <PermRow
+            title={PERMISSION_LABELS.internet}
+            description="Fetch URLs, hit APIs, download files. Required for web_search and web_extract."
+            value={perms.internet}
+            onChange={(v) => setPerms({ internet: v })}
+          />
+          <PermRow
+            title={PERMISSION_LABELS.browser}
+            description="Drive a real browser (browser_navigate, browser_click, browser_type, screenshots)."
+            value={perms.browser}
+            onChange={(v) => setPerms({ browser: v })}
+          />
+        </div>
+
+        <div>
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground/70 mb-1">
+            Agent collaboration
+          </p>
+          <PermRow
+            title={PERMISSION_LABELS.delegation}
+            description="Spawn sub-agents to handle parts of a task in parallel."
+            value={perms.delegation}
+            onChange={(v) => setPerms({ delegation: v })}
+          />
+          <PermRow
+            title={PERMISSION_LABELS.cronjob}
+            description="Schedule recurring tasks (cron jobs) the agent runs in the background."
+            value={perms.cronjob}
+            onChange={(v) => setPerms({ cronjob: v })}
+          />
+          <PermRow
+            title={PERMISSION_LABELS.messaging}
+            description="Send messages on Telegram / Discord / Slack / WhatsApp."
+            value={perms.messaging}
+            onChange={(v) => setPerms({ messaging: v })}
+          />
+        </div>
+
+        <div>
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground/70 mb-1">
+            Media
+          </p>
+          <PermRow
+            title={PERMISSION_LABELS.imageGen}
+            description="Generate images via OpenAI / Replicate / Stability / Fal.ai."
+            value={perms.imageGen}
+            onChange={(v) => setPerms({ imageGen: v })}
+          />
+          <PermRow
+            title={PERMISSION_LABELS.tts}
+            description="Generate spoken audio replies via ElevenLabs / OpenAI TTS."
+            value={perms.tts}
+            onChange={(v) => setPerms({ tts: v })}
+          />
+        </div>
+
+        <div>
+          <PermRow
+            title="Default fallback"
+            description="What to do when an action doesn't match any of the categories above."
+            value={perms.fallback}
+            onChange={(v) => setPerms({ fallback: v })}
+          />
+        </div>
       </div>
 
       <div className="grid sm:grid-cols-2 gap-4 pt-2">
