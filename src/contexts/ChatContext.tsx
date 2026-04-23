@@ -6,6 +6,8 @@ import { useSettings } from "./SettingsContext";
 import { handleAgentReplyArrived } from "@/lib/notify";
 import { liveSubAgents } from "@/lib/liveSubAgents";
 import { detectToolUnavailable, type ToolUnavailableHit } from "@/lib/toolUnavailable";
+import { detectToolCalls } from "@/lib/toolUseDetection";
+import { useCapabilities } from "./CapabilitiesContext";
 
 /**
  * Chat is hoisted into a top-level context so:
@@ -91,6 +93,8 @@ export interface ChatMessage {
    *  (browser tool, web search, image gen, etc.) — surfaces a one-click
    *  diagnostic linking to the relevant Skills/Secrets entries. */
   toolUnavailable?: ToolUnavailableHit;
+  /** Capability ids the agent invoked (or attempted) during this turn. */
+  usedCapabilities?: string[];
 }
 
 interface QueueItem {
@@ -158,6 +162,7 @@ const loadStoredSessionId = (): string | null => {
 
 export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const { settings } = useSettings();
+  const { recordUse } = useCapabilities();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadStoredMessages());
   const [isStreaming, setIsStreaming] = useState(false);
   const [queuedCount, setQueuedCount] = useState(0);
@@ -386,6 +391,10 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           // like a delegate_task tool call followed by its `task: "..."` arg.
           let streamBuf = "";
 
+          // Per-turn list of capability ids invoked by the agent (used for
+          // capability chips on the assistant message).
+          const usedCapsThisTurn = new Set<string>();
+
           const extractGoal = (buf: string): string => {
             // Try the broadest set of phrasings Hermes (and its forks) emit
             // when announcing a delegated task. Order matters — most specific
@@ -441,7 +450,22 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             // Per-category activity counts.
             for (const k of Object.keys(activityPatterns) as Array<keyof typeof activityPatterns>) {
               const m = chunk.data.match(activityPatterns[k]);
-              if (m) activityThisTurn[k] += m.length;
+              if (m) {
+                activityThisTurn[k] += m.length;
+                // Mirror into the capability tracker so chips show up.
+                usedCapsThisTurn.add(k);
+                recordUse(k);
+              }
+            }
+
+            // Detect explicit tool announcements ("tool: web_search",
+            // "calling browser…", etc.) and record them as capability uses.
+            const toolHits = detectToolCalls(chunk.data);
+            for (const hit of toolHits) {
+              if (!usedCapsThisTurn.has(hit.capabilityId)) {
+                usedCapsThisTurn.add(hit.capabilityId);
+                recordUse(hit.capabilityId);
+              }
             }
 
             // Spawn detection — count distinct delegation events.
@@ -620,6 +644,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     materializeFailed: matFailed,
                     permissionMismatch,
                     toolUnavailable,
+                    usedCapabilities: Array.from(usedCapsThisTurn),
                   }
                 : m,
             ),

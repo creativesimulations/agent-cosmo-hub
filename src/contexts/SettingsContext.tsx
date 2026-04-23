@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { systemAPI } from "@/lib/systemAPI";
 import { DEFAULT_PERMISSIONS, type PermissionsConfig } from "@/lib/permissions";
+import type { CapabilityChoice } from "@/lib/capabilities";
 
 /**
  * App-wide user preferences. Persisted to localStorage, applied immediately
@@ -44,6 +45,13 @@ export interface AppSettings {
    * and the user never knew why their task failed.
    */
   permissions: PermissionsConfig;
+  /**
+   * Per-capability user policy. Key is the capability id (see
+   * `src/lib/capabilities.ts`), value is one of `ask | allow | session | deny`.
+   * Auto-generated entries (skills/observed tools) are added on first use.
+   * Missing entries fall back to DEFAULT_CAPABILITY_POLICY in the registry.
+   */
+  capabilityPolicy: Record<string, CapabilityChoice>;
 }
 
 const STORAGE_KEY = "ronbot-settings-v1";
@@ -67,6 +75,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // hanging the UI forever if the agent truly stalls.
   chatTimeoutSec: 600,
   permissions: DEFAULT_PERMISSIONS,
+  capabilityPolicy: {},
 };
 
 interface SettingsContextValue {

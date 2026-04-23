@@ -71,6 +71,12 @@ const TOOL_PATTERNS: PatternDef[] = [
       /can(?:'t|not)\s+(?:open|load|render|use)\s+(?:the\s+)?browser/i,
       /no\s+browser\s+(?:tool|access|available)/i,
       /browser\s+(?:tool|capability)[^.\n]{0,60}\bin this environment/i,
+      // New broader phrasing — catches "I can't access ryukyu-kenpo.info content
+      // right now due to a permission error in this environment" which doesn't
+      // mention the word "browser" at all.
+      /can(?:'t|not)\s+access[^.\n]{0,80}\b(?:content|page|site|url|website)[^.\n]{0,80}\bpermission\s+error/i,
+      /can(?:'t|not)\s+(?:fetch|retrieve|load|read)[^.\n]{0,80}\bpermission\s+error\s+in\s+this\s+environment/i,
+      /permission\s+error\s+in\s+this\s+environment/i,
     ],
     candidateSecrets: ["BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID", "FIRECRAWL_API_KEY"],
     candidateSkills: ["browser", "browser_use", "web_browser", "playwright"],
