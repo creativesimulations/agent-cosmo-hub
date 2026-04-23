@@ -605,8 +605,8 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           className="font-mono text-xs"
         />
         <p className="text-[11px] text-muted-foreground">
-          Default points at the local container Ron will install for you. Only change this if you're
-          running Camofox on another machine.
+          Default points at the local server Ron will install for you (no Docker needed — uses Node.js + git).
+          Only change this if you're running Camofox on another machine.
         </p>
       </div>
 
