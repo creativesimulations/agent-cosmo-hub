@@ -59,6 +59,7 @@ export const systemAPI = {
   // Hermes Agent
   installHermes: hermesAPI.install.bind(hermesAPI),
   installHermesViaPip: hermesAPI.installViaPip.bind(hermesAPI),
+  installHermesFromLocalFolder: hermesAPI.installFromLocalFolder.bind(hermesAPI),
   hermesDoctor: hermesAPI.doctor.bind(hermesAPI),
   hermesStatus: hermesAPI.status.bind(hermesAPI),
   hermesUpdate: hermesAPI.update.bind(hermesAPI),

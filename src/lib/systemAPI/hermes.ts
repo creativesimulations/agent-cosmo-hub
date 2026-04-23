@@ -759,6 +759,84 @@ export const hermesAPI = {
     return extrasResult.success ? finalizeInstallVerification(extrasResult, onOutput) : extrasResult;
   },
 
+  /** Install from a local folder the user already has on disk
+   *  (e.g. a cloned hermes-agent repo or extracted source bundle).
+   *  Creates ~/.hermes/venv if needed, then `pip install -e <folder>[extras]`
+   *  and symlinks the CLI into ~/.local/bin. On Windows, translates the
+   *  selected folder into its /mnt/<drive>/... equivalent for WSL. */
+  async installFromLocalFolder(
+    folderPath: string,
+    extras?: string[],
+    onOutput?: CommandOutputHandler,
+  ): Promise<CommandResult> {
+    const platform = await coreAPI.getPlatform();
+    const wantsExtras = !!(extras && extras.length > 0);
+    const extrasFlag = wantsExtras ? `[${extras!.join(',')}]` : '';
+
+    // Resolve the folder path inside the POSIX env (WSL on Windows).
+    let posixPath = folderPath;
+    if (platform.isWindows) {
+      const mounted = toWslMountedPath(folderPath);
+      if (!mounted) {
+        return {
+          success: false,
+          stdout: '',
+          stderr: `Could not translate Windows path "${folderPath}" to a WSL path. Pick a folder on a local drive (C:\\, D:\\, etc.).`,
+          code: 2,
+        };
+      }
+      posixPath = mounted;
+    }
+
+    const script = [
+      'set -e',
+      'export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a SUDO_ASKPASS=/bin/false',
+      `SRC="${posixPath}"`,
+      'echo "[local-install] using source folder: $SRC"',
+      'if [ ! -d "$SRC" ]; then',
+      '  echo "[local-install] FATAL: folder does not exist: $SRC" >&2',
+      '  exit 60',
+      'fi',
+      // Heuristic sanity check: must look like a Python package (pyproject.toml or setup.py)
+      'if [ ! -f "$SRC/pyproject.toml" ] && [ ! -f "$SRC/setup.py" ]; then',
+      '  echo "[local-install] FATAL: $SRC does not contain pyproject.toml or setup.py — not a Python package" >&2',
+      '  exit 61',
+      'fi',
+      '',
+      'mkdir -p "$HOME/.hermes"',
+      'VENV="$HOME/.hermes/venv"',
+      'if [ -d "$VENV" ] && [ ! -x "$VENV/bin/pip" ]; then',
+      '  echo "[local-install] existing venv missing pip — recreating"',
+      '  rm -rf "$VENV"',
+      'fi',
+      'if [ ! -x "$VENV/bin/pip" ]; then',
+      '  echo "[local-install] creating venv at $VENV"',
+      '  python3 -m venv "$VENV" || { echo "[local-install] FATAL: failed to create venv" >&2; exit 62; }',
+      'fi',
+      '"$VENV/bin/python" -m pip install --upgrade pip wheel setuptools 2>&1 | tail -5',
+      '',
+      // Mirror the cloned-source layout so update/doctor flows that look in
+      // ~/.hermes/hermes-agent still work. We DON'T copy the user's folder —
+      // we install it editable so they keep working from their checkout.
+      'ln -sfn "$SRC" "$HOME/.hermes/hermes-agent"',
+      '',
+      `echo "[local-install] pip install -e \\"$SRC${extrasFlag}\\""`,
+      `"$VENV/bin/pip" install --upgrade -e "$SRC${extrasFlag}"`,
+      '',
+      'mkdir -p "$HOME/.local/bin"',
+      'if [ -x "$VENV/bin/hermes" ]; then',
+      '  ln -sf "$VENV/bin/hermes" "$HOME/.local/bin/hermes"',
+      '  echo "[local-install] linked $VENV/bin/hermes -> $HOME/.local/bin/hermes"',
+      'else',
+      '  echo "[local-install] WARNING: $VENV/bin/hermes not found after install" >&2',
+      'fi',
+      'echo "[local-install] done."',
+    ].join('\n');
+
+    const result = await runHermesShell(script, { timeout: 600000 }, onOutput);
+    return result.success ? finalizeInstallVerification(result, onOutput) : result;
+  },
+
   /** Alternative: install via git clone + editable pip into the dedicated venv.
    *  hermes-agent is NOT on PyPI, so we clone from GitHub and install editable. */
   async installViaPip(): Promise<CommandResult> {
