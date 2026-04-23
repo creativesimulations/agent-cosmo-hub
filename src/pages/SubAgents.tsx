@@ -57,6 +57,21 @@ const formatRelative = (iso: string) => {
   return new Date(iso).toLocaleString();
 };
 
+/** Absolute clock time for finished work — doesn't change as time passes.
+ *  Shows "3:42 PM" for today, otherwise "Apr 22, 3:42 PM". */
+const formatAbsolute = (iso: string) => {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (sameDay) return time;
+  const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `${date}, ${time}`;
+};
+
 const SubAgents = () => {
   const { connected: agentConnected } = useAgentConnection();
   const { settings } = useSettings();
