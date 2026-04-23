@@ -77,6 +77,25 @@ const licenseKeyName = (id: string) => `LICENSE_${id.toUpperCase()}`;
  */
 const PUBLIC_KEY_B64URL = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
+/**
+ * Developer "skeleton key" — unlocks ANY upgrade without a real signed key.
+ *
+ * Use this during development to test paid flows without going through the
+ * purchase + signing pipeline. Format: `RONBOT-MASTER-<anything>` (case-insensitive).
+ *
+ * The accepted prefix below is intentionally hard to type by accident, but
+ * before shipping a public production build you should either:
+ *  (a) replace `MASTER_KEY_PREFIX` with `null` to disable it, or
+ *  (b) leave it in place if you're fine with anyone who sees this source code
+ *      being able to unlock everything (it IS open in the renderer bundle).
+ */
+const MASTER_KEY_PREFIX = 'RONBOT-MASTER-';
+
+const isMasterKey = (raw: string): boolean =>
+  !!MASTER_KEY_PREFIX &&
+  raw.trim().toUpperCase().startsWith(MASTER_KEY_PREFIX.toUpperCase()) &&
+  raw.trim().length > MASTER_KEY_PREFIX.length;
+
 const b64urlDecode = (s: string): ArrayBuffer => {
   const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
   const b64 = (s + pad).replace(/-/g, '+').replace(/_/g, '/');
