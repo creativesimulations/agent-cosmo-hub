@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Network, AlertCircle, RefreshCw, Loader2, CheckCircle2, Activity, FileText, XCircle, FileWarning } from "lucide-react";
+import { Network, AlertCircle, RefreshCw, Loader2, CheckCircle2, Activity, FileText, XCircle, FileWarning, Radio } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import StatusBadge from "@/components/ui/StatusBadge";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,7 @@ import { useSettings } from "@/contexts/SettingsContext";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
 import { showDesktopNotification, playReplyChime } from "@/lib/notify";
+import { liveSubAgents, type LiveSubAgent } from "@/lib/liveSubAgents";
 
 type ActiveSubAgent = {
   id: string;
@@ -62,6 +63,7 @@ const SubAgents = () => {
   const [active, setActive] = useState<ActiveSubAgent[]>([]);
   const [recent, setRecent] = useState<RecentSubAgent[]>([]);
   const [failed, setFailed] = useState<FailedSubAgent[]>([]);
+  const [live, setLive] = useState<LiveSubAgent[]>(() => liveSubAgents.list());
   const [loggingDisabled, setLoggingDisabled] = useState(false);
   const [enablingLog, setEnablingLog] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -70,6 +72,11 @@ const SubAgents = () => {
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
   const seenCompletedRef = useRef<Set<string>>(new Set());
   const isFirstLoadRef = useRef(true);
+
+  // Subscribe to the in-memory live event bus (fed by ChatContext as the
+  // parent agent's stream is parsed). Ground-truth for activity RIGHT NOW —
+  // works even when ~/.hermes/logs/agent.log is disabled or hasn't flushed.
+  useEffect(() => liveSubAgents.subscribe(setLive), []);
 
   const refresh = useCallback(
     async (showToast = false) => {
@@ -127,7 +134,62 @@ const SubAgents = () => {
     return () => window.clearInterval(id);
   }, [agentConnected, refresh]);
 
-  const totalCount = useMemo(() => active.length + recent.length + failed.length, [active, recent, failed]);
+  // Merge live (in-memory) entries with the log-file-derived buckets so the
+  // tab shows current activity even when file logging is disabled. Live ids
+  // are prefixed `live-` so they never collide with log-derived ids.
+  const liveActive = useMemo(
+    () => live.filter((l) => l.status === "running").map((l) => ({
+      id: l.id,
+      goal: l.goal,
+      startedAt: l.startedAt,
+      lastActivity: l.startedAt,
+      lastEvent: l.lastEvent || "running (live)",
+    })),
+    [live],
+  );
+  const liveRecent = useMemo(
+    () => live
+      .filter((l) => l.status === "completed" && l.endedAt)
+      .map((l) => ({
+        id: l.id,
+        goal: l.goal,
+        startedAt: l.startedAt,
+        completedAt: l.endedAt!,
+        durationMs: Date.parse(l.endedAt!) - Date.parse(l.startedAt),
+      })),
+    [live],
+  );
+  const liveFailed = useMemo(
+    () => live
+      .filter((l) => l.status === "failed" && l.endedAt)
+      .map((l) => ({
+        id: l.id,
+        goal: l.goal,
+        startedAt: l.startedAt,
+        failedAt: l.endedAt!,
+        reason: l.reason,
+      })),
+    [live],
+  );
+
+  const mergedActive = useMemo(() => [...liveActive, ...active], [liveActive, active]);
+  const mergedRecent = useMemo(
+    () => [...liveRecent, ...recent].sort((a, b) =>
+      a.completedAt < b.completedAt ? 1 : -1,
+    ),
+    [liveRecent, recent],
+  );
+  const mergedFailed = useMemo(
+    () => [...liveFailed, ...failed].sort((a, b) =>
+      a.failedAt < b.failedAt ? 1 : -1,
+    ),
+    [liveFailed, failed],
+  );
+
+  const totalCount = useMemo(
+    () => mergedActive.length + mergedRecent.length + mergedFailed.length,
+    [mergedActive, mergedRecent, mergedFailed],
+  );
 
   if (!agentConnected) {
     return (
@@ -164,6 +226,12 @@ const SubAgents = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {liveActive.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+              <Radio className="w-3 h-3 animate-pulse" />
+              {liveActive.length} live
+            </span>
+          )}
           {lastFetched && (
             <span className="text-xs text-muted-foreground">
               Updated {formatRelative(lastFetched.toISOString())}
@@ -239,10 +307,10 @@ const SubAgents = () => {
           <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <Activity className="w-4 h-4 text-primary" />
             Active
-            <Badge variant="secondary" className="ml-1">{active.length}</Badge>
+            <Badge variant="secondary" className="ml-1">{mergedActive.length}</Badge>
           </h2>
         </div>
-        {active.length === 0 ? (
+        {mergedActive.length === 0 ? (
           <GlassCard className="py-8 text-center">
             <p className="text-sm text-muted-foreground">
               No sub-agents are running right now.
@@ -253,7 +321,7 @@ const SubAgents = () => {
           </GlassCard>
         ) : (
           <div className="grid gap-3">
-            {active.map((sa) => (
+            {mergedActive.map((sa) => (
               <GlassCard key={sa.id} className="space-y-2">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -280,15 +348,15 @@ const SubAgents = () => {
       </section>
 
       {/* Failed */}
-      {failed.length > 0 && (
+      {mergedFailed.length > 0 && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <XCircle className="w-4 h-4 text-destructive" />
             Failed / denied
-            <Badge variant="destructive" className="ml-1">{failed.length}</Badge>
+            <Badge variant="destructive" className="ml-1">{mergedFailed.length}</Badge>
           </h2>
           <div className="grid gap-3">
-            {failed.map((sa) => (
+            {mergedFailed.map((sa) => (
               <GlassCard key={sa.id} className="space-y-2 border-destructive/30">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -317,10 +385,10 @@ const SubAgents = () => {
           <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-primary" />
             Recently completed
-            <Badge variant="secondary" className="ml-1">{recent.length}</Badge>
+            <Badge variant="secondary" className="ml-1">{mergedRecent.length}</Badge>
           </h2>
         </div>
-        {recent.length === 0 ? (
+        {mergedRecent.length === 0 ? (
           <GlassCard className="py-8 text-center">
             <p className="text-sm text-muted-foreground">
               No completed sub-agents in the last 24 hours.
@@ -328,7 +396,7 @@ const SubAgents = () => {
           </GlassCard>
         ) : (
           <div className="grid gap-3">
-            {recent.map((sa) => (
+            {mergedRecent.map((sa) => (
               <GlassCard key={sa.id} className="space-y-2">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3 min-w-0 flex-1">

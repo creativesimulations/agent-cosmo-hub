@@ -275,20 +275,40 @@ const AgentChat = () => {
                     <div className="mt-2 p-2 rounded-md border border-warning/40 bg-warning/10 text-[11px] flex items-start gap-2">
                       <ShieldAlert className="w-3.5 h-3.5 text-warning shrink-0 mt-0.5" />
                       <div className="space-y-1">
-                        <p className="text-foreground/90">
-                          The agent reported a {msg.permissionMismatch.kind === "internet" ? "no-internet" : "no-permission"} error,
-                          but Ronbot's permission for{" "}
-                          <span className="font-semibold capitalize">{msg.permissionMismatch.kind}</span> is set to{" "}
-                          <span className="font-semibold">{msg.permissionMismatch.agentSetting}</span>.
-                          The permissions block may not have been applied to the agent.
-                        </p>
-                        <button
-                          type="button"
-                          className="text-warning hover:underline"
-                          onClick={() => { window.location.hash = "#/diagnostics"; }}
-                        >
-                          Open Diagnostics →
-                        </button>
+                        {msg.permissionMismatch.kind === "subAgentNoPrompt" ? (
+                          <p className="text-foreground/90">
+                            Your <span className="font-semibold">Sub-agent spawn</span> permission is set to{" "}
+                            <span className="font-semibold">{msg.permissionMismatch.agentSetting}</span>, but the agent ran sub-agents without prompting you.
+                            {msg.permissionMismatch.detail ? ` ${msg.permissionMismatch.detail}` : ""}{" "}
+                            The agent may not honor per-spawn approval. Switch the setting to <span className="font-semibold">Deny</span> to block all delegation, or check Diagnostics for the active permissions block.
+                          </p>
+                        ) : (
+                          <p className="text-foreground/90">
+                            The agent reported a {msg.permissionMismatch.kind === "internet" ? "no-internet" : "no-permission"} error,
+                            but Ronbot's permission for{" "}
+                            <span className="font-semibold capitalize">{msg.permissionMismatch.kind}</span> is set to{" "}
+                            <span className="font-semibold">{msg.permissionMismatch.agentSetting}</span>.
+                            The permissions block may not have been applied to the agent.
+                          </p>
+                        )}
+                        <div className="flex gap-3">
+                          <button
+                            type="button"
+                            className="text-warning hover:underline"
+                            onClick={() => { window.location.hash = "#/diagnostics"; }}
+                          >
+                            Open Diagnostics →
+                          </button>
+                          {msg.permissionMismatch.kind === "subAgentNoPrompt" && (
+                            <button
+                              type="button"
+                              className="text-warning hover:underline"
+                              onClick={() => { window.location.hash = "#/agents"; }}
+                            >
+                              View sub-agents →
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   )}

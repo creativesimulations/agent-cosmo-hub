@@ -4,6 +4,7 @@ import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
 import { useSettings } from "./SettingsContext";
 import { handleAgentReplyArrived } from "@/lib/notify";
+import { liveSubAgents } from "@/lib/liveSubAgents";
 
 /**
  * Chat is hoisted into a top-level context so:
@@ -68,8 +69,13 @@ export interface ChatMessage {
   missingKey?: { provider: string; envVar: string };
   diagnostics?: string;
   materializeFailed?: boolean;
-  /** Inline warning when agent reported denial despite a Ronbot Allow setting. */
-  permissionMismatch?: { kind: "internet" | "subAgent" | "shell" | "fileWrite" | "fileRead" | "script"; agentSetting: string };
+  /** Inline warning when agent reported denial despite a Ronbot Allow setting,
+   *  or when sub-agents spawned without an "ask" prompt being shown. */
+  permissionMismatch?: {
+    kind: "internet" | "subAgent" | "shell" | "fileWrite" | "fileRead" | "script" | "subAgentNoPrompt";
+    agentSetting: string;
+    detail?: string;
+  };
 }
 
 interface QueueItem {
@@ -204,43 +210,50 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [messages, settings.maxStoredMessages]);
 
-  // On mount, if localStorage was empty (fresh install OR localStorage was
-  // wiped by Electron) but the disk mirror has history, hydrate from disk.
+  // On mount: ensure Hermes file logging is enabled (one-time, idempotent)
+  // so the SubAgents tab can show post-hoc activity, and hydrate from disk
+  // mirror if localStorage was empty.
   useEffect(() => {
     if (typeof window === "undefined" || !window.electronAPI) return;
-    if (messages.length > 0) return; // localStorage already gave us history
+    // Best-effort: enable file logging silently. The managed-block writer
+    // is a no-op when the block is already present.
+    void systemAPI.enableHermesFileLogging?.().catch(() => undefined);
+    // Periodically prune completed live sub-agent entries older than 24h.
+    const pruneId = window.setInterval(() => liveSubAgents.prune(), 60_000);
     let cancelled = false;
-    void (async () => {
-      const histPath = await resolveHomePath(DISK_HISTORY_PATH);
-      if (!histPath) return;
-      const result = await window.electronAPI!.readFile(histPath).catch(() => null);
-      if (cancelled || !result?.success || !result.content) return;
-      try {
-        const parsed = JSON.parse(result.content) as Array<Omit<ChatMessage, "timestamp"> & { timestamp: string }>;
-        if (!Array.isArray(parsed) || parsed.length === 0) return;
-        setMessages(parsed.map((m) => ({
-          ...m,
-          timestamp: new Date(m.timestamp),
-          streaming: false,
-          queued: false,
-        })));
-      } catch { /* corrupt file — ignore */ }
+    if (messages.length === 0) {
+      void (async () => {
+        const histPath = await resolveHomePath(DISK_HISTORY_PATH);
+        if (!histPath) return;
+        const result = await window.electronAPI!.readFile(histPath).catch(() => null);
+        if (cancelled || !result?.success || !result.content) return;
+        try {
+          const parsed = JSON.parse(result.content) as Array<Omit<ChatMessage, "timestamp"> & { timestamp: string }>;
+          if (!Array.isArray(parsed) || parsed.length === 0) return;
+          setMessages(parsed.map((m) => ({
+            ...m,
+            timestamp: new Date(m.timestamp),
+            streaming: false,
+            queued: false,
+          })));
+        } catch { /* corrupt file — ignore */ }
 
-      // Also try to recover session id if localStorage lost it.
-      if (!sessionIdRef.current) {
-        const sidPath = await resolveHomePath(DISK_SESSION_PATH);
-        if (!sidPath) return;
-        const sidRes = await window.electronAPI!.readFile(sidPath).catch(() => null);
-        if (sidRes?.success && sidRes.content) {
-          const sid = sidRes.content.trim();
-          if (sid) {
-            sessionIdRef.current = sid;
-            setSessionId(sid);
+        // Also try to recover session id if localStorage lost it.
+        if (!sessionIdRef.current) {
+          const sidPath = await resolveHomePath(DISK_SESSION_PATH);
+          if (!sidPath) return;
+          const sidRes = await window.electronAPI!.readFile(sidPath).catch(() => null);
+          if (sidRes?.success && sidRes.content) {
+            const sid = sidRes.content.trim();
+            if (sid) {
+              sessionIdRef.current = sid;
+              setSessionId(sid);
+            }
           }
         }
-      }
-    })();
-    return () => { cancelled = true; };
+      })();
+    }
+    return () => { cancelled = true; window.clearInterval(pruneId); };
     // Run exactly once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -332,20 +345,77 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
 
         try {
           const timeoutMs = Math.max(60, settingsRef.current.chatTimeoutSec || 600) * 1000;
-          // Track sub-agent spawns mentioned in the streamed reply so the
-          // chat header can show a live "N sub-agents working" pill.
+
+          // ── Live sub-agent tracking ──
+          // Watch the streamed Hermes output for sub-agent lifecycle markers
+          // and feed the in-memory store so the SubAgents tab stays useful
+          // even when ~/.hermes/logs/agent.log is disabled or hasn't flushed.
           let liveCount = 0;
+          let spawnedThisTurn = 0;
           setLiveSubAgentCount(0);
-          const subAgentRe = /\b(delegate_task|sub[-_ ]?agent\.start|spawn(ed)?\s+(sub[-_ ]?agent|child\s+agent))\b/gi;
+          // Per-turn FIFO of live ids so we can pair up start → complete/fail.
+          const turnLiveIds: string[] = [];
+          // Buffer the tail of the stream so we can match multi-line patterns
+          // like a delegate_task tool call followed by its `task: "..."` arg.
+          let streamBuf = "";
+
+          // Goal extraction: look for the most recent `task` / `goal`-style
+          // value in the buffer.
+          const extractGoal = (buf: string): string => {
+            const patterns: RegExp[] = [
+              /delegate_task[\s\S]{0,400}?["']?(?:task|goal|prompt)["']?\s*[:=]\s*["']([^"']{3,300})["']/i,
+              /spawn(?:ed)?\s+(?:sub[-_ ]?agent|child\s+agent)[\s\S]{0,200}?["']([^"']{3,300})["']/i,
+              /sub[-_ ]?agent[\s\S]{0,200}?goal\s*[:=]\s*["']([^"']{3,300})["']/i,
+            ];
+            for (const re of patterns) {
+              const m = buf.match(re);
+              if (m) return m[1].trim();
+            }
+            return "(no goal captured)";
+          };
+
           const onStream = (chunk: { type: string; data?: string }) => {
-            if ((chunk.type === "stdout" || chunk.type === "stderr") && chunk.data) {
-              const matches = chunk.data.match(subAgentRe);
-              if (matches && matches.length) {
-                liveCount += matches.length;
-                setLiveSubAgentCount(liveCount);
+            if ((chunk.type !== "stdout" && chunk.type !== "stderr") || !chunk.data) return;
+            streamBuf = (streamBuf + chunk.data).slice(-8000);
+
+            // Spawn detection — count distinct delegation events.
+            const spawnRe = /\b(delegate_task|sub[-_ ]?agent\.start|spawn(?:ed)?\s+(?:sub[-_ ]?agent|child\s+agent))\b/gi;
+            const spawnMatches = chunk.data.match(spawnRe);
+            if (spawnMatches && spawnMatches.length) {
+              for (let i = 0; i < spawnMatches.length; i++) {
+                const goal = extractGoal(streamBuf);
+                const id = liveSubAgents.spawn(goal);
+                turnLiveIds.push(id);
+                spawnedThisTurn++;
+              }
+              liveCount += spawnMatches.length;
+              setLiveSubAgentCount(liveCount);
+            }
+
+            // Completion detection.
+            const completeRe = /\b(sub[-_ ]?agent\.complete|delegation\s+(?:complete|finished|done)|child[-_ ]?agent\b[^.\n]*\b(?:complete|finished|done))\b/gi;
+            const completeMatches = chunk.data.match(completeRe);
+            if (completeMatches) {
+              for (let i = 0; i < completeMatches.length; i++) {
+                const id = turnLiveIds.shift();
+                if (id) liveSubAgents.complete(id);
+              }
+            }
+
+            // Failure / denial detection.
+            const failRe = /\b(sub[-_ ]?agent\.(?:failed|error|denied)|delegation\s+(?:failed|denied|errored)|child[-_ ]?agent\b[^.\n]*\b(?:failed|denied|crashed))\b/gi;
+            const failMatches = chunk.data.match(failRe);
+            if (failMatches) {
+              for (let i = 0; i < failMatches.length; i++) {
+                const id = turnLiveIds.shift();
+                if (id) {
+                  const reasonM = chunk.data.match(/(?:reason|error|denied)\s*[:=]\s*["']?([^"'\n]{3,200})/i);
+                  liveSubAgents.fail(id, reasonM?.[1]);
+                }
               }
             }
           };
+
           const result = await systemAPI.chatAgent(
             item.prompt,
             onStream,
@@ -354,6 +424,11 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             timeoutMs,
             settingsRef.current.permissions,
           );
+
+          // Any sub-agents still marked running at end-of-turn must have
+          // finished (sub-agents die with their parent turn). This guards
+          // against missed completion markers in noisy streams.
+          liveSubAgents.finalizeRunning();
 
           // Even on success, if Stop fired during the call, treat as cancelled.
           if (stopRequestedRef.current) {
@@ -376,7 +451,9 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             setSessionId(result.sessionId);
           }
 
-          // Detect "agent claims it can't do X" while Ronbot says Allow.
+          // Detect "agent claims it can't do X" while Ronbot says Allow,
+          // OR sub-agents spawned without a per-spawn approval prompt while
+          // Ronbot's setting was "Ask each time".
           const perms = settingsRef.current.permissions;
           const lower = (reply || "").toLowerCase();
           let permissionMismatch: ChatMessage["permissionMismatch"];
@@ -384,6 +461,16 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             permissionMismatch = { kind: "internet", agentSetting: "Allow" };
           } else if (perms.subAgent === "allow" && /(cannot (?:spawn|delegate)|sub[- ]?agent.*denied|delegation.*denied|not (?:allowed|permitted) to (?:spawn|delegate))/i.test(lower)) {
             permissionMismatch = { kind: "subAgent", agentSetting: "Allow" };
+          } else if (perms.subAgent === "ask" && spawnedThisTurn > 0) {
+            // User wanted to be asked per sub-agent spawn but the agent ran
+            // them without a prompt — Hermes' permission engine probably
+            // doesn't recognize the `subagent:` key in our managed YAML, so
+            // it auto-allowed. Surface this so they're not surprised.
+            permissionMismatch = {
+              kind: "subAgentNoPrompt",
+              agentSetting: "Ask each time",
+              detail: `${spawnedThisTurn} sub-agent${spawnedThisTurn === 1 ? "" : "s"} ran without prompting.`,
+            };
           }
 
           setMessages((prev) =>
