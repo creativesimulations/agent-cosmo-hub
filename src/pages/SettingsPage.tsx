@@ -390,11 +390,7 @@ const SettingsPage = () => {
       )}
 
       {/* ─── Behavior ──────────────────────────────────────────── */}
-      <GlassCard className="p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <Play className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Behavior</h2>
-        </div>
+      <SettingsSection icon={Play} title="Behavior">
         <div className="-mt-2">
           <ToggleRow
             title="Auto-start agent on app launch"
@@ -415,7 +411,7 @@ const SettingsPage = () => {
             onCheckedChange={(v) => update({ runInBackground: v })}
           />
         </div>
-      </GlassCard>
+      </SettingsSection>
 
       {/* ─── Notifications ─────────────────────────────────────── */}
       <GlassCard className="p-6 space-y-4">
