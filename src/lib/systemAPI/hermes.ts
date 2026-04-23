@@ -553,7 +553,7 @@ const stripManagedBlock = (yaml: string, begin: string, end: string): string => 
 };
 
 const yamlList = (items: string[]): string => {
-  if (!items.length) return '[]';
+  if (!items.length) return ' []';
   return '\n' + items.map((p) => `    - "${p.replace(/"/g, '\\"')}"`).join('\n');
 };
 
