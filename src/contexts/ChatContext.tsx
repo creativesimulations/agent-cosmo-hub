@@ -220,39 +220,40 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     void systemAPI.enableHermesFileLogging?.().catch(() => undefined);
     // Periodically prune completed live sub-agent entries older than 24h.
     const pruneId = window.setInterval(() => liveSubAgents.prune(), 60_000);
-    if (messages.length > 0) return () => window.clearInterval(pruneId);
     let cancelled = false;
-    void (async () => {
-      const histPath = await resolveHomePath(DISK_HISTORY_PATH);
-      if (!histPath) return;
-      const result = await window.electronAPI!.readFile(histPath).catch(() => null);
-      if (cancelled || !result?.success || !result.content) return;
-      try {
-        const parsed = JSON.parse(result.content) as Array<Omit<ChatMessage, "timestamp"> & { timestamp: string }>;
-        if (!Array.isArray(parsed) || parsed.length === 0) return;
-        setMessages(parsed.map((m) => ({
-          ...m,
-          timestamp: new Date(m.timestamp),
-          streaming: false,
-          queued: false,
-        })));
-      } catch { /* corrupt file — ignore */ }
+    if (messages.length === 0) {
+      void (async () => {
+        const histPath = await resolveHomePath(DISK_HISTORY_PATH);
+        if (!histPath) return;
+        const result = await window.electronAPI!.readFile(histPath).catch(() => null);
+        if (cancelled || !result?.success || !result.content) return;
+        try {
+          const parsed = JSON.parse(result.content) as Array<Omit<ChatMessage, "timestamp"> & { timestamp: string }>;
+          if (!Array.isArray(parsed) || parsed.length === 0) return;
+          setMessages(parsed.map((m) => ({
+            ...m,
+            timestamp: new Date(m.timestamp),
+            streaming: false,
+            queued: false,
+          })));
+        } catch { /* corrupt file — ignore */ }
 
-      // Also try to recover session id if localStorage lost it.
-      if (!sessionIdRef.current) {
-        const sidPath = await resolveHomePath(DISK_SESSION_PATH);
-        if (!sidPath) return;
-        const sidRes = await window.electronAPI!.readFile(sidPath).catch(() => null);
-        if (sidRes?.success && sidRes.content) {
-          const sid = sidRes.content.trim();
-          if (sid) {
-            sessionIdRef.current = sid;
-            setSessionId(sid);
+        // Also try to recover session id if localStorage lost it.
+        if (!sessionIdRef.current) {
+          const sidPath = await resolveHomePath(DISK_SESSION_PATH);
+          if (!sidPath) return;
+          const sidRes = await window.electronAPI!.readFile(sidPath).catch(() => null);
+          if (sidRes?.success && sidRes.content) {
+            const sid = sidRes.content.trim();
+            if (sid) {
+              sessionIdRef.current = sid;
+              setSessionId(sid);
+            }
           }
         }
-      }
-    })();
-    return () => { cancelled = true; };
+      })();
+    }
+    return () => { cancelled = true; window.clearInterval(pruneId); };
     // Run exactly once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
