@@ -350,7 +350,28 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     );
   };
 
-  // ─── Camofox automation ───────────────────────────────────────────────────
+  /** Save a search-backend key inline (without closing the dialog) so the
+   *  user can wire CDP and search in one sitting. */
+  const handleSaveSearchKey = async (envVar: string, value: string, label: string) => {
+    if (!value.trim()) return;
+    setSearchSaving(true);
+    try {
+      const ok = await secretsStore.set(envVar, value.trim());
+      if (!ok) {
+        toast.error(`Failed to save ${envVar}`);
+        return;
+      }
+      toast.success(`${label} configured`, {
+        description: "Ron will use it for web search on the next message.",
+      });
+      invalidateCapabilityProbeCache();
+      setShowSearchCta(false);
+      setTavilyKey("");
+      setExaKey("");
+    } finally {
+      setSearchSaving(false);
+    }
+  };
   // We install Camofox via `git clone + npm install + npm start` (the project's
   // own README install path) so no Docker is required. The previous Docker-pull
   // approach failed because the upstream image isn't published publicly
