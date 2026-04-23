@@ -405,12 +405,12 @@ const Diagnostics = () => {
           </h2>
           <Button
             onClick={handleRepairBrowser}
-            disabled={browserBusy || !browserDiag}
+            disabled={browserBusy}
             variant="ghost"
             size="sm"
           >
             <Wrench className={cn("w-3 h-3 mr-1", browserBusy && "animate-pulse")} />
-            Repair browser config
+            Repair config
           </Button>
         </div>
 
