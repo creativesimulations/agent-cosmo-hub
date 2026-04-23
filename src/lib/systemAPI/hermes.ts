@@ -1348,15 +1348,22 @@ export const hermesAPI = {
     }
 
     const promptB64 = encodeScript(prompt);
+    // Modern Hermes (per docs): `hermes chat -p "..."` for one-shot, with
+    // `--resume <id>` as a top-level flag. Older builds only know `-q` and
+    // accept `chat --resume <id>` — capability probe selects automatically.
+    await ensureHermesChatCaps();
+    const noColorFlag = HERMES_CHAT_CAPS.supportsNoColor ? ' --no-color' : '';
+    const chatInvocation = resumeId
+      ? (HERMES_CHAT_CAPS.supportsModern
+          ? `hermes --resume ${JSON.stringify(resumeId)} chat -p "$PROMPT"${noColorFlag} 2>&1`
+          : `hermes chat --resume ${JSON.stringify(resumeId)} -q "$PROMPT" 2>&1`)
+      : (HERMES_CHAT_CAPS.supportsModern
+          ? `hermes chat -p "$PROMPT"${noColorFlag} 2>&1`
+          : 'hermes chat -q "$PROMPT" 2>&1');
     const script = [
       'set -e',
       'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
-      // Force a non-interactive, plain-text environment.
       'export TERM=dumb NO_COLOR=1 CI=1 PYTHONUNBUFFERED=1',
-      // Source ~/.hermes/.env so OPENROUTER_API_KEY (and friends) are visible
-      // to the agent. Hermes itself does load .env, but only when run from
-      // its own working directory — being explicit here removes any ambiguity
-      // and also surfaces shell parse errors in the .env file immediately.
       'if [ -f "$HOME/.hermes/.env" ]; then',
       '  set -a',
       '  # shellcheck disable=SC1091',
@@ -1366,13 +1373,10 @@ export const hermesAPI = {
       'else',
       '  echo "[hermes-diag] WARNING: ~/.hermes/.env does not exist" >&2',
       'fi',
-      // Diagnostic: print which key vars are set (length only, never the value)
-      // so the user can see whether the key reached the CLI.
       'for v in OPENROUTER_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY NOUS_API_KEY DEEPSEEK_API_KEY; do',
       '  eval "val=\\${$v}"',
       '  if [ -n "$val" ]; then echo "[hermes-diag] $v is set (len=${#val})" >&2; else echo "[hermes-diag] $v is NOT set" >&2; fi',
       'done',
-      // Diagnostic: show the configured model so we can see what hermes will use.
       'if [ -f "$HOME/.hermes/config.yaml" ]; then',
       '  MODEL_LINE="$(grep -E "^\\s*model:" "$HOME/.hermes/config.yaml" | head -n1)"',
       '  echo "[hermes-diag] config model: ${MODEL_LINE:-<none>}" >&2',
@@ -1381,24 +1385,9 @@ export const hermesAPI = {
       'fi',
       'command -v hermes >/dev/null 2>&1 || { echo "[hermes-diag] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
       `PROMPT="$(echo ${promptB64} | base64 -d)"`,
-      // Run from ~/.hermes so any relative config lookups also work.
       'cd "$HOME/.hermes" 2>/dev/null || true',
-      // If we have a session id from a previous turn, resume it so the agent
-      // keeps full conversation context. Otherwise start fresh and we'll
-      // capture the new session id from the footer Hermes prints.
-      // Drop `</dev/null` so stdin stays open and we can answer interactive
-      // permission prompts via writeStreamStdin.
-      // Modern Hermes (per docs): `hermes chat -p "..."` for one-shot, with
-      // `--resume <id>` as a top-level flag. Older builds only know `-q` and
-      // accept `chat --resume <id>` — capability probe selects automatically.
-      await ensureHermesChatCaps();
-      (resumeId
-        ? (HERMES_CHAT_CAPS.supportsModern
-            ? `hermes --resume ${JSON.stringify(resumeId)} chat -p "$PROMPT"${HERMES_CHAT_CAPS.supportsNoColor ? ' --no-color' : ''} 2>&1`
-            : `hermes chat --resume ${JSON.stringify(resumeId)} -q "$PROMPT" 2>&1`)
-        : (HERMES_CHAT_CAPS.supportsModern
-            ? `hermes chat -p "$PROMPT"${HERMES_CHAT_CAPS.supportsNoColor ? ' --no-color' : ''} 2>&1`
-            : 'hermes chat -q "$PROMPT" 2>&1')),
+      `echo "[hermes-diag] invocation: ${HERMES_CHAT_CAPS.supportsModern ? 'modern (-p)' : 'legacy (-q)'}" >&2`,
+      chatInvocation,
     ].join('\n');
 
     // Detect Hermes' interactive `Choice [o/s/a/D]:` permission prompts in
