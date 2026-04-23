@@ -624,7 +624,10 @@ const writeBrowserBlock = async (
 ): Promise<{ success: boolean; error?: string }> => {
   const cfg = await readHermesFile(HERMES_CONFIG);
   const existing = cfg.success && cfg.content ? cfg.content : 'model: openrouter/auto\n';
-  const stripped = stripManagedBlock(existing, BROWSER_BEGIN, BROWSER_END).replace(/\n+$/, '');
+  let stripped = stripManagedBlock(existing, BROWSER_BEGIN, BROWSER_END).replace(/\n+$/, '');
+  // Also strip any prior managed toolsets block — we re-write it below so the
+  // hermes-web toolset is always loaded whenever a browser backend is wired.
+  stripped = stripManagedBlock(stripped, TOOLSETS_BEGIN, TOOLSETS_END).replace(/\n+$/, '');
 
   const isEmpty = !next.camofoxPersistence && !next.cdpUrl;
   let out: string;
@@ -632,6 +635,10 @@ const writeBrowserBlock = async (
     out = `${stripped}\n`;
   } else {
     const lines: string[] = [BROWSER_BEGIN, 'browser:'];
+    // CRITICAL: explicitly mark the browser subsystem as enabled. Without this
+    // some Hermes builds short-circuit `browser_*` tool calls with a "browser
+    // permission error" even when the toolset is loaded and the CDP url is set.
+    lines.push('  enabled: true');
     if (next.cdpUrl) {
       lines.push(`  cdp_url: "${next.cdpUrl}"`);
     }
@@ -640,7 +647,17 @@ const writeBrowserBlock = async (
       lines.push('    managed_persistence: true');
     }
     lines.push(BROWSER_END);
-    out = `${stripped}\n\n${lines.join('\n')}\n`;
+
+    // Toolsets: ensure hermes-web is present so browser_navigate / browser_click
+    // / etc. are actually registered with the agent. We only manage our own
+    // block; users can still add other toolsets elsewhere in the file.
+    const toolsetLines = [
+      TOOLSETS_BEGIN,
+      'toolsets:',
+      '  - hermes-web',
+      TOOLSETS_END,
+    ];
+    out = `${stripped}\n\n${lines.join('\n')}\n\n${toolsetLines.join('\n')}\n`;
   }
   const w = await writeHermesFile(HERMES_CONFIG, out, '600');
   return w.success ? { success: true } : { success: false, error: 'Failed to write config.yaml browser block' };
