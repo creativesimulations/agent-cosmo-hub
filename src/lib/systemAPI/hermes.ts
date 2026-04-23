@@ -1006,7 +1006,7 @@ export const hermesAPI = {
       'fi',
     ].join('\n');
     // Use `set -e` so any failed step aborts immediately with a clear exit code.
-    const fullCmd = ['set -e', unattendedEnv, ensurePip, dl, runScript].join('\n');
+    const fullCmd = ['set -e', unattendedEnv, ensurePip, cleanupStaleCheckout, dl, runScript].join('\n');
 
     // Extras must install into the same venv, from the LOCAL CHECKOUT that
     // the official install script clones to ~/.hermes/hermes-agent.
