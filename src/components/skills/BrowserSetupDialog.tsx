@@ -194,6 +194,54 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     setStep("configure");
   };
 
+  /**
+   * After ANY backend is configured, the agent also needs a browser-class
+   * skill enabled, otherwise it has no tool to drive the backend with —
+   * which is exactly the "browser permission error" the agent reports.
+   * Tries the canonical names in order; first hit wins.
+   */
+  const ensureBrowserSkillEnabled = async (
+    log: (line: string) => void,
+  ): Promise<boolean> => {
+    try {
+      const res = await systemAPI.listSkills();
+      if (!res.success) {
+        log("⚠ Couldn't list installed skills — skipped auto-enable.");
+        return false;
+      }
+      const cfg = await systemAPI.getSkillsConfig();
+      const disabled = new Set((cfg.disabled || []).map((s) => s.toLowerCase()));
+      const candidates = ["browser", "web_browser", "browser_use", "playwright"];
+      const installed = res.skills.map((s) => s.name);
+      const installedLower = installed.map((s) => s.toLowerCase());
+      const matchIdx = installedLower.findIndex((s) => candidates.includes(s));
+      if (matchIdx === -1) {
+        log(`✗ Ron has no browser skill installed. Looked for: ${candidates.join(", ")}.`);
+        log("  Open Skills & Tools, add a browser skill, then re-run setup.");
+        toast.error("Ron has no browser skill installed", {
+          description: "Open Skills & Tools to add 'browser' or 'playwright', then re-run setup.",
+        });
+        return false;
+      }
+      const realName = installed[matchIdx];
+      const lower = installedLower[matchIdx];
+      if (!disabled.has(lower)) {
+        log(`✓ Browser skill "${realName}" is already enabled.`);
+        return true;
+      }
+      const enable = await systemAPI.setSkillEnabled(realName, true);
+      if (enable.success) {
+        log(`✓ Enabled browser skill "${realName}".`);
+        return true;
+      }
+      log(`✗ Failed to enable "${realName}": ${enable.error || "unknown error"}`);
+      return false;
+    } catch (e) {
+      log(`⚠ Skill auto-enable failed: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+  };
+
   const handleSaveSecrets = async (
     entries: Array<[string, string]>,
     successMsg: string,
@@ -330,9 +378,10 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       // Save URL secret + persistence config regardless of health (URL is correct).
       await secretsStore.set("CAMOFOX_URL", camofoxUrl.trim() || "http://localhost:9377");
       await systemAPI.setBrowserCamofoxPersistence(camofoxPersist).catch(() => undefined);
+      await ensureBrowserSkillEnabled(log);
       invalidateCapabilityProbeCache();
       if (healthy) {
-        toast.success("Camofox is running", { description: "Restart Ron to take effect." });
+        toast.success("Camofox is running", { description: "Send Ron a new message — config is reloaded each turn." });
         onConfigured?.();
       } else {
         toast.warning("Camofox started but health check timed out", {
@@ -409,6 +458,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
 
       // Wire it into Hermes config.
       await systemAPI.setBrowserCdpUrl("http://127.0.0.1:9222").catch(() => undefined);
+      log("✓ Hermes config updated: browser.cdp_url = http://127.0.0.1:9222");
       // Mark capability as user-managed so the probe stops nagging.
       update({
         capabilityPolicy: {
@@ -416,9 +466,19 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           webBrowser: "allow",
         },
       });
+      // CRITICAL: the agent needs an actual browser skill enabled, otherwise
+      // setting cdp_url does nothing and the agent reports a "browser permission error".
+      const skillOk = await ensureBrowserSkillEnabled(log);
       invalidateCapabilityProbeCache();
-      log("✓ Hermes config updated: browser.cdp_url = http://127.0.0.1:9222");
-      toast.success("Local Chrome connected", { description: "Restart Ron to take effect." });
+      if (skillOk) {
+        toast.success("Local Chrome connected", {
+          description: "Send Ron a new message to use it — config is reloaded each turn.",
+        });
+      } else {
+        toast.warning("Chrome is connected, but no browser skill is enabled in Ron", {
+          description: "Open Skills & Tools to enable one.",
+        });
+      }
       onConfigured?.();
     } finally {
       setChromeBusy(false);
