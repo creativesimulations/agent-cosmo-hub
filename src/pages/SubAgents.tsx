@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Network, AlertCircle, RefreshCw, Loader2, CheckCircle2, Activity, FileText, XCircle, FileWarning } from "lucide-react";
+import { Network, AlertCircle, RefreshCw, Loader2, CheckCircle2, Activity, FileText, XCircle, FileWarning, Radio } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import StatusBadge from "@/components/ui/StatusBadge";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,7 @@ import { useSettings } from "@/contexts/SettingsContext";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
 import { showDesktopNotification, playReplyChime } from "@/lib/notify";
+import { liveSubAgents, type LiveSubAgent } from "@/lib/liveSubAgents";
 
 type ActiveSubAgent = {
   id: string;
