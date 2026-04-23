@@ -98,6 +98,22 @@ const Index = () => {
     }
   };
 
+  const handlePickLocalAgent = async () => {
+    const res = await systemAPI.selectFolder({ title: "Select your agent folder" });
+    if (!res.success || res.canceled || !res.path) return;
+    setInstallSource("local");
+    setLocalAgentPath(res.path);
+    setMode("install");
+    setInstallStep(0);
+  };
+
+  const handleStartBundledInstall = () => {
+    setInstallSource("bundled");
+    setLocalAgentPath("");
+    setMode("install");
+    setInstallStep(0);
+  };
+
   const handleSaveApiKey = async () => {
     const provider = LLM_PROVIDERS.find((p) => p.id === selectedProvider);
     if (!provider || !provider.envVar) {
