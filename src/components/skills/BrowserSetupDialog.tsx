@@ -515,19 +515,30 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           webBrowser: "allow",
         },
       });
-      // CRITICAL: the agent needs an actual browser skill enabled, otherwise
-      // setting cdp_url does nothing and the agent reports a "browser permission error".
-      const skillOk = await ensureBrowserSkillEnabled(log);
-      invalidateCapabilityProbeCache();
-      if (skillOk) {
-        toast.success("Local Chrome connected", {
-          description: "Send Ron a new message to use it — config is reloaded each turn.",
-        });
+      // Make sure the agent's `browser` tool is registered (via hermes-cli toolset).
+      await ensureBrowserSkillEnabled(log);
+
+      // Real CDP round-trip — proves the agent can actually drive Chrome.
+      setNavStatus("busy");
+      const probe = await systemAPI.probeBrowserNavigate("http://127.0.0.1:9222").catch((e) => ({
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      }));
+      if (probe.ok) {
+        setNavStatus("ok");
+        log("✓ Real browser navigation works (Page.navigate → example.com).");
       } else {
-        toast.warning("Chrome is connected, but no browser skill is enabled in Ron", {
-          description: "Open Skills & Tools to enable one.",
-        });
+        setNavStatus("warn");
+        log(`⚠ CDP navigation probe failed: ${probe.error || "unknown"}`);
       }
+
+      invalidateCapabilityProbeCache();
+      toast.success("Local Chrome connected", {
+        description: probe.ok
+          ? "Real browser navigation verified. Send Ron a new message to use it."
+          : "Connected, but the navigation probe didn't complete. Open Diagnostics → Browser self-test for details.",
+      });
+      setShowSearchCta(true);
       onConfigured?.();
     } finally {
       setChromeBusy(false);
