@@ -973,6 +973,18 @@ export const hermesAPI = {
       'echo "[pip-bootstrap] using pip: $(command -v pip)"',
       'echo "[pip-bootstrap] pip version: $(pip --version)"',
     ].join('\n');
+    // The official installer aborts with "Directory exists but is not a git
+    // repository" if a previous attempt left a partial ~/.hermes/hermes-agent
+    // checkout (e.g. interrupted clone, or a stray folder). Clean it up so the
+    // installer can clone fresh — but ONLY when it's clearly not a real repo,
+    // so we never blow away a user's working clone.
+    const cleanupStaleCheckout = [
+      'HERMES_SRC="$HOME/.hermes/hermes-agent"',
+      'if [ -d "$HERMES_SRC" ] && [ ! -d "$HERMES_SRC/.git" ]; then',
+      '  echo "[install] removing stale non-repo directory at $HERMES_SRC (left from a previous failed install)"',
+      '  rm -rf "$HERMES_SRC"',
+      'fi',
+    ].join('\n');
     const dl = [
       'echo "[install] downloading installer script..."',
       `curl -fsSL ${INSTALL_SCRIPT} -o /tmp/hermes-install.sh`,
