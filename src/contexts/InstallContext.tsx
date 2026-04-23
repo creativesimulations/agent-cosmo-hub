@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 export type Mode = "choose" | "connect" | "install";
 export type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type InstallSource = "bundled" | "local";
 
 export interface OptionalFeature {
   id: string;
@@ -29,6 +30,13 @@ interface InstallContextValue {
   // Wizard step
   installStep: InstallStep;
   setInstallStep: (s: InstallStep) => void;
+
+  // Install source — "bundled" runs the official Hermes installer script,
+  // "local" pip-installs from a folder the user already has on disk.
+  installSource: InstallSource;
+  setInstallSource: (s: InstallSource) => void;
+  localAgentPath: string;
+  setLocalAgentPath: (p: string) => void;
 
   // Optional features
   selectedFeatures: string[];
@@ -80,6 +88,8 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
   const { markConnected, refresh: refreshConnection } = useAgentConnection();
   const [mode, setMode] = useState<Mode>("choose");
   const [installStep, setInstallStep] = useState<InstallStep>(0);
+  const [installSource, setInstallSource] = useState<InstallSource>("bundled");
+  const [localAgentPath, setLocalAgentPath] = useState<string>("");
 
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>(["voice", "messaging"]);
 
@@ -285,11 +295,17 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       setInstallProgress((prev) => Math.min(Math.max(prev, 92), 97));
     };
 
-    const extras = selectedFeatures.map((f) => OPTIONAL_FEATURES.find((o) => o.id === f)?.pipExtra).filter(Boolean);
-    const result = await systemAPI.installHermes(
-      extras.length > 0 ? (extras as string[]) : undefined,
-      handleOutput,
-    );
+    const extras = selectedFeatures.map((f) => OPTIONAL_FEATURES.find((o) => o.id === f)?.pipExtra).filter(Boolean) as string[];
+    const result = installSource === "local" && localAgentPath
+      ? await systemAPI.installHermesFromLocalFolder(
+          localAgentPath,
+          extras.length > 0 ? extras : undefined,
+          handleOutput,
+        )
+      : await systemAPI.installHermes(
+          extras.length > 0 ? extras : undefined,
+          handleOutput,
+        );
 
     // Flush any trailing partial line.
     if (buffered.trim() && installIdRef.current === myInstallId) {
@@ -332,7 +348,7 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       setInstallOutput((prev) => [...prev, ...lines]);
     }
     setInstalling(false);
-  }, [selectedFeatures, requestSudoPassword, markConnected, refreshConnection]);
+  }, [selectedFeatures, requestSudoPassword, markConnected, refreshConnection, installSource, localAgentPath]);
 
   const cancelInstall = useCallback(() => {
     installIdRef.current++;
@@ -439,6 +455,10 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
         setMode,
         installStep,
         setInstallStep,
+        installSource,
+        setInstallSource,
+        localAgentPath,
+        setLocalAgentPath,
         selectedFeatures,
         toggleFeature,
         installing,

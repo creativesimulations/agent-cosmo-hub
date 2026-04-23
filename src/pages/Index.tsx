@@ -18,6 +18,9 @@ import {
   Stethoscope,
   Settings2,
   XCircle,
+  FolderOpen,
+  HardDrive,
+  Package,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -63,6 +66,8 @@ const Index = () => {
   const {
     mode, setMode,
     installStep, setInstallStep,
+    installSource, setInstallSource,
+    localAgentPath, setLocalAgentPath,
     selectedFeatures, toggleFeature,
     installing, installComplete, installProgress, installOutput,
     handleInstallAgent, cancelInstall,
@@ -91,6 +96,22 @@ const Index = () => {
       markConnected("~/.hermes");
       navigate("/dashboard");
     }
+  };
+
+  const handlePickLocalAgent = async () => {
+    const res = await systemAPI.selectFolder({ title: "Select your agent folder" });
+    if (!res.success || res.canceled || !res.path) return;
+    setInstallSource("local");
+    setLocalAgentPath(res.path);
+    setMode("install");
+    setInstallStep(0);
+  };
+
+  const handleStartBundledInstall = () => {
+    setInstallSource("bundled");
+    setLocalAgentPath("");
+    setMode("install");
+    setInstallStep(0);
   };
 
   const handleSaveApiKey = async () => {
@@ -176,7 +197,7 @@ const Index = () => {
               </motion.p>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid sm:grid-cols-3 grid-cols-1 gap-4">
               <GlassCard
                 className="cursor-pointer hover:border-primary/30 transition-all group"
                 onClick={() => setMode("connect")}
@@ -187,22 +208,37 @@ const Index = () => {
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">Connect</h3>
                   <p className="text-sm text-muted-foreground">
-                    Connect to a running agent instance
+                    Detect an agent already installed at <code className="text-foreground text-xs">~/.hermes</code>
                   </p>
                 </div>
               </GlassCard>
 
               <GlassCard
                 className="cursor-pointer hover:border-accent/30 transition-all group"
-                onClick={() => setMode("install")}
+                onClick={handleStartBundledInstall}
               >
                 <div className="space-y-3">
                   <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center group-hover:bg-accent/20 transition-colors">
-                    <Download className="w-6 h-6 text-accent" />
+                    <Package className="w-6 h-6 text-accent" />
                   </div>
-                  <h3 className="text-lg font-semibold text-foreground">Install & Setup</h3>
+                  <h3 className="text-lg font-semibold text-foreground">Install Ronbot Agent</h3>
                   <p className="text-sm text-muted-foreground">
-                    Full automated agent installation
+                    Download and install the bundled Ronbot agent
+                  </p>
+                </div>
+              </GlassCard>
+
+              <GlassCard
+                className="cursor-pointer hover:border-primary/30 transition-all group"
+                onClick={handlePickLocalAgent}
+              >
+                <div className="space-y-3">
+                  <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+                    <FolderOpen className="w-6 h-6 text-primary" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-foreground">Use My Own Agent</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Pick a folder containing an agent you already have
                   </p>
                 </div>
               </GlassCard>
@@ -358,9 +394,37 @@ const Index = () => {
                       <span className="text-sm font-medium text-foreground">Install Agent</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      This will download and install the AI agent framework
+                      This will {installSource === "local" ? "install your local agent folder" : "download and install the Ronbot agent framework"}
                       {selectedFeatures.length > 0 && ` with ${selectedFeatures.map(f => OPTIONAL_FEATURES.find(o => o.id === f)?.label).filter(Boolean).join(", ")}`}.
                     </p>
+
+                    <div className="glass-subtle rounded-lg p-3 flex items-start gap-2 border border-white/5">
+                      {installSource === "local" ? (
+                        <>
+                          <HardDrive className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs text-foreground font-medium">Source: local folder</p>
+                            <p className="text-xs text-muted-foreground font-mono truncate">{localAgentPath || "(no folder selected)"}</p>
+                            {!installing && (
+                              <button
+                                onClick={handlePickLocalAgent}
+                                className="text-xs text-primary hover:underline mt-1"
+                              >
+                                Change folder
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <Package className="w-4 h-4 text-accent mt-0.5 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs text-foreground font-medium">Source: Ronbot bundled agent</p>
+                            <p className="text-xs text-muted-foreground">Downloaded from the official Ronbot repository</p>
+                          </div>
+                        </>
+                      )}
+                    </div>
 
                     {!installing && !installComplete && (
                       <InstallPreflight onReadyChange={setPreflightReady} />
@@ -401,20 +465,28 @@ const Index = () => {
                       </div>
                     )}
 
-                    {!installing && !installComplete && (
-                      <Button
-                        onClick={handleInstallAgent}
-                        disabled={!preflightReady}
-                        className="w-full gradient-primary text-primary-foreground disabled:opacity-50"
-                      >
-                        {!preflightReady
-                          ? "Insufficient resources"
-                          : installOutput.length > 0
-                          ? "Retry Installation"
-                          : "Install Agent"}
-                        {preflightReady && <ArrowRight className="w-4 h-4 ml-1" />}
-                      </Button>
-                    )}
+                    {!installing && !installComplete && (() => {
+                      const missingLocalPath = installSource === "local" && !localAgentPath;
+                      const disabled = !preflightReady || missingLocalPath;
+                      return (
+                        <Button
+                          onClick={handleInstallAgent}
+                          disabled={disabled}
+                          className="w-full gradient-primary text-primary-foreground disabled:opacity-50"
+                        >
+                          {!preflightReady
+                            ? "Insufficient resources"
+                            : missingLocalPath
+                            ? "Select a folder first"
+                            : installOutput.length > 0
+                            ? "Retry Installation"
+                            : installSource === "local"
+                            ? "Install From Folder"
+                            : "Install Agent"}
+                          {!disabled && <ArrowRight className="w-4 h-4 ml-1" />}
+                        </Button>
+                      );
+                    })()}
                   </div>
                 )}
 
