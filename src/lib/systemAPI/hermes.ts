@@ -1388,9 +1388,17 @@ export const hermesAPI = {
       // capture the new session id from the footer Hermes prints.
       // Drop `</dev/null` so stdin stays open and we can answer interactive
       // permission prompts via writeStreamStdin.
-      resumeId
-        ? `hermes chat --resume ${JSON.stringify(resumeId)} -q "$PROMPT" 2>&1`
-        : 'hermes chat -q "$PROMPT" 2>&1',
+      // Modern Hermes (per docs): `hermes chat -p "..."` for one-shot, with
+      // `--resume <id>` as a top-level flag. Older builds only know `-q` and
+      // accept `chat --resume <id>` — capability probe selects automatically.
+      await ensureHermesChatCaps();
+      (resumeId
+        ? (HERMES_CHAT_CAPS.supportsModern
+            ? `hermes --resume ${JSON.stringify(resumeId)} chat -p "$PROMPT"${HERMES_CHAT_CAPS.supportsNoColor ? ' --no-color' : ''} 2>&1`
+            : `hermes chat --resume ${JSON.stringify(resumeId)} -q "$PROMPT" 2>&1`)
+        : (HERMES_CHAT_CAPS.supportsModern
+            ? `hermes chat -p "$PROMPT"${HERMES_CHAT_CAPS.supportsNoColor ? ' --no-color' : ''} 2>&1`
+            : 'hermes chat -q "$PROMPT" 2>&1')),
     ].join('\n');
 
     // Detect Hermes' interactive `Choice [o/s/a/D]:` permission prompts in
