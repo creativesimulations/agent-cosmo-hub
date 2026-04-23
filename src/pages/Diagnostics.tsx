@@ -387,7 +387,100 @@ const Diagnostics = () => {
         )}
       </GlassCard>
 
-      {/* Debug toggles */}
+      {/* Browser toolset chain — exists to debug "browser permission error" replies. */}
+      <GlassCard className="p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <Globe className="w-4 h-4 text-primary" />
+            Browser toolset chain
+            <span className="text-[11px] font-normal text-muted-foreground">
+              (CDP → config.yaml → toolset → permission)
+            </span>
+          </h2>
+          <Button
+            onClick={handleRepairBrowser}
+            disabled={browserBusy || !browserDiag}
+            variant="ghost"
+            size="sm"
+          >
+            <Wrench className={cn("w-3 h-3 mr-1", browserBusy && "animate-pulse")} />
+            Repair browser config
+          </Button>
+        </div>
+
+        {!browserDiag ? (
+          <p className="text-xs text-muted-foreground">Loading browser diagnostics…</p>
+        ) : (
+          <ul className="text-xs space-y-1.5">
+            <li className="flex items-center gap-2">
+              {browserDiag.cdpUrl
+                ? <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
+                : <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />}
+              <span className="font-mono">cdp_url:</span>
+              <span className={cn("font-mono", browserDiag.cdpUrl ? "text-foreground" : "text-destructive")}>
+                {browserDiag.cdpUrl ?? "not set — agent has no browser to drive"}
+              </span>
+            </li>
+            {browserDiag.cdpUrl && (
+              <li className="flex items-center gap-2">
+                {browserDiag.cdpReachable
+                  ? <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
+                  : <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />}
+                <span className="font-mono">CDP reachable:</span>
+                <span className={cn(browserDiag.cdpReachable ? "text-foreground" : "text-destructive")}>
+                  {browserDiag.cdpReachable
+                    ? `yes${browserDiag.cdpVersion ? ` (${browserDiag.cdpVersion})` : ""}`
+                    : "no — start Chrome from Skills → Browser, or open it on port 9222"}
+                </span>
+              </li>
+            )}
+            <li className="flex items-center gap-2">
+              {browserDiag.browserEnabledInConfig
+                ? <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
+                : <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />}
+              <span className="font-mono">browser.enabled in config.yaml:</span>
+              <span className={cn(browserDiag.browserEnabledInConfig ? "text-foreground" : "text-destructive")}>
+                {browserDiag.browserEnabledInConfig ? "true" : "missing — click Repair"}
+              </span>
+            </li>
+            <li className="flex items-center gap-2">
+              {browserDiag.hermesWebToolsetLoaded
+                ? <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
+                : <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />}
+              <span className="font-mono">hermes-web toolset loaded:</span>
+              <span className={cn(browserDiag.hermesWebToolsetLoaded ? "text-foreground" : "text-destructive")}>
+                {browserDiag.hermesWebToolsetLoaded
+                  ? "yes (browser_navigate / browser_click registered)"
+                  : "no — agent has no browser tools; click Repair"}
+              </span>
+            </li>
+            <li className="flex items-center gap-2">
+              {browserDiag.internetPermission === "allow"
+                ? <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
+                : <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />}
+              <span className="font-mono">internet permission:</span>
+              <span className={cn(
+                browserDiag.internetPermission === "allow" ? "text-foreground" : "text-destructive",
+              )}>
+                {browserDiag.internetPermission ?? "not synced"}
+                {browserDiag.internetPermission && browserDiag.internetPermission !== "allow" &&
+                  " — set to 'allow' in Settings → Permissions and re-sync"}
+              </span>
+            </li>
+          </ul>
+        )}
+
+        {browserDiag?.rawBrowserBlock && (
+          <details className="text-[11px] text-muted-foreground">
+            <summary className="cursor-pointer">Show raw browser block</summary>
+            <pre className="mt-1 p-2 rounded bg-background/40 border border-white/5 font-mono whitespace-pre-wrap">
+              {browserDiag.rawBrowserBlock}
+              {browserDiag.rawToolsetsBlock ? "\n\n" + browserDiag.rawToolsetsBlock : ""}
+            </pre>
+          </details>
+        )}
+      </GlassCard>
+
       <GlassCard className="p-4 space-y-3">
         <h2 className="text-sm font-semibold">Debug toggles</h2>
         <div className="flex items-center justify-between gap-3">
