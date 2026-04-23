@@ -191,6 +191,10 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     setHealthStatus("idle");
     setChromeStatus("idle");
     setCdpStatus("idle");
+    setNavStatus("idle");
+    setShowSearchCta(false);
+    setTavilyKey("");
+    setExaKey("");
     void refreshUnlocks();
   }, [open]);
 
