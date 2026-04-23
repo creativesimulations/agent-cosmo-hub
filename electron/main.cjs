@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, safeStorage, Tray, Menu, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage, Tray, Menu, nativeImage, shell, dialog } = require('electron');
 const path = require('path');
 const { exec, spawn } = require('child_process');
 const fs = require('fs');
@@ -570,7 +570,41 @@ ipcMain.handle('reveal-in-folder', async (_event, targetPath) => {
   }
 });
 
-// ─── Secrets storage ──────────────────────────────────────────
+// Open the OS-native folder picker (macOS NSOpenPanel, Windows shell folder
+// browser, Linux GTK/Qt dialog via Electron). Returns the selected absolute
+// path or { canceled: true } if the user dismissed the dialog. The picker
+// is rooted at the user's home directory by default. We collapse the result
+// back to a `~`-prefixed path when it lives under $HOME so it stays portable
+// across machines and matches how we display other allow/block list entries.
+ipcMain.handle('select-folder', async (_event, options = {}) => {
+  try {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    const defaultPath = options.defaultPath || os.homedir();
+    const result = win
+      ? await dialog.showOpenDialog(win, {
+          title: options.title || 'Select a folder',
+          defaultPath,
+          properties: ['openDirectory', 'createDirectory'],
+        })
+      : await dialog.showOpenDialog({
+          title: options.title || 'Select a folder',
+          defaultPath,
+          properties: ['openDirectory', 'createDirectory'],
+        });
+    if (result.canceled || !result.filePaths.length) {
+      return { success: true, canceled: true };
+    }
+    let chosen = result.filePaths[0];
+    const home = os.homedir();
+    // Collapse to ~ prefix when the choice lives under home — matches our
+    // other persisted paths and keeps things portable.
+    if (chosen === home) chosen = '~';
+    else if (chosen.startsWith(home + path.sep)) chosen = '~' + chosen.slice(home.length);
+    return { success: true, canceled: false, path: chosen };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
 // Three-tier storage with graceful degradation:
 //   1. OS keychain (keytar)        → preferred
 //   2. safeStorage encrypted file  → fallback
