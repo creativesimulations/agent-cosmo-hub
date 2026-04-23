@@ -88,6 +88,16 @@ export const systemAPI = {
   setBrowserCamofoxPersistence: hermesAPI.setBrowserCamofoxPersistence.bind(hermesAPI),
   setBrowserCdpUrl: hermesAPI.setBrowserCdpUrl.bind(hermesAPI),
   getBrowserDiagnostics: hermesAPI.getBrowserDiagnostics.bind(hermesAPI),
+  // Config repair + skill/tool intake
+  repairConfig: hermesAPI.repairConfig.bind(hermesAPI),
+  reloadToolsets: hermesAPI.reloadToolsets.bind(hermesAPI),
+  installSkillFromPath: hermesAPI.installSkillFromPath.bind(hermesAPI),
+  installSkillFromGit: hermesAPI.installSkillFromGit.bind(hermesAPI),
+  installToolFromPath: hermesAPI.installToolFromPath.bind(hermesAPI),
+  revealSkillsFolder: hermesAPI.revealSkillsFolder.bind(hermesAPI),
+  // Prereqs (extras)
+  checkRipgrep: prereqAPI.checkRipgrep.bind(prereqAPI),
+  installRipgrep: prereqAPI.installRipgrep.bind(prereqAPI),
 };
 
 export * as browserSetup from './browserSetup';

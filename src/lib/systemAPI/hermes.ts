@@ -518,7 +518,11 @@ const yamlList = (items: string[]): string => {
 };
 
 /** Write the current PermissionsConfig into ~/.hermes/config.yaml.
- *  Idempotent: only the managed block is touched. */
+ *  Idempotent: only the managed block is touched.
+ *
+ *  Includes the per-tool keys the official `hermes-cli` toolset honors:
+ *  browser, code_execution, delegation, cronjob, messaging, image_gen, tts —
+ *  in addition to the historical shell / file / internet / script keys. */
 export const writeHermesPermissions = async (
   perms: PermissionsConfig,
 ): Promise<{ success: boolean; error?: string }> => {
@@ -537,6 +541,13 @@ export const writeHermesPermissions = async (
     `  file_write_scope: ${perms.fileWriteScope}`,
     `  internet: ${perms.internet}`,
     `  script: ${perms.script}`,
+    `  browser: ${perms.browser ?? 'ask'}`,
+    `  code_execution: ${perms.codeExecution ?? 'ask'}`,
+    `  delegation: ${perms.delegation ?? 'allow'}`,
+    `  cronjob: ${perms.cronjob ?? 'ask'}`,
+    `  messaging: ${perms.messaging ?? 'ask'}`,
+    `  image_gen: ${perms.imageGen ?? 'allow'}`,
+    `  tts: ${perms.tts ?? 'allow'}`,
     `  default: ${perms.fallback}`,
     `  allowed_paths:${yamlList(perms.allowedFolders)}`,
     `  blocked_paths:${yamlList(perms.blockedFolders)}`,
@@ -606,16 +617,14 @@ interface BrowserBlockState {
   cdpUrl: string | null;
 }
 
-const BROWSER_DEFAULT_TOOLSETS = ['hermes-web'];
-const BROWSER_DEFAULT_ALLOWED_TOOLS = [
-  'browser',
-  'browser_navigate',
-  'browser_click',
-  'browser_type',
-  'browser_snapshot',
-  'browser_wait',
-  'web',
-];
+// Official Hermes platform toolset bundle. Loading `hermes-cli` natively
+// registers `web`, `browser`, `terminal`, `file`, `vision`, `image_gen`,
+// `tts`, `memory`, `todo`, `clarify`, `delegation`, `code_execution`,
+// `cronjob`, `skills`, `session_search`, `messaging`, etc. — i.e. the full
+// 36-tool bundle the docs describe. Previously we wrote `hermes-web`, which
+// is not a real toolset name and caused the agent to report "missing skill"
+// for every web/browser call.
+const BROWSER_DEFAULT_TOOLSETS = ['hermes-cli'];
 
 const quoteYamlScalar = (value: string): string => `"${value.replace(/"/g, '\\"')}"`;
 
@@ -649,15 +658,10 @@ const writeBrowserBlock = async (
   stripped = stripManagedBlock(stripped, TOOLSETS_BEGIN, TOOLSETS_END).replace(/\n+$/, '');
 
   const lines: string[] = [BROWSER_BEGIN, 'browser:'];
-  // CRITICAL: explicitly mark the browser subsystem as enabled. Without this
-  // some Hermes builds short-circuit `browser_*` tool calls with a "browser
-  // permission error" even when the toolset is loaded and the CDP url is set.
-  lines.push('  enabled: true');
-  lines.push('  allow_network: true');
-  lines.push('  tool_allowlist:');
-  for (const tool of BROWSER_DEFAULT_ALLOWED_TOOLS) {
-    lines.push(`    - ${quoteYamlScalar(tool)}`);
-  }
+  // Only emit keys that the documented Hermes browser schema understands.
+  // The previous `enabled` / `allow_network` / `tool_allowlist` keys were
+  // invented by us and were either ignored or actively blocked the agent's
+  // permission system — they are intentionally NOT written anymore.
   if (next.cdpUrl) {
     lines.push(`  cdp_url: "${next.cdpUrl}"`);
   }
@@ -665,11 +669,14 @@ const writeBrowserBlock = async (
     lines.push('  camofox:');
     lines.push('    managed_persistence: true');
   }
+  // If neither field is set, leave the block as a placeholder so later edits
+  // round-trip cleanly.
+  if (lines.length === 2) lines.push('  # (no overrides — using Hermes defaults)');
   lines.push(BROWSER_END);
 
-  // Toolsets: ensure hermes-web is present so browser_navigate / browser_click
-  // / etc. are actually registered with the agent. We only manage our own
-  // block; users can still add other toolsets elsewhere in the file.
+  // Toolsets: load the official `hermes-cli` platform bundle so web,
+  // browser, terminal, file, vision, image_gen, tts, etc. are all
+  // registered without the user needing extra setup.
   const toolsetLines = [
     TOOLSETS_BEGIN,
     'toolsets:',
@@ -783,7 +790,10 @@ export const hermesAPI = {
     const rawToolsetsBlock = tIdx !== -1 && tEnd !== -1
       ? yaml.slice(tIdx, tEnd + TOOLSETS_END.length)
       : null;
-    const hermesWebToolsetLoaded = /(^|\n)\s*-\s*hermes-web\b/.test(yaml);
+    // Look for the official toolset bundle. Accept the legacy `hermes-web`
+    // name too so freshly-repaired and not-yet-repaired installs both report.
+    const hermesWebToolsetLoaded =
+      /(^|\n)\s*-\s*hermes-cli\b/.test(yaml) || /(^|\n)\s*-\s*hermes-web\b/.test(yaml);
 
     // Internet permission (from managed perms block)
     const permsBlock = await readHermesPermissionsBlock();
@@ -1667,22 +1677,19 @@ the user is **${trimmed}**.
 model: ${options.model || 'openrouter/auto'}
 `;
     const configResult = await this.writeConfig(configYaml);
+    // Bootstrap a fresh agent with the official `hermes-cli` toolset already
+    // loaded so web/browser/terminal/file/etc. work immediately.
+    const initialYaml = `${configYaml}\n# ─── Managed by Ronbot: toolsets (do not edit) ───\ntoolsets:\n  - hermes-cli\n# ─── End Ronbot toolsets ───\n`;
+    await this.writeConfig(initialYaml).catch(() => undefined);
     if (configResult.success) {
-      await writeHermesPermissions({
-        shell: 'ask',
-        shellAllowReadOnly: true,
-        fileRead: 'allow',
-        fileReadScope: 'scoped',
-        fileWrite: 'ask',
-        fileWriteScope: 'scoped',
-        internet: 'allow',
-        script: 'ask',
-        allowedFolders: [],
-        blockedFolders: [],
-        fallback: 'ask',
-      }).catch(() => undefined);
+      // Use the up-to-date defaults so all per-tool keys are emitted.
+      const { DEFAULT_PERMISSIONS } = await import('../permissions');
+      await writeHermesPermissions(DEFAULT_PERMISSIONS).catch(() => undefined);
       await writeBrowserBlock({ camofoxPersistence: false, cdpUrl: null }).catch(() => undefined);
       await this.setSkillEnabled('browser', true).catch(() => undefined);
+      // Make sure shipped browser binaries are executable so the agent can
+      // actually call them (Errno 13 fix).
+      await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }).catch(() => undefined);
     }
 
     if (options.name && options.name.trim()) {
@@ -2156,5 +2163,206 @@ model: ${options.model || 'openrouter/auto'}
           reason: f.reason,
         })),
     };
+  },
+
+  /**
+   * One-shot config repair for installs broken by older versions of this app.
+   *
+   * - Rewrites the managed `toolsets:` block to the official `hermes-cli`.
+   * - Strips the bogus `browser.enabled` / `browser.allow_network` /
+   *   `browser.tool_allowlist` keys we used to write.
+   * - Re-chmods `node_modules/.bin/*` so `agent-browser` / `playwright` are
+   *   executable (Errno 13 fix).
+   * - Re-runs `hermes doctor` and reports the result.
+   */
+  async repairConfig(): Promise<{ success: boolean; doctorOutput: string; error?: string }> {
+    try {
+      // 1. Re-write toolsets + browser block (this picks up the new schema).
+      const cfg = await readHermesFile(HERMES_CONFIG);
+      const existing = cfg.success && cfg.content ? cfg.content : '';
+      const current = parseBrowserBlock(existing);
+
+      // Also surgically strip any legacy `enabled:` / `allow_network:` /
+      // `tool_allowlist:` lines that might be sitting outside our managed
+      // block (left over from an older config).
+      let cleaned = existing
+        .replace(/^\s*enabled:\s*true\s*$/gim, '')
+        .replace(/^\s*allow_network:\s*true\s*$/gim, '')
+        .replace(/^\s*tool_allowlist:[\s\S]*?(?=\n\S|\n#|$)/gim, '');
+      if (cleaned !== existing) {
+        await writeHermesFile(HERMES_CONFIG, cleaned, '600').catch(() => undefined);
+      }
+
+      const browserResult = await writeBrowserBlock(current);
+      if (!browserResult.success) {
+        return { success: false, doctorOutput: '', error: browserResult.error };
+      }
+
+      // 2. Fix executable permissions on shipped binaries.
+      await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }).catch(() => undefined);
+
+      // 3. Run doctor to verify.
+      const doc = await this.doctor();
+      return {
+        success: doc.success,
+        doctorOutput: doc.stdout || doc.stderr || '(no output)',
+      };
+    } catch (e) {
+      return { success: false, doctorOutput: '', error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+
+  /** Reload toolsets without restarting the agent (best-effort). */
+  async reloadToolsets(): Promise<CommandResult> {
+    return runHermesCli('hermes toolsets reload 2>/dev/null || hermes reload 2>/dev/null || echo "Toolsets will reload on next agent start"');
+  },
+
+  /**
+   * Install a Hermes skill from a local folder. Copies `srcPath` to
+   * `~/.hermes/skills/<basename>/`, validates a manifest exists, fixes
+   * executable permissions, and enables the skill in config.yaml.
+   */
+  async installSkillFromPath(srcPath: string): Promise<{
+    success: boolean;
+    skillName?: string;
+    hasManifest?: boolean;
+    requiredSecrets?: string[];
+    error?: string;
+  }> {
+    if (!srcPath || !srcPath.trim()) {
+      return { success: false, error: 'No source path provided' };
+    }
+    const platform = await coreAPI.getPlatform();
+    const wslSrc = platform.isWindows ? toWslMountedPath(srcPath) ?? srcPath : srcPath;
+    const escaped = wslSrc.replace(/"/g, '\\"');
+    const script = [
+      'set -e',
+      `SRC="${escaped}"`,
+      '[ -d "$SRC" ] || { echo "ERR_NOT_DIR" >&2; exit 2; }',
+      'NAME="$(basename "$SRC")"',
+      'DEST="$HOME/.hermes/skills/$NAME"',
+      'mkdir -p "$HOME/.hermes/skills"',
+      'rm -rf "$DEST"',
+      'cp -R "$SRC" "$DEST"',
+      'find "$DEST" -type f \\( -name "*.sh" -o -name "*.py" \\) -exec chmod +x {} + 2>/dev/null || true',
+      // Validation
+      'HAS_MANIFEST=0',
+      'for f in manifest.yaml skill.yaml SKILL.md skill.md __init__.py; do',
+      '  [ -f "$DEST/$f" ] && HAS_MANIFEST=1 && break',
+      'done',
+      'echo "NAME=$NAME"',
+      'echo "HAS_MANIFEST=$HAS_MANIFEST"',
+      // Best-effort secret extraction from manifest
+      'SECRETS=""',
+      'for f in "$DEST/manifest.yaml" "$DEST/skill.yaml"; do',
+      '  if [ -f "$f" ]; then',
+      '    SECRETS="$(grep -E "^\\s*-\\s*[A-Z][A-Z0-9_]+\\s*$" "$f" 2>/dev/null | sed -E "s/^\\s*-\\s*//" | tr "\\n" "," || true)"',
+      '    break',
+      '  fi',
+      'done',
+      'echo "SECRETS=$SECRETS"',
+    ].join('\n');
+    const r = await runHermesShell(script, { timeout: 60000 });
+    if (!r.success) {
+      return { success: false, error: r.stderr || r.stdout || 'Failed to install skill' };
+    }
+    const nameMatch = r.stdout.match(/NAME=(.+)/);
+    const manifestMatch = r.stdout.match(/HAS_MANIFEST=(\d)/);
+    const secretsMatch = r.stdout.match(/SECRETS=(.*)/);
+    const skillName = nameMatch?.[1].trim();
+    const hasManifest = manifestMatch?.[1] === '1';
+    const requiredSecrets = secretsMatch?.[1]
+      ? secretsMatch[1].split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    if (skillName) {
+      await this.setSkillEnabled(skillName, true).catch(() => undefined);
+    }
+    return { success: true, skillName, hasManifest, requiredSecrets };
+  },
+
+  /** Install a Hermes skill by cloning a Git URL into ~/.hermes/skills/. */
+  async installSkillFromGit(url: string): Promise<{
+    success: boolean;
+    skillName?: string;
+    hasManifest?: boolean;
+    requiredSecrets?: string[];
+    error?: string;
+  }> {
+    if (!url || !url.trim()) {
+      return { success: false, error: 'No Git URL provided' };
+    }
+    const escaped = url.replace(/"/g, '\\"');
+    const script = [
+      'set -e',
+      `URL="${escaped}"`,
+      'NAME="$(basename "$URL" .git)"',
+      'DEST="$HOME/.hermes/skills/$NAME"',
+      'mkdir -p "$HOME/.hermes/skills"',
+      'rm -rf "$DEST"',
+      'git clone --depth=1 "$URL" "$DEST" 2>&1',
+      'find "$DEST" -type f \\( -name "*.sh" -o -name "*.py" \\) -exec chmod +x {} + 2>/dev/null || true',
+      'HAS_MANIFEST=0',
+      'for f in manifest.yaml skill.yaml SKILL.md skill.md __init__.py; do',
+      '  [ -f "$DEST/$f" ] && HAS_MANIFEST=1 && break',
+      'done',
+      'echo "NAME=$NAME"',
+      'echo "HAS_MANIFEST=$HAS_MANIFEST"',
+    ].join('\n');
+    const r = await runHermesShell(script, { timeout: 120000 });
+    if (!r.success) {
+      return { success: false, error: r.stderr || r.stdout || 'Failed to clone skill' };
+    }
+    const nameMatch = r.stdout.match(/NAME=(.+)/);
+    const manifestMatch = r.stdout.match(/HAS_MANIFEST=(\d)/);
+    const skillName = nameMatch?.[1].trim();
+    const hasManifest = manifestMatch?.[1] === '1';
+    if (skillName) {
+      await this.setSkillEnabled(skillName, true).catch(() => undefined);
+    }
+    return { success: true, skillName, hasManifest, requiredSecrets: [] };
+  },
+
+  /** Install a Hermes tool from a local folder into ~/.hermes/tools/. */
+  async installToolFromPath(srcPath: string): Promise<{
+    success: boolean;
+    toolName?: string;
+    error?: string;
+  }> {
+    if (!srcPath || !srcPath.trim()) {
+      return { success: false, error: 'No source path provided' };
+    }
+    const platform = await coreAPI.getPlatform();
+    const wslSrc = platform.isWindows ? toWslMountedPath(srcPath) ?? srcPath : srcPath;
+    const escaped = wslSrc.replace(/"/g, '\\"');
+    const script = [
+      'set -e',
+      `SRC="${escaped}"`,
+      '[ -d "$SRC" ] || { echo "ERR_NOT_DIR" >&2; exit 2; }',
+      'NAME="$(basename "$SRC")"',
+      'DEST="$HOME/.hermes/tools/$NAME"',
+      'mkdir -p "$HOME/.hermes/tools"',
+      'rm -rf "$DEST"',
+      'cp -R "$SRC" "$DEST"',
+      'find "$DEST" -type f \\( -name "*.sh" -o -name "*.py" -o -name "*.js" \\) -exec chmod +x {} + 2>/dev/null || true',
+      'echo "NAME=$NAME"',
+    ].join('\n');
+    const r = await runHermesShell(script, { timeout: 60000 });
+    if (!r.success) {
+      return { success: false, error: r.stderr || r.stdout || 'Failed to install tool' };
+    }
+    const nameMatch = r.stdout.match(/NAME=(.+)/);
+    return { success: true, toolName: nameMatch?.[1].trim() };
+  },
+
+  /** Open the user's ~/.hermes/skills folder in the OS file manager. */
+  async revealSkillsFolder(): Promise<{ success: boolean; error?: string }> {
+    const platform = await coreAPI.getPlatform();
+    const cmd = platform.isWindows
+      ? 'explorer.exe "%USERPROFILE%\\.hermes\\skills"'
+      : platform.isMac
+      ? 'open "$HOME/.hermes/skills"'
+      : 'xdg-open "$HOME/.hermes/skills" 2>/dev/null || true';
+    const r = await coreAPI.runCommand(cmd, { timeout: 5000 });
+    return { success: r.success || true }; // file managers often return non-zero
   },
 };

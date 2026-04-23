@@ -51,15 +51,28 @@ for (const cap of BUILTIN_CAPABILITIES) {
 }
 // Common synonyms that don't appear in candidateSkills.
 Object.assign(TOOL_NAME_TO_CAP_ID, {
+  // Internet / web
   fetch_url: "internet",
   http_get: "internet",
   http_post: "internet",
   web_fetch: "internet",
-  browse_url: "internet",
+  web_extract: "internet",
+  web_search: "webSearch",
+  browse_url: "webBrowser",
+  // Browser automation (hermes-cli)
+  browser_navigate: "webBrowser",
+  browser_click: "webBrowser",
+  browser_type: "webBrowser",
+  browser_snapshot: "webBrowser",
+  browser_screenshot: "webBrowser",
+  browser_wait: "webBrowser",
+  // Shell
   run_shell: "shell",
   exec_shell: "shell",
   bash_command: "shell",
   shell_command: "shell",
+  terminal: "shell",
+  // Files
   write_file: "fileWrite",
   create_file: "fileWrite",
   edit_file: "fileWrite",
@@ -68,17 +81,29 @@ Object.assign(TOOL_NAME_TO_CAP_ID, {
   read_file: "fileRead",
   view_file: "fileRead",
   cat_file: "fileRead",
+  // Scripts / code execution
   run_python: "script",
   run_node: "script",
   execute_script: "script",
+  code_execution: "script",
+  code_execution_run: "script",
+  // Messaging
   send_email: "email",
   send_message: "messaging",
   send_telegram: "messaging",
   send_discord: "messaging",
   send_slack: "messaging",
+  messaging_send: "messaging",
+  // Media
   generate_image: "imageGen",
+  image_gen_create: "imageGen",
   text_to_speech: "voice",
   speak: "voice",
+  tts_speak: "voice",
+  // Sub-agents / scheduling
+  delegation_spawn: "skill:delegation",
+  delegate_task: "skill:delegation",
+  cronjob_create: "skill:cronjob",
 });
 
 /**

@@ -116,7 +116,37 @@ export const prereqAPI = {
     return { installed: false };
   },
 
-  /** Check curl */
+  /** Check ripgrep (`rg`) — required by Hermes for fast in-repo search. */
+  async checkRipgrep(): Promise<{ installed: boolean; version?: string }> {
+    const result = await coreAPI.runCommand('rg --version');
+    if (result.success) {
+      const version = result.stdout.match(/(\d+\.\d+[\.\d]*)/);
+      return { installed: true, version: version?.[1] };
+    }
+    return { installed: false };
+  },
+
+  /** Install ripgrep using the platform's package manager. */
+  async installRipgrep(): Promise<CommandResult> {
+    const platform = await coreAPI.getPlatform();
+    if (platform.isWindows) {
+      return coreAPI.runCommand(
+        'winget install BurntSushi.ripgrep.MSVC --accept-package-agreements --accept-source-agreements',
+        { timeout: 300000 },
+      );
+    }
+    if (platform.isMac) {
+      return this._brewMissingResult('ripgrep');
+    }
+    return {
+      success: false,
+      stdout: '',
+      stderr:
+        'ripgrep install on Linux requires administrator access. Open a terminal and run:\n' +
+        '  sudo apt-get install -y ripgrep',
+      code: 1,
+    };
+  },
   async checkCurl(): Promise<{ installed: boolean; version?: string }> {
     const result = await coreAPI.runCommand('curl --version');
     if (result.success) {

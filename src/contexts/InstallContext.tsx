@@ -19,7 +19,7 @@ export const OPTIONAL_FEATURES: OptionalFeature[] = [
   { id: "voice", label: "Voice / TTS", description: "Enable text-to-speech voice messages (requires ffmpeg)", pipExtra: "voice" },
   { id: "messaging", label: "Messaging Gateways", description: "Telegram, Discord, and other messaging integrations", pipExtra: "messaging" },
   { id: "cron", label: "Scheduled Tasks", description: "Cron-based task scheduling and automation", pipExtra: "cron" },
-  { id: "web", label: "Web Interface", description: "Built-in web UI for the agent", pipExtra: "web" },
+  { id: "web", label: "Web tools (search + extract)", description: "Built-in web_search and web_extract — recommended; basic browsing works without a backend", pipExtra: "web" },
 ];
 
 interface InstallContextValue {
