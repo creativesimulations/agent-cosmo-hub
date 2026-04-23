@@ -155,6 +155,13 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   const [chromeDetail, setChromeDetail] = useState<string | undefined>();
   const [cdpStatus, setCdpStatus] = useState<StatusKind>("idle");
   const [chromeRunning, setChromeRunning] = useState(false);
+  const [navStatus, setNavStatus] = useState<StatusKind>("idle");
+
+  // ─── Post-config web-search backend CTA ────────────────────────
+  const [showSearchCta, setShowSearchCta] = useState(false);
+  const [tavilyKey, setTavilyKey] = useState("");
+  const [exaKey, setExaKey] = useState("");
+  const [searchSaving, setSearchSaving] = useState(false);
 
   const appendLog = (setter: React.Dispatch<React.SetStateAction<string[]>>) =>
     (line: string) =>
