@@ -1,83 +1,91 @@
 
 
-# Align system analysis, secret naming & chat structure with official Hermes docs
+# Fix browser skill detection + add real CDP probe + auto-suggest web-search backend
 
-## What's wrong today
+## Problems
 
-1. **Prerequisite scan checks the wrong things.** Per the official docs, the only hard prereqs are **Python 3.11+, Git, WSL2 on Windows**. The Hermes installer brings everything else (uv, ripgrep, ffmpeg, Node, build tools) in itself. Today we mark `curl` and `ripgrep` as **required** (they're not), and we still emit "missing pip" errors when the installer would install pip into its own venv anyway.
+1. **False "no browser skill installed".** Hermes' `browser` tool is a built-in shipped via the `hermes-cli` toolset (which our config.yaml already loads). It lives inside the Python package's `hermes_cli/tools/`, not in `~/.hermes/skills/` or `site-packages/hermes_agent/skills/` — so our `listSkills()` filesystem walk never sees it. The Browser Setup wizard then aborts even though `hermes doctor` clearly reports `✓ browser`.
 
-2. **Secret env-var names don't match the official Hermes vars.** A few important mismatches:
-   - We use `GEMINI_API_KEY` — the docs specify **`GOOGLE_API_KEY`** for Gemini.
-   - We're missing **`NOUS_API_KEY`** (Nous Portal — the project's first-party provider).
-   - We use `HUGGINGFACE_API_KEY` style — docs use **`HF_TOKEN`**.
-   - We're missing **`HERMES_MODEL`** override and **`OPENAI_BASE_URL`** / **`ANTHROPIC_BASE_URL`** for self-hosted/proxied providers.
-   - Our messaging vars now match docs (good — already fixed).
+2. **Deep web content blocked.** CDP/Camofox gives the agent a real Chromium to drive, but `web_search` / `web_extract` use HTTP-fetch backends (Tavily / Exa / Firecrawl). With none configured, the agent degrades to plain HTTP, which gets JS-blocked or returns 403s. The doctor already flags this as `⚠ web (missing EXA_API_KEY, PARALLEL_API_KEY, TAVILY_API_KEY, FIRECRAWL_API_KEY)`.
 
-3. **Chat call shape doesn't follow the documented Hermes interface.**
-   - Docs use **`hermes chat -p "<prompt>"`** for one-shot prompts, **`hermes --resume <id>`** at the top level (not `hermes chat --resume <id> -q`).
-   - We use `-q` (legacy) and `chat --resume` (legacy subcommand). Both still work on older builds but are being removed in current Hermes. Modern installs will return "unknown option `-q`".
-   - We don't pass `--no-color` / `--json` flags Hermes now offers for clean machine-readable output, so we hand-roll ANSI/box stripping that misses new chrome.
+3. **No end-to-end browser probe.** Today we only check `/json/version` on CDP. That confirms Chrome is listening, not that the agent can navigate. Failures only surface mid-chat.
 
-## Plan
+## Fix
 
-### 1. `src/lib/systemAPI/prereqs.ts` + `src/pages/PrerequisiteCheck.tsx` — make scan match docs
+### 1. `src/components/skills/BrowserSetupDialog.tsx` — replace skill walk with toolset check
 
-- **Required (block install):** `os`, `wsl2` (Windows only), `git`, `python3.11+`.
-- **Recommended (warn, don't block):** `ripgrep`, `curl`, `ffmpeg`.
-- **Auto-installed (info only, never block):** `pip`, `python-venv`, Node, `uv`.
-- Reorder UI into three labeled groups so users immediately see what they actually need vs. what Hermes handles.
-- Keep all install buttons; just change the `required` flag and the "all required met" gate so a missing `ripgrep` no longer blocks installation.
-- Add a **`hermes`** detection row at the top — if Hermes is already installed, the whole prereq screen collapses to a "✓ Hermes is already installed (vX.Y.Z)" banner with a "Re-scan" button.
+Rewrite `ensureBrowserSkillEnabled()`:
 
-### 2. `src/lib/secretPresets.ts` — align env-var names to docs
+- **Source of truth = `hermes doctor` output**, not `~/.hermes/skills/`. The doctor already prints `✓ browser` when the tool is loaded.
+- New flow:
+  1. Read `config.yaml` and confirm the managed `toolsets:` block contains `hermes-cli` (we write this on every backend save). If missing, write it now.
+  2. Check `getSkillsConfig().disabled` — only block if the user has *explicitly* disabled `browser` / `web_browser` in their skills config. In that case, re-enable it.
+  3. Otherwise treat the browser tool as present (it's bundled with `hermes-cli`).
+- Keep the user-skill auto-enable path as a fallback for installs that *do* ship `browser` as a skill folder, but never use it as the gate.
 
-Add / rename presets so what we store matches what `hermes` reads from `~/.hermes/.env`:
+Also rename the toast to `"Browser tool enabled"` instead of the misleading "no browser skill".
 
-| Current | Docs canonical | Action |
-|---|---|---|
-| `GEMINI_API_KEY` | `GOOGLE_API_KEY` | Rename, keep `GEMINI_API_KEY` as alias for back-compat (auto-mirror on save) |
-| — | `NOUS_API_KEY` | Add (Nous Portal) |
-| `HUGGINGFACE_API_KEY` | `HF_TOKEN` | Add `HF_TOKEN`; keep old as alias |
-| — | `HERMES_MODEL` | Add (overrides `model:` in config.yaml) |
-| — | `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`, `OPENROUTER_BASE_URL` | Add (for self-hosted/proxy setups) |
-| — | `OLLAMA_HOST`, `LMSTUDIO_BASE_URL` | Add (local LLM runtimes) |
+### 2. `src/lib/systemAPI/hermes.ts` — add `probeBrowserNavigate()`
 
-Add a small **alias mirror** in `secretsStore.set()`: when the user saves `GEMINI_API_KEY`, also write `GOOGLE_API_KEY` (and vice versa) so both old and new Hermes builds find it. Same for `HF_TOKEN` ↔ `HUGGINGFACE_API_KEY`.
+A real CDP round-trip the wizard runs after wiring `cdp_url`:
 
-### 3. `src/lib/systemAPI/hermes.ts` — modern `hermes chat` invocation
+```text
+1. GET <cdp>/json/new?about:blank   → opens a tab, returns its webSocketDebuggerUrl
+2. WS Page.navigate { url: "https://example.com" }
+3. WS Page.getResourceTree → assert frame.url contains "example.com"
+4. WS Target.closeTarget
+```
 
-- Replace `hermes chat -q "$PROMPT"` with **`hermes chat -p "$PROMPT" --no-color`**.
-- Replace `hermes chat --resume <id> -q ...` with **`hermes --resume <id> chat -p "..." --no-color`** (matches docs: resume is a top-level flag).
-- Add a **capability probe** that runs `hermes chat --help` once on first chat and caches whether `-p` and `--no-color` are supported. If the binary is older and only knows `-q`, fall back automatically — no user-visible failure when someone hasn't run `hermes update` yet.
-- Update the `--resume` regex to match both the new footer (`hermes --resume <id>`) and the legacy one (`hermes chat --resume <id>`).
-- After install, also run `hermes config check` (documented sanity command) and surface its output in the install summary.
+If steps 1-4 succeed → "✓ Real browser navigation works." If the WS handshake fails or `Page.navigate` errors → return the error verbatim. This proves the agent will actually be able to drive the browser, not just connect to the port.
 
-### 4. `src/contexts/InstallContext.tsx` — post-install verification matches docs
+### 3. `BrowserSetupDialog.tsx` — surface "web search backend" CTA
 
-After `hermes doctor` passes, run the documented post-install ping sequence:
-1. `hermes config check` — schema validation
-2. `hermes chat -p "ping" --no-color` — real round-trip
+After a successful CDP/Camofox setup, render a one-line panel:
 
-Report each as a separate green/red row in the install-complete screen.
+> "Browser is ready. To let Ron *find* pages (not just open known URLs), add a search backend."
+> [Add Tavily key (free tier)] [Add Exa key] [Skip — basic HTTP only]
 
-### 5. `src/pages/Diagnostics.tsx` — add "Recommended packages" panel
+Tavily has the most generous free tier and a paste-the-key UX, so it's the default suggestion. Saving the key writes `TAVILY_API_KEY` via the existing `secretsStore.set()` pipeline.
 
-Show non-blocking status for `ripgrep`, `ffmpeg`, `curl`, `node` with one-click install per platform, so users who skipped them at install time can add them later without re-running the wizard.
+### 4. `src/lib/systemAPI/hermes.ts` — `runBrowserSelfTest()` exposed via `systemAPI`
+
+Single entry point Diagnostics & install flow can both call:
+
+```text
+{
+  cdpReachable,        // existing
+  cdpVersion,
+  navigateOk,          // NEW — real Page.navigate succeeded
+  navigateError,
+  webSearchBackend,    // "tavily" | "exa" | "firecrawl" | null
+  hermesCliToolsetLoaded,
+  doctorReportsBrowser // grep `✓ browser` in cached `hermes doctor` output
+}
+```
+
+Diagnostics page gains a "Run browser self-test" button that runs this and prints the JSON.
+
+### 5. `src/contexts/InstallContext.tsx` — auto-run self-test after install
+
+After `chatPing` passes, also call `runBrowserSelfTest()` and report:
+- `✓ Browser tool registered (hermes-cli loaded)`
+- `⚠ No CDP backend configured — set up Camofox or local Chrome later if Ron needs deep web access`
+- (when CDP is set later) `✓ Real browser navigation works`
+
+This makes the issue impossible to miss on first run without forcing the user through browser setup during install.
 
 ## Files edited
 
-- `src/lib/systemAPI/prereqs.ts` — required/recommended split, `hermes` detection
-- `src/pages/PrerequisiteCheck.tsx` — three-group UI, gate only on truly required
-- `src/lib/secretPresets.ts` — `GOOGLE_API_KEY`, `NOUS_API_KEY`, `HF_TOKEN`, `HERMES_MODEL`, base URLs, local runtime hosts
-- `src/lib/systemAPI/secretsStore.ts` — alias mirroring on `set()`
-- `src/lib/systemAPI/hermes.ts` — `chat -p` / top-level `--resume`, capability probe, updated regex, `config check`
-- `src/contexts/InstallContext.tsx` — post-install `config check` + `chat -p ping` rows
-- `src/pages/Diagnostics.tsx` — recommended-packages panel
+- `src/components/skills/BrowserSetupDialog.tsx` — replace skill walk with toolset check; add post-config web-search CTA; remove false-positive abort
+- `src/lib/systemAPI/hermes.ts` — add `probeBrowserNavigate()` (raw CDP WebSocket), `runBrowserSelfTest()` aggregator
+- `src/lib/systemAPI/index.ts` — export `runBrowserSelfTest`
+- `src/pages/Diagnostics.tsx` — add "Run browser self-test" panel
+- `src/contexts/InstallContext.tsx` — append browser self-test to post-install verification
 
 ## Outcome
 
-- Prereq scan blocks install only on what Hermes docs actually require — no more false-positive "ripgrep missing → can't install" loops.
-- Secret names match the docs exactly, so a fresh agent picks up provider keys with zero manual `.env` editing. Old aliases keep working for users who saved the previous names.
-- Chat uses the documented `hermes chat -p` / `hermes --resume` interface, with automatic fallback to the legacy `-q` form on older binaries — no user-visible breakage during the transition.
-- Install completion explicitly verifies via `hermes doctor` + `hermes config check` + a real chat ping, catching every silent-failure path the docs warn about.
+- Camofox/CDP setup completes successfully in one click — no more bogus "no browser skill" abort, because we trust the `hermes-cli` toolset (which we already write).
+- After CDP wiring, the wizard runs a real `Page.navigate` round-trip and prints pass/fail, so users know immediately whether Ron can drive the browser.
+- Users get a clear, optional one-click path to add a web-search backend (Tavily) so Ron can *find* pages, not just open them — fixing the "deep content blocked" symptom.
+- Every fresh install runs the same self-test, so configuration drift surfaces in Diagnostics instead of mid-chat.
 
