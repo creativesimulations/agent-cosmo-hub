@@ -197,7 +197,7 @@ const Index = () => {
               </motion.p>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid sm:grid-cols-3 grid-cols-1 gap-4">
               <GlassCard
                 className="cursor-pointer hover:border-primary/30 transition-all group"
                 onClick={() => setMode("connect")}
@@ -208,22 +208,37 @@ const Index = () => {
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">Connect</h3>
                   <p className="text-sm text-muted-foreground">
-                    Connect to a running agent instance
+                    Detect an agent already installed at <code className="text-foreground text-xs">~/.hermes</code>
                   </p>
                 </div>
               </GlassCard>
 
               <GlassCard
                 className="cursor-pointer hover:border-accent/30 transition-all group"
-                onClick={() => setMode("install")}
+                onClick={handleStartBundledInstall}
               >
                 <div className="space-y-3">
                   <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center group-hover:bg-accent/20 transition-colors">
-                    <Download className="w-6 h-6 text-accent" />
+                    <Package className="w-6 h-6 text-accent" />
                   </div>
-                  <h3 className="text-lg font-semibold text-foreground">Install & Setup</h3>
+                  <h3 className="text-lg font-semibold text-foreground">Install Ronbot Agent</h3>
                   <p className="text-sm text-muted-foreground">
-                    Full automated agent installation
+                    Download and install the bundled Ronbot agent
+                  </p>
+                </div>
+              </GlassCard>
+
+              <GlassCard
+                className="cursor-pointer hover:border-primary/30 transition-all group"
+                onClick={handlePickLocalAgent}
+              >
+                <div className="space-y-3">
+                  <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+                    <FolderOpen className="w-6 h-6 text-primary" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-foreground">Use My Own Agent</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Pick a folder containing an agent you already have
                   </p>
                 </div>
               </GlassCard>
