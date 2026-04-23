@@ -596,6 +596,12 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             }
           }
 
+          // ── Tool-unavailable detection ──
+          // Independent of permissionMismatch — a single reply can hit both.
+          const toolUnavailable = result.success && !result.missingKey
+            ? detectToolUnavailable(reply)
+            : undefined;
+
           setMessages((prev) =>
             prev.map((m) =>
               m.id === item.placeholderId
@@ -613,6 +619,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     diagnostics: result.diagnostics,
                     materializeFailed: matFailed,
                     permissionMismatch,
+                    toolUnavailable,
                   }
                 : m,
             ),
