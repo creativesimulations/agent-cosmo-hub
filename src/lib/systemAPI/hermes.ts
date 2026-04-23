@@ -1589,7 +1589,7 @@ export const hermesAPI = {
     // keep the conversation context — without it every turn is a fresh
     // session and the agent has no memory of what we just said.
     const sessionIdMatch = (result.stdout || '').match(/hermes\s+--resume\s+([A-Za-z0-9_\-:.]+)/);
-    const sessionId = sessionIdMatch?.[1] || resumeId;
+    const sessionId = sessionIdMatch?.[1] || (sessionWasInvalid ? null : resumeId);
     const cleaned = (() => {
       const filtered = rawLines
         .filter((line) => {
