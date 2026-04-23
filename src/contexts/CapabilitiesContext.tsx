@@ -22,6 +22,7 @@ import {
 import { useSettings } from "./SettingsContext";
 import { usePermissions } from "./PermissionsContext";
 import { useAgentConnection } from "./AgentConnectionContext";
+import { capabilityProbe, type CapabilityProbeResult } from "@/lib/capabilityProbe";
 
 /**
  * CapabilitiesContext is the runtime façade for the Capability Registry.
