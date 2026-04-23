@@ -619,6 +619,12 @@ const BROWSER_DEFAULT_ALLOWED_TOOLS = [
 
 const quoteYamlScalar = (value: string): string => `"${value.replace(/"/g, '\\"')}"`;
 
+const BROWSER_EXECUTABLE_FIX_SCRIPT = [
+  'if [ -d "$HOME/.hermes/hermes-agent/node_modules/.bin" ]; then',
+  '  find "$HOME/.hermes/hermes-agent/node_modules/.bin" -maxdepth 1 -type f \\( -name "agent-browser" -o -name "playwright" -o -name "playwright-core" \\) -exec chmod +x {} + 2>/dev/null || true',
+  'fi',
+].join('\n');
+
 const parseBrowserBlock = (yaml: string): BrowserBlockState => {
   const startIdx = yaml.indexOf(BROWSER_BEGIN);
   const state: BrowserBlockState = { camofoxPersistence: false, cdpUrl: null };
@@ -710,6 +716,9 @@ export const setBrowserCdpUrl = async (
   const existing = cfg.success && cfg.content ? cfg.content : '';
   const current = parseBrowserBlock(existing);
   const result = await writeBrowserBlock({ ...current, cdpUrl: url });
+  if (result.success) {
+    await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }).catch(() => undefined);
+  }
   agentLogs.push({
     source: 'system',
     level: result.success ? 'info' : 'error',
