@@ -499,26 +499,71 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             setSessionId(result.sessionId);
           }
 
-          // Detect "agent claims it can't do X" while Ronbot says Allow,
-          // OR sub-agents spawned without a per-spawn approval prompt while
-          // Ronbot's setting was "Ask each time".
+          // ── Permission-mismatch detection ──
+          // Two failure modes we surface as inline warnings:
+          //  (a) Agent reported "I can't do X" while Ronbot is set to Allow
+          //      → permissions block didn't reach the agent.
+          //  (b) The agent performed X without a prompt while Ronbot is set
+          //      to Ask → agent ignored our `ask` and auto-allowed.
+          // Only one mismatch is shown per assistant message to keep the UI
+          // clean; pick the highest-priority hit.
           const perms = settingsRef.current.permissions;
           const lower = (reply || "").toLowerCase();
           let permissionMismatch: ChatMessage["permissionMismatch"];
-          if (perms.internet === "allow" && /(no internet|cannot access the internet|internet access (?:denied|blocked|disabled)|not (?:allowed|permitted) to (?:access|use) the (?:internet|web|network))/i.test(lower)) {
-            permissionMismatch = { kind: "internet", agentSetting: "Allow" };
-          } else if (perms.subAgent === "allow" && /(cannot (?:spawn|delegate)|sub[- ]?agent.*denied|delegation.*denied|not (?:allowed|permitted) to (?:spawn|delegate))/i.test(lower)) {
-            permissionMismatch = { kind: "subAgent", agentSetting: "Allow" };
-          } else if (perms.subAgent === "ask" && spawnedThisTurn > 0) {
-            // User wanted to be asked per sub-agent spawn but the agent ran
-            // them without a prompt — Hermes' permission engine probably
-            // doesn't recognize the `subagent:` key in our managed YAML, so
-            // it auto-allowed. Surface this so they're not surprised.
+
+          // ── (a) Denial-while-Allow patterns ──
+          const denyPatterns: Array<{
+            kind: "internet" | "subAgent" | "shell" | "fileWrite" | "fileRead" | "script";
+            check: typeof perms.shell;
+            re: RegExp;
+          }> = [
+            { kind: "internet",  check: perms.internet,  re: /(no internet|cannot access the internet|internet access (?:denied|blocked|disabled)|not (?:allowed|permitted) to (?:access|use) the (?:internet|web|network))/i },
+            { kind: "subAgent",  check: perms.subAgent,  re: /(cannot (?:spawn|delegate)|sub[- ]?agent.*denied|delegation.*denied|not (?:allowed|permitted) to (?:spawn|delegate))/i },
+            { kind: "shell",     check: perms.shell,     re: /(cannot (?:run|execute) (?:the )?(?:shell|command)|shell (?:access|command).*denied|not (?:allowed|permitted) to (?:run|execute) (?:shell|commands))/i },
+            { kind: "fileWrite", check: perms.fileWrite, re: /(cannot (?:write|create|edit|modify) (?:the )?file|file write.*denied|not (?:allowed|permitted) to (?:write|create|modify) files)/i },
+            { kind: "fileRead",  check: perms.fileRead,  re: /(cannot (?:read|open|view) (?:the )?file|file read.*denied|not (?:allowed|permitted) to (?:read|open) files)/i },
+            { kind: "script",    check: perms.script,    re: /(cannot (?:run|execute) (?:the )?script|script execution.*denied|not (?:allowed|permitted) to (?:run|execute) scripts)/i },
+          ];
+          for (const p of denyPatterns) {
+            if (p.check === "allow" && p.re.test(lower)) {
+              permissionMismatch = { kind: p.kind, agentSetting: "Allow" };
+              break;
+            }
+          }
+
+          // ── (b) Ask-was-bypassed patterns ──
+          // Only flag when the user set `ask`, we observed activity, AND no
+          // approval prompt appeared in the stream this turn.
+          if (!permissionMismatch && perms.subAgent === "ask" && spawnedThisTurn > 0 && approvalPromptSeen === 0) {
             permissionMismatch = {
               kind: "subAgentNoPrompt",
               agentSetting: "Ask each time",
               detail: `${spawnedThisTurn} sub-agent${spawnedThisTurn === 1 ? "" : "s"} ran without prompting.`,
             };
+          }
+          if (!permissionMismatch && approvalPromptSeen === 0) {
+            const askChecks: Array<{
+              kind: "shellNoPrompt" | "fileWriteNoPrompt" | "fileReadNoPrompt" | "internetNoPrompt" | "scriptNoPrompt";
+              check: typeof perms.shell;
+              count: number;
+              label: string;
+            }> = [
+              { kind: "shellNoPrompt",     check: perms.shell,     count: activityThisTurn.shell,     label: "Shell command" },
+              { kind: "fileWriteNoPrompt", check: perms.fileWrite, count: activityThisTurn.fileWrite, label: "File write" },
+              { kind: "internetNoPrompt",  check: perms.internet,  count: activityThisTurn.internet,  label: "Internet access" },
+              { kind: "scriptNoPrompt",    check: perms.script,    count: activityThisTurn.script,    label: "Script execution" },
+              { kind: "fileReadNoPrompt",  check: perms.fileRead,  count: activityThisTurn.fileRead,  label: "File read" },
+            ];
+            for (const a of askChecks) {
+              if (a.check === "ask" && a.count > 0) {
+                permissionMismatch = {
+                  kind: a.kind,
+                  agentSetting: "Ask each time",
+                  detail: `${a.label}: ${a.count} call${a.count === 1 ? "" : "s"} ran without prompting.`,
+                };
+                break;
+              }
+            }
           }
 
           setMessages((prev) =>
