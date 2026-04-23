@@ -85,6 +85,14 @@ const Skills = () => {
 
   const userCount = skills.filter((s) => s.source === "user").length;
   const bundledCount = skills.filter((s) => s.source === "bundled").length;
+  const needsSetup = useMemo(
+    () => skills.filter((s) => {
+      if (disabledSet.has(s.name)) return false;
+      const missing = (s.requiredSecrets ?? []).filter((k) => !secretKeys.has(k));
+      return missing.length > 0;
+    }),
+    [skills, disabledSet, secretKeys],
+  );
 
   const toggleExpand = (key: string) => {
     setExpanded((prev) => {
@@ -226,7 +234,45 @@ const Skills = () => {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      {needsSetup.length > 0 && (
+        <GlassCard className="border-warning/30 bg-warning/5">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-4 h-4 text-warning mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0 space-y-1.5">
+              <p className="text-sm font-medium text-foreground">
+                {needsSetup.length} skill{needsSetup.length === 1 ? "" : "s"} need
+                {needsSetup.length === 1 ? "s" : ""} an API key before {needsSetup.length === 1 ? "it" : "they"} can run
+              </p>
+              <p className="text-xs text-muted-foreground">
+                These skills are enabled but the secrets they require haven't been added yet.
+                The agent will fail or skip the skill until the missing keys are filled in.
+              </p>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {needsSetup.slice(0, 8).map((s) => (
+                  <button
+                    key={s.name}
+                    type="button"
+                    onClick={() => {
+                      setExpanded((prev) => new Set(prev).add(`${s.category}/${s.name}`));
+                      setQuery(s.name);
+                    }}
+                    className="text-[11px] font-mono px-2 py-0.5 rounded border border-warning/30 bg-warning/10 text-warning hover:bg-warning/20 transition-colors"
+                  >
+                    {s.name}
+                  </button>
+                ))}
+                {needsSetup.length > 8 && (
+                  <span className="text-[11px] text-muted-foreground self-center">
+                    +{needsSetup.length - 8} more
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-4">
         <GlassCard className="space-y-1">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Puzzle className="w-3.5 h-3.5" /> Total skills
@@ -246,6 +292,15 @@ const Skills = () => {
           </div>
           <p className="text-2xl font-bold text-foreground">{userCount}</p>
           <p className="text-[11px] text-muted-foreground/70">From ~/.hermes/skills/</p>
+        </GlassCard>
+        <GlassCard className="space-y-1">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <KeyRound className="w-3.5 h-3.5" /> Need setup
+          </div>
+          <p className={`text-2xl font-bold ${needsSetup.length > 0 ? "text-warning" : "text-foreground"}`}>
+            {needsSetup.length}
+          </p>
+          <p className="text-[11px] text-muted-foreground/70">Missing required secrets</p>
         </GlassCard>
       </div>
 

@@ -2,7 +2,7 @@ import { useRef, useEffect, useState } from "react";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { useChat } from "@/contexts/ChatContext";
 import { motion } from "framer-motion";
-import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw, Square, Clock, Network, ShieldAlert } from "lucide-react";
+import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw, Square, Clock, Network, ShieldAlert, Wrench } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -314,6 +314,51 @@ const AgentChat = () => {
                               onClick={() => { window.location.hash = "#/diagnostics"; }}
                             >
                               Open Diagnostics →
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {msg.toolUnavailable && (() => {
+                    const t = msg.toolUnavailable;
+                    const primarySecret = t.candidateSecrets[0];
+                    return (
+                      <div className="mt-2 p-2 rounded-md border border-primary/40 bg-primary/10 text-[11px] flex items-start gap-2">
+                        <Wrench className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
+                        <div className="space-y-1.5 min-w-0 flex-1">
+                          <p className="text-foreground/90">
+                            The agent reported that <span className="font-semibold">{t.label}</span> isn't
+                            available. {t.hint}
+                          </p>
+                          {t.candidateSecrets.length > 0 && (
+                            <p className="text-foreground/70">
+                              Looked-for keys:{" "}
+                              <span className="font-mono">{t.candidateSecrets.join(" / ")}</span>
+                            </p>
+                          )}
+                          {t.extrasPackage && (
+                            <p className="text-foreground/70">
+                              Extras package:{" "}
+                              <span className="font-mono">hermes-agent[{t.extrasPackage}]</span>
+                            </p>
+                          )}
+                          <div className="flex flex-wrap gap-3 pt-0.5">
+                            {primarySecret && (
+                              <button
+                                type="button"
+                                className="text-primary hover:underline"
+                                onClick={() => { window.location.hash = `#/secrets?addKey=${primarySecret}`; }}
+                              >
+                                Add {primarySecret} →
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="text-primary hover:underline"
+                              onClick={() => { window.location.hash = "#/skills"; }}
+                            >
+                              Open Skills →
                             </button>
                           </div>
                         </div>

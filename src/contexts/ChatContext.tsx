@@ -5,6 +5,7 @@ import { toast } from "@/hooks/use-toast";
 import { useSettings } from "./SettingsContext";
 import { handleAgentReplyArrived } from "@/lib/notify";
 import { liveSubAgents } from "@/lib/liveSubAgents";
+import { detectToolUnavailable, type ToolUnavailableHit } from "@/lib/toolUnavailable";
 
 /**
  * Chat is hoisted into a top-level context so:
@@ -86,6 +87,10 @@ export interface ChatMessage {
     agentSetting: string;
     detail?: string;
   };
+  /** Inline warning when the agent reported a tool/capability as unavailable
+   *  (browser tool, web search, image gen, etc.) — surfaces a one-click
+   *  diagnostic linking to the relevant Skills/Secrets entries. */
+  toolUnavailable?: ToolUnavailableHit;
 }
 
 interface QueueItem {
@@ -591,6 +596,12 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             }
           }
 
+          // ── Tool-unavailable detection ──
+          // Independent of permissionMismatch — a single reply can hit both.
+          const toolUnavailable = result.success && !result.missingKey
+            ? detectToolUnavailable(reply)
+            : undefined;
+
           setMessages((prev) =>
             prev.map((m) =>
               m.id === item.placeholderId
@@ -608,6 +619,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     diagnostics: result.diagnostics,
                     materializeFailed: matFailed,
                     permissionMismatch,
+                    toolUnavailable,
                   }
                 : m,
             ),
