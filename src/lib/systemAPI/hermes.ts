@@ -973,6 +973,18 @@ export const hermesAPI = {
       'echo "[pip-bootstrap] using pip: $(command -v pip)"',
       'echo "[pip-bootstrap] pip version: $(pip --version)"',
     ].join('\n');
+    // The official installer aborts with "Directory exists but is not a git
+    // repository" if a previous attempt left a partial ~/.hermes/hermes-agent
+    // checkout (e.g. interrupted clone, or a stray folder). Clean it up so the
+    // installer can clone fresh — but ONLY when it's clearly not a real repo,
+    // so we never blow away a user's working clone.
+    const cleanupStaleCheckout = [
+      'HERMES_SRC="$HOME/.hermes/hermes-agent"',
+      'if [ -d "$HERMES_SRC" ] && [ ! -d "$HERMES_SRC/.git" ]; then',
+      '  echo "[install] removing stale non-repo directory at $HERMES_SRC (left from a previous failed install)"',
+      '  rm -rf "$HERMES_SRC"',
+      'fi',
+    ].join('\n');
     const dl = [
       'echo "[install] downloading installer script..."',
       `curl -fsSL ${INSTALL_SCRIPT} -o /tmp/hermes-install.sh`,
@@ -994,7 +1006,7 @@ export const hermesAPI = {
       'fi',
     ].join('\n');
     // Use `set -e` so any failed step aborts immediately with a clear exit code.
-    const fullCmd = ['set -e', unattendedEnv, ensurePip, dl, runScript].join('\n');
+    const fullCmd = ['set -e', unattendedEnv, ensurePip, cleanupStaleCheckout, dl, runScript].join('\n');
 
     // Extras must install into the same venv, from the LOCAL CHECKOUT that
     // the official install script clones to ~/.hermes/hermes-agent.
