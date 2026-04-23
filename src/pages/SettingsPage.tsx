@@ -341,11 +341,7 @@ const SettingsPage = () => {
 
       {/* ─── Agent Identity ─────────────────────────────────────── */}
       {agentConnected ? (
-        <GlassCard className="p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <User className="w-5 h-5 text-primary" />
-            <h2 className="text-lg font-semibold text-foreground">Agent Identity</h2>
-          </div>
+        <SettingsSection icon={User} title="Agent Identity">
           <p className="text-sm text-muted-foreground">
             Give your agent a name. Stored in <code className="text-xs">~/.hermes/SOUL.md</code>.
           </p>
@@ -385,7 +381,7 @@ const SettingsPage = () => {
               </p>
             </div>
           )}
-        </GlassCard>
+        </SettingsSection>
       ) : (
         <GlassCard className="p-6 flex items-center gap-3 text-sm text-muted-foreground">
           <AlertCircle className="w-5 h-5 text-muted-foreground/60" />
