@@ -2255,6 +2255,33 @@ model: ${options.model || 'openrouter/auto'}
   },
 
   /**
+   * Run `hermes config check` (documented schema validation). Returns the
+   * raw output so the caller can show pass/fail in the install summary.
+   */
+  async configCheck(): Promise<CommandResult> {
+    return runHermesCli('hermes config check 2>&1 || hermes doctor 2>&1');
+  },
+
+  /**
+   * Send a single "ping" prompt and confirm we get any non-empty reply back.
+   * Used as the final post-install sanity check (catches "doctor green but
+   * provider auth wrong"). Uses modern `-p` flag automatically.
+   */
+  async chatPing(): Promise<{ success: boolean; reply: string; error?: string }> {
+    try {
+      const r = await this.chat('ping', undefined, undefined, undefined, 60000);
+      const reply = (r.reply || '').trim();
+      return {
+        success: !!reply && r.success !== false && !r.missingKey,
+        reply: reply.slice(0, 500),
+        error: r.missingKey ? `Missing API key: ${r.missingKey.envVar}` : (r.success ? undefined : r.stderr),
+      };
+    } catch (e) {
+      return { success: false, reply: '', error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+
+  /**
    * Install a Hermes skill from a local folder. Copies `srcPath` to
    * `~/.hermes/skills/<basename>/`, validates a manifest exists, fixes
    * executable permissions, and enables the skill in config.yaml.
