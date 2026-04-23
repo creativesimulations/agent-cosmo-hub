@@ -59,6 +59,8 @@ const Diagnostics = () => {
   const [permsBlock, setPermsBlock] = useState<string | null>(null);
   const [syncingPerms, setSyncingPerms] = useState(false);
   const [debugPrompts, setDebugPrompts] = useState<boolean>(isDebugPromptDetection());
+  const [browserDiag, setBrowserDiag] = useState<Awaited<ReturnType<typeof systemAPI.getBrowserDiagnostics>> | null>(null);
+  const [browserBusy, setBrowserBusy] = useState(false);
 
   useEffect(() => {
     const unsub = diagnostics.subscribe((all) => {
