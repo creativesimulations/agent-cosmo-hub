@@ -441,6 +441,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       invalidateCapabilityProbeCache();
       if (healthy) {
         toast.success("Camofox is running", { description: "Send Ron a new message — config is reloaded each turn." });
+        setShowSearchCta(true);
         onConfigured?.();
       } else {
         toast.warning("Camofox started but health check timed out", {
