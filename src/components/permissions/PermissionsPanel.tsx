@@ -274,12 +274,6 @@ const PermissionsPanel = () => {
           onChange={(v) => setPerms({ script: v })}
         />
         <PermRow
-          title={PERMISSION_LABELS.subAgent}
-          description="Spawn delegated sub-agents to handle sub-tasks in parallel."
-          value={perms.subAgent}
-          onChange={(v) => setPerms({ subAgent: v })}
-        />
-        <PermRow
           title="Default fallback"
           description="What to do when an action doesn't match any of the categories above."
           value={perms.fallback}
