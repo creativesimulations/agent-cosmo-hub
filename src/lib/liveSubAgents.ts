@@ -98,6 +98,17 @@ class LiveSubAgentStore {
     this.emit();
   }
 
+  /** Update the goal text for an existing entry. Used when the goal arrives
+   *  in the stream slightly after the spawn marker was detected. */
+  updateGoal(id: string, goal: string) {
+    const item = this.items.get(id);
+    if (!item) return;
+    const trimmed = goal.trim().slice(0, 400);
+    if (!trimmed) return;
+    item.goal = trimmed;
+    this.emit();
+  }
+
   clearAll() {
     this.items.clear();
     this.emit();
