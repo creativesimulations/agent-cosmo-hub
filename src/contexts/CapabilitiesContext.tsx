@@ -311,8 +311,9 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const refreshProbes = useCallback(async () => {
-    // Probe every web/media/communication capability so the sidebar badge
-    // reflects everything the user might want to set up.
+    // Probe every web/media/communication capability so probe data is
+    // available when something opens the decision dialog. The badge count
+    // below is much more conservative — see pendingDecisionsCount.
     const targets = Object.values(registry).filter(
       (c) => c.group === "web" || c.group === "media" || c.group === "communication",
     );
@@ -331,10 +332,24 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
     void refreshProbes();
   }, [refreshProbes, installedSkills, storedSecretKeys, agentConnected]);
 
-  const pendingDecisionsCount = useMemo(
-    () => Object.values(probeResults).filter((p) => !p.ready && p.reason !== "ready").length,
-    [probeResults],
-  );
+  // The sidebar badge should only nag for capabilities the user has
+  // actually shown intent to use — not every optional integration we
+  // know about (Telegram, ElevenLabs, Google Calendar, …). We count a
+  // capability iff:
+  //   - it's been used at least once this session (recentlyUsed), OR
+  //   - the user has set its policy to "allow" / "session" (explicit opt-in), OR
+  //   - it's "webBrowser" or "webSearch" (core web stack the doctor flags).
+  const pendingDecisionsCount = useMemo(() => {
+    const ALWAYS_NAG = new Set(["webBrowser", "webSearch"]);
+    return Object.values(probeResults).filter((p) => {
+      if (p.ready || p.reason === "ready") return false;
+      if (ALWAYS_NAG.has(p.capabilityId)) return true;
+      if (recentlyUsed[p.capabilityId]) return true;
+      const choice = policy[p.capabilityId];
+      if (choice === "allow" || choice === "session") return true;
+      return false;
+    }).length;
+  }, [probeResults, recentlyUsed, policy]);
 
   const value = useMemo(
     () => ({
