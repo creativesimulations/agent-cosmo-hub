@@ -179,6 +179,8 @@ export const coreAPI = {
     if (!entered) return { success: true, canceled: true };
     return { success: true, canceled: false, path: entered.trim() };
   },
+
+  async fileExists(path: string): Promise<boolean> {
     if (isElectron()) return window.electronAPI!.fileExists(path);
     return false;
   },
