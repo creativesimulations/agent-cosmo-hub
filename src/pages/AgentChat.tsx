@@ -125,7 +125,7 @@ const AgentChat = () => {
             {liveSubAgentCount > 0 && (
               <button
                 type="button"
-                onClick={() => { window.location.hash = "#/subagents"; }}
+                onClick={() => { window.location.hash = "#/agents"; }}
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/15 border border-accent/30 text-accent text-[11px] hover:bg-accent/25 transition-colors"
                 title="Click to open the Sub-agents tab"
               >
