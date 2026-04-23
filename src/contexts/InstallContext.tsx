@@ -407,11 +407,53 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       });
 
       flushBufferedLine();
+
+      // Post-doctor verification per Hermes docs:
+      //   1. `hermes config check` — schema validation
+      //   2. `hermes chat -p "ping"` — real round-trip
+      // Each is reported as a separate row so the user knows exactly what
+      // passed/failed.
+      let configOk = true;
+      let pingOk = true;
+      if (result.success) {
+        setDoctorOutput((prev) => [...prev, "", "── Post-install verification ─────────────────"]);
+        setDoctorProgress(94);
+        try {
+          const cfg = await systemAPI.configCheck();
+          configOk = !!cfg.success;
+          setDoctorOutput((prev) => [
+            ...prev,
+            configOk ? "✓ config check — schema valid" : `✗ config check failed (exit ${cfg.code ?? "?"})`,
+            ...(cfg.stdout || cfg.stderr || "").trim().split("\n").filter(Boolean).slice(0, 8).map((l) => `  ${l}`),
+          ]);
+        } catch (e) {
+          configOk = false;
+          setDoctorOutput((prev) => [...prev, `✗ config check crashed: ${e instanceof Error ? e.message : String(e)}`]);
+        }
+
+        setDoctorProgress(97);
+        try {
+          const ping = await systemAPI.chatPing();
+          pingOk = !!ping.success;
+          setDoctorOutput((prev) => [
+            ...prev,
+            pingOk
+              ? `✓ chat round-trip — agent replied (${ping.reply.length} chars)`
+              : `✗ chat round-trip failed${ping.error ? `: ${ping.error}` : ""}`,
+          ]);
+        } catch (e) {
+          pingOk = false;
+          setDoctorOutput((prev) => [...prev, `✗ chat round-trip crashed: ${e instanceof Error ? e.message : String(e)}`]);
+        }
+      }
+
       setDoctorProgress(100);
 
-      if (result.success) {
+      if (result.success && configOk && pingOk) {
         setDoctorPassed(true);
-        setDoctorOutput((prev) => [...prev, "✓ Diagnostics completed successfully."]);
+        setDoctorOutput((prev) => [...prev, "", "✓ All verification checks passed."]);
+      } else if (result.success) {
+        setDoctorOutput((prev) => [...prev, "", "⚠ Doctor passed but post-install verification found issues — see above."]);
       } else {
         setDoctorOutput((prev) => {
           const next = [...prev, `✗ Diagnostics failed${typeof result.code === "number" ? ` (exit code ${result.code})` : ""}.`];
