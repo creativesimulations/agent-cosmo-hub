@@ -4,6 +4,7 @@ import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
 import { useSettings } from "./SettingsContext";
 import { handleAgentReplyArrived } from "@/lib/notify";
+import { liveSubAgents } from "@/lib/liveSubAgents";
 
 /**
  * Chat is hoisted into a top-level context so:
