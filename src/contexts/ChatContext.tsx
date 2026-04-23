@@ -513,12 +513,11 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
 
           // ── (a) Denial-while-Allow patterns ──
           const denyPatterns: Array<{
-            kind: "internet" | "subAgent" | "shell" | "fileWrite" | "fileRead" | "script";
+            kind: "internet" | "shell" | "fileWrite" | "fileRead" | "script";
             check: typeof perms.shell;
             re: RegExp;
           }> = [
             { kind: "internet",  check: perms.internet,  re: /(no internet|cannot access the internet|internet access (?:denied|blocked|disabled)|not (?:allowed|permitted) to (?:access|use) the (?:internet|web|network))/i },
-            { kind: "subAgent",  check: perms.subAgent,  re: /(cannot (?:spawn|delegate)|sub[- ]?agent.*denied|delegation.*denied|not (?:allowed|permitted) to (?:spawn|delegate))/i },
             { kind: "shell",     check: perms.shell,     re: /(cannot (?:run|execute) (?:the )?(?:shell|command)|shell (?:access|command).*denied|not (?:allowed|permitted) to (?:run|execute) (?:shell|commands))/i },
             { kind: "fileWrite", check: perms.fileWrite, re: /(cannot (?:write|create|edit|modify) (?:the )?file|file write.*denied|not (?:allowed|permitted) to (?:write|create|modify) files)/i },
             { kind: "fileRead",  check: perms.fileRead,  re: /(cannot (?:read|open|view) (?:the )?file|file read.*denied|not (?:allowed|permitted) to (?:read|open) files)/i },
@@ -534,13 +533,8 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           // ── (b) Ask-was-bypassed patterns ──
           // Only flag when the user set `ask`, we observed activity, AND no
           // approval prompt appeared in the stream this turn.
-          if (!permissionMismatch && perms.subAgent === "ask" && spawnedThisTurn > 0 && approvalPromptSeen === 0) {
-            permissionMismatch = {
-              kind: "subAgentNoPrompt",
-              agentSetting: "Ask each time",
-              detail: `${spawnedThisTurn} sub-agent${spawnedThisTurn === 1 ? "" : "s"} ran without prompting.`,
-            };
-          }
+          // (Sub-agent spawns are no longer treated as a permission category —
+          // they're observed for live tracking only.)
           if (!permissionMismatch && approvalPromptSeen === 0) {
             const askChecks: Array<{
               kind: "shellNoPrompt" | "fileWriteNoPrompt" | "fileReadNoPrompt" | "internetNoPrompt" | "scriptNoPrompt";
