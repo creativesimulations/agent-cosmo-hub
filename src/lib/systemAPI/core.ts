@@ -168,6 +168,18 @@ export const coreAPI = {
     }
   },
 
+  async selectFolder(options?: { title?: string; defaultPath?: string }): Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }> {
+    if (isElectron() && window.electronAPI?.selectFolder) {
+      return window.electronAPI.selectFolder(options);
+    }
+    // Browser dev fallback — prompt for a path so the panel still functions.
+    const entered = typeof window !== 'undefined' && typeof window.prompt === 'function'
+      ? window.prompt(options?.title || 'Enter a folder path')
+      : null;
+    if (!entered) return { success: true, canceled: true };
+    return { success: true, canceled: false, path: entered.trim() };
+  },
+
   async fileExists(path: string): Promise<boolean> {
     if (isElectron()) return window.electronAPI!.fileExists(path);
     return false;

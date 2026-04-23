@@ -34,6 +34,7 @@ export const systemAPI = {
   setRunInBackground: coreAPI.setRunInBackground.bind(coreAPI),
   setAgentRunningState: coreAPI.setAgentRunningState.bind(coreAPI),
   quitApp: coreAPI.quitApp.bind(coreAPI),
+  selectFolder: coreAPI.selectFolder.bind(coreAPI),
 
   // Prerequisites
   detectOS: prereqAPI.detectOS.bind(prereqAPI),

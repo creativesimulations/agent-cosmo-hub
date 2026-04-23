@@ -65,8 +65,8 @@ export const DEFAULT_PERMISSIONS: PermissionsConfig = {
   internet: 'ask',
   script: 'ask',
   subAgent: 'ask',
-  allowedFolders: ['~/Documents', '~/Downloads', '~/Desktop'],
-  blockedFolders: ['~/.ssh', '~/.aws', '~/.config', '~/.gnupg', '~/.hermes'],
+  allowedFolders: [],
+  blockedFolders: [],
   fallback: 'ask',
 };
 
