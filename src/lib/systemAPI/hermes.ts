@@ -498,6 +498,8 @@ const LOG_BEGIN = '# ─── Managed by Ronbot: logging (do not edit) ──�
 const LOG_END = '# ─── End Ronbot logging ───';
 const BROWSER_BEGIN = '# ─── Managed by Ronbot: browser (do not edit) ───';
 const BROWSER_END = '# ─── End Ronbot browser ───';
+const TOOLSETS_BEGIN = '# ─── Managed by Ronbot: toolsets (do not edit) ───';
+const TOOLSETS_END = '# ─── End Ronbot toolsets ───';
 
 const stripManagedBlock = (yaml: string, begin: string, end: string): string => {
   const startIdx = yaml.indexOf(begin);
