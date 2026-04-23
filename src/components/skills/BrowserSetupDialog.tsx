@@ -194,6 +194,54 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     setStep("configure");
   };
 
+  /**
+   * After ANY backend is configured, the agent also needs a browser-class
+   * skill enabled, otherwise it has no tool to drive the backend with —
+   * which is exactly the "browser permission error" the agent reports.
+   * Tries the canonical names in order; first hit wins.
+   */
+  const ensureBrowserSkillEnabled = async (
+    log: (line: string) => void,
+  ): Promise<boolean> => {
+    try {
+      const res = await systemAPI.listSkills();
+      if (!res.success) {
+        log("⚠ Couldn't list installed skills — skipped auto-enable.");
+        return false;
+      }
+      const cfg = await systemAPI.getSkillsConfig();
+      const disabled = new Set((cfg.disabled || []).map((s) => s.toLowerCase()));
+      const candidates = ["browser", "web_browser", "browser_use", "playwright"];
+      const installed = res.skills.map((s) => s.name);
+      const installedLower = installed.map((s) => s.toLowerCase());
+      const matchIdx = installedLower.findIndex((s) => candidates.includes(s));
+      if (matchIdx === -1) {
+        log(`✗ Ron has no browser skill installed. Looked for: ${candidates.join(", ")}.`);
+        log("  Open Skills & Tools, add a browser skill, then re-run setup.");
+        toast.error("Ron has no browser skill installed", {
+          description: "Open Skills & Tools to add 'browser' or 'playwright', then re-run setup.",
+        });
+        return false;
+      }
+      const realName = installed[matchIdx];
+      const lower = installedLower[matchIdx];
+      if (!disabled.has(lower)) {
+        log(`✓ Browser skill "${realName}" is already enabled.`);
+        return true;
+      }
+      const enable = await systemAPI.setSkillEnabled(realName, true);
+      if (enable.success) {
+        log(`✓ Enabled browser skill "${realName}".`);
+        return true;
+      }
+      log(`✗ Failed to enable "${realName}": ${enable.error || "unknown error"}`);
+      return false;
+    } catch (e) {
+      log(`⚠ Skill auto-enable failed: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+  };
+
   const handleSaveSecrets = async (
     entries: Array<[string, string]>,
     successMsg: string,
