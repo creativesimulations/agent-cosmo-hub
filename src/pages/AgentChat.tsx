@@ -45,10 +45,32 @@ const AgentChat = () => {
   } = useChat();
   const input = draft;
   const setInput = setDraft;
+  const { settings } = useSettings();
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const didInitialScrollRef = useRef(false);
+  const [browserSetupOpen, setBrowserSetupOpen] = useState(false);
+  const [secretKeys, setSecretKeys] = useState<Set<string>>(new Set());
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  // Detect whether *any* browser backend is configured to drive the
+  // first-run banner. Re-checks when the dialog closes.
+  useEffect(() => {
+    if (!agentConnected) return;
+    let cancelled = false;
+    void secretsStore.list().then((r) => {
+      if (!cancelled) setSecretKeys(new Set(r.keys || []));
+    });
+    return () => { cancelled = true; };
+  }, [agentConnected, browserSetupOpen]);
+
+  const localChromeManual = settings.capabilityPolicy?.webBrowser === "allow"
+    && !["BROWSERBASE_API_KEY", "BROWSER_USE_API_KEY", "CAMOFOX_URL", "FIRECRAWL_API_KEY"]
+      .some((k) => secretKeys.has(k));
+  const showBrowserBanner = agentConnected
+    && !bannerDismissed
+    && !isAnyBackendConfigured(secretKeys, { localChromeManual });
 
   // On first mount, jump (no smooth) to the first unread message — or the
   // last message if everything is already read. After that initial jump,
