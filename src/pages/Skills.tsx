@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Puzzle, AlertCircle, CheckCircle2, Loader2, RefreshCw, Search, Package, Wrench,
-  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal, Globe,
+  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal, Globe, Plus,
 } from "lucide-react";
+import InstallSkillDialog from "@/components/skills/InstallSkillDialog";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +43,7 @@ const Skills = () => {
   const [focusCap, setFocusCap] = useState<string | null>(null);
   const [browserSetupOpen, setBrowserSetupOpen] = useState(false);
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
+  const [installOpen, setInstallOpen] = useState(false);
 
   // Read ?focus=<capId> from the URL — drives a scroll + highlight of any
   // skill rows whose names match the capability's candidate skill list.
@@ -216,6 +218,13 @@ const Skills = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => setInstallOpen(true)}
+            className="gradient-primary text-primary-foreground"
+          >
+            <Plus className="w-4 h-4 mr-1" /> Install skill
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="border-white/10">
@@ -530,6 +539,18 @@ const Skills = () => {
         onConfigured={() => {
           setBrowserRefreshKey((k) => k + 1);
           void load();
+        }}
+      />
+
+      <InstallSkillDialog
+        open={installOpen}
+        onOpenChange={setInstallOpen}
+        kind="skill"
+        onInstalled={({ missingSecrets }) => {
+          void load();
+          if (missingSecrets.length > 0) {
+            navigate(`/secrets?addKey=${missingSecrets[0]}`);
+          }
         }}
       />
     </div>
