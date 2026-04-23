@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Puzzle, AlertCircle, CheckCircle2, Loader2, RefreshCw, Search, Package, Wrench,
-  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal,
+  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal, Globe,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,8 @@ import {
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { systemAPI, secretsStore } from "@/lib/systemAPI";
 import { toast } from "sonner";
+import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
+import BrowserBackendBadge from "@/components/skills/BrowserBackendBadge";
 
 type Skill = {
   name: string;
@@ -38,6 +40,8 @@ const Skills = () => {
   const [secretKeys, setSecretKeys] = useState<Set<string>>(new Set());
   const [savingToggle, setSavingToggle] = useState<string | null>(null);
   const [focusCap, setFocusCap] = useState<string | null>(null);
+  const [browserSetupOpen, setBrowserSetupOpen] = useState(false);
+  const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
 
   // Read ?focus=<capId> from the URL — drives a scroll + highlight of any
   // skill rows whose names match the capability's candidate skill list.
