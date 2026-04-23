@@ -22,6 +22,7 @@ import NotificationCenter from "@/components/NotificationCenter";
 import ronbotLogo from "@/assets/ronbot-logo.png";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { useChat } from "@/contexts/ChatContext";
+import { useCapabilities } from "@/contexts/CapabilitiesContext";
 
 const navGroups = [
   {
@@ -39,7 +40,7 @@ const navGroups = [
     items: [
       { path: "/models", icon: Cpu, label: "LLM Config" },
       { path: "/secrets", icon: KeyRound, label: "Secrets" },
-      { path: "/skills", icon: Puzzle, label: "Skills & Tools" },
+      { path: "/skills", icon: Puzzle, label: "Skills & Tools", showCapabilityBadge: true },
     ],
   },
   {
