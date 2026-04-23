@@ -1,96 +1,108 @@
 
 
-# Browser backend selector for Ron — with Browserbase as a paid upgrade
+# Zero-CLI browser setup on Mac, Windows, and Linux
 
-Combines the three-backend setup wizard with the paid-unlock pattern already used by the Discord channel.
+The current `BrowserSetupDialog` shows shell snippets to copy. Replace every CLI step with an in-app Run button. Where elevation or a password is required, prompt inside the app and the app finishes the job.
 
-## What gets built
+## What changes for each backend
 
-### 1. Backend catalog (`src/lib/browserBackends.ts` — new)
-Typed registry of all backends with a `tier` field:
+### Browserbase (paid, cloud) — already CLI-free
+No change beyond UX polish. User pastes API key + Project ID, app saves to secrets, restarts agent. Done.
 
-| Backend | Tier | Required env | Notes |
+### Camofox (free, local) — fully automated
+Drop the docker/git copy-paste blocks. Replace with a single **"Install & start Camofox"** button that the app drives end-to-end on all three OSes.
+
+Strategy per platform (probed in this order, first available wins):
+
+1. **Docker present** (any OS) → app runs `docker run -d --name ronbot-camofox -p 9377:9377 --restart unless-stopped ghcr.io/jo-inc/camofox-browser:latest` and polls `http://localhost:9377/health` until ready. Container is reused on subsequent launches.
+2. **Docker missing**:
+   - **macOS**: app runs `brew install --cask docker` if Homebrew is present (no sudo). If Homebrew is missing, app downloads the Docker Desktop `.dmg` to `~/Downloads`, opens it via `open`, and shows a one-screen wait state ("Drag Docker to Applications, then click Continue"). After user clicks Continue, the app launches Docker Desktop (`open -a Docker`), polls until the daemon is up, then runs the container. Homebrew install itself is *not* attempted (requires sudo + xcode-select); we provide a single "Install Homebrew" button that runs the official installer through the existing `SudoPasswordDialog` so the user just types their password once.
+   - **Windows**: app runs `winget install --id Docker.DockerDesktop -e --accept-package-agreements --accept-source-agreements` (UAC consent prompt — no stored password). Then auto-starts Docker Desktop and waits for the daemon. Then runs the container.
+   - **Linux**: app uses the existing `sudoAPI.aptInstall(['docker.io'], password)` via `SudoPasswordDialog` to install Docker, runs `sudo systemctl enable --now docker` through the same channel, then `sudo usermod -aG docker $USER` so future runs need no sudo. Then runs the container.
+
+All output streams live into the dialog via `runCommandStream` (same pattern as the Hermes installer) so the user sees progress, not a frozen spinner. The persistent-sessions toggle keeps writing `browser.camofox.managed_persistence` via the existing `setBrowserCamofoxPersistence`.
+
+### Local Chrome (CDP) — fully automated
+Drop the `CopyBlock` with the launch command and the `hermes` / `/browser connect` block. Replace with **"Launch Chrome & connect"**:
+
+1. App detects Chrome's executable per OS (`/Applications/Google Chrome.app/...`, `C:\Program Files\Google\Chrome\Application\chrome.exe` + `Program Files (x86)` fallback, `which google-chrome|chromium|chrome`). If none found, app installs Chrome:
+   - **macOS**: `brew install --cask google-chrome` if brew present; otherwise download the official `.dmg` to `~/Downloads` and open it (same one-screen wait as Camofox/Docker).
+   - **Windows**: `winget install --id Google.Chrome -e --accept-package-agreements --accept-source-agreements` (UAC).
+   - **Linux**: `sudoAPI.aptInstall` via `SudoPasswordDialog` after fetching the `.deb` from `https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb` (or `dnf` on Fedora).
+2. App spawns Chrome with `--remote-debugging-port=9222 --user-data-dir=$HOME/.ronbot-chrome` via `runCommandStream` (background, not awaited).
+3. App polls `http://127.0.0.1:9222/json/version` until ready.
+4. App writes `browser.cdp_url: "http://127.0.0.1:9222"` to `~/.hermes/config.yaml` via a new `hermesAPI.setBrowserCdpUrl(url)` (same surgical-block pattern as `setBrowserCamofoxPersistence`) so Hermes auto-connects on next start — no `/browser connect` typed anywhere.
+5. App marks `capabilityPolicy.webBrowser = "allow"` and re-probes.
+
+A small **"Stop Chrome"** button appears once running, which kills the spawned process.
+
+### Browser Use / Firecrawl
+Already key-only. No change beyond the new UX wrapper.
+
+## Plumbing to add
+
+### `src/lib/systemAPI/hermes.ts`
+- `setBrowserCdpUrl(url: string | null)` — surgical update of a `browser.cdp_url` line, same managed-block pattern.
+
+### `src/lib/systemAPI/browserSetup.ts` (new)
+Pure orchestration, no UI:
+- `detectDocker()` → `{ installed, running }`
+- `installDocker(onOutput, sudoPassword?)` — per-OS; returns a `CommandResult`-shaped value.
+- `startDockerDaemon(onOutput)` — `open -a Docker` / `Start-Service docker` / `systemctl start docker` and poll.
+- `runCamofoxContainer(onOutput)` + `pollCamofox(timeoutMs)` → boolean.
+- `detectChrome()` → absolute path or null.
+- `installChrome(onOutput, sudoPassword?)` — per-OS.
+- `launchChromeWithCdp(chromePath, port, dataDir)` — uses `runCommandStream` so it survives until the user clicks Stop.
+- `pollCdp(port, timeoutMs)` → boolean.
+- `stopLaunchedChrome()` — kills the stream id we stored.
+
+All Linux apt/dpkg paths route through `sudoAPI` + the existing `SudoPasswordDialog` so the user is prompted **inside the app**, never in a terminal.
+
+### `src/components/skills/BrowserSetupDialog.tsx`
+- Delete `CopyBlock`, the `camofoxDockerSnippet`/`camofoxGitSnippet` UI, and the entire Local Chrome two-step copy UI.
+- Add a streaming log panel (`<pre>` with auto-scroll, capped at ~200 lines) used by the Camofox and Local Chrome flows.
+- Camofox panel: status row (`Docker: …`, `Container: …`, `Health: …`) + **Install & start Camofox** / **Restart container** / **Stop container** buttons.
+- Local Chrome panel: status row (`Chrome: …`, `CDP: …`) + **Launch Chrome & connect** / **Stop Chrome** buttons.
+- On every "needs sudo" return, dispatch the existing `requestSudoPassword` flow (lift the helper out of `InstallContext` into a small standalone hook `useSudoPrompt` so the browser dialog can reuse it without going through Install state) — when `pkexec`/passwordless is available we skip the dialog entirely, matching today's behavior.
+
+### `src/lib/browserBackends.ts`
+- Drop `camofoxDockerSnippet`, `camofoxGitSnippet`, `localChromeLaunchCommand` exports (no longer rendered).
+- `localChrome.surface` becomes `'local'` (no longer `'manual'`) and `manualOnly` flag removed — it's now fully automated.
+
+### `src/contexts/InstallContext.tsx`
+- Extract the `requestSudoPassword` + `<SudoPasswordDialog>` wiring into a generic `SudoPromptProvider` mounted in `AppLayout`, exposing `useSudoPrompt()`. `InstallContext` consumes the same hook so install behavior is unchanged.
+
+## Cross-platform guarantees
+
+| Step | macOS | Windows | Linux |
 |---|---|---|---|
-| Browserbase | **paid** (`upgradeId: 'browserbase'`) | `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` (+ optional stealth/proxy/keep-alive vars) | Cloud, strongest anti-bot |
-| Camofox | free | `CAMOFOX_URL` (default `http://localhost:9377`) + optional `managed_persistence` toggle | Local, self-hosted |
-| Local Chrome (CDP) | free | none stored — manual `/browser connect` | Uses user's own Chrome |
-| Browser Use | free | `BROWSER_USE_API_KEY` | Quick-add chip |
-| Firecrawl | free | `FIRECRAWL_API_KEY` | Quick-add chip |
+| Install Docker | `brew install --cask docker` or guided `.dmg` open | `winget` (UAC) | `sudoAPI.aptInstall` via in-app dialog |
+| Start Docker daemon | `open -a Docker` + poll | auto-start service + poll | `sudo systemctl start docker` via dialog |
+| Run Camofox container | `docker run …` (no sudo after group add) | `docker run …` | `docker run …` |
+| Install Chrome | `brew --cask` or guided `.dmg` | `winget` (UAC) | `apt`/`dnf` via dialog |
+| Launch Chrome w/ CDP | spawn via Electron | spawn via Electron | spawn via Electron |
+| Connect Hermes | `setBrowserCdpUrl` writes config | same | same |
 
-Plus `getActiveBrowserBackend(secretKeys)` following Hermes precedence (Browserbase → Browser Use → Camofox → Firecrawl → default).
-
-### 2. Browserbase added to upgrades catalog (`src/lib/licenses.ts`)
-Append a second `UPGRADES` entry:
-```ts
-{
-  id: 'browserbase',
-  name: 'Browserbase browser',
-  tagline: 'Strongest anti-bot — cloud browsers with stealth, proxies & CAPTCHA solving.',
-  description: 'Browserbase is a paid cloud browser service. This upgrade unlocks the in-app setup wizard so Ron can use Browserbase as its backend without touching a config file. Camofox and Local Chrome remain free.',
-  buyUrl: 'https://ronbot.com/upgrades/browserbase',
-  priceLabel: 'One-time · $29',
-}
-```
-Auto-renders on `/upgrades` via the existing loop.
-
-### 3. Shared license-key dialog (`src/components/upgrades/EnterLicenseKeyDialog.tsx` — new)
-Extract the key-entry dialog out of `UpgradeCard.tsx` so both the Upgrades page and the new browser wizard use one component. `UpgradeCard.tsx` updated to consume it (no UX change).
-
-### 4. Browser setup wizard (`src/components/skills/BrowserSetupDialog.tsx` — new)
-One dialog, multi-step:
-
-**Step 1 — Pick backend**
-- Three primary cards: Browserbase (with **Paid · $29** chip + lock icon if locked), Camofox (Free · Local), Local Chrome (Free · Advanced)
-- Secondary "quick add" chips: Browser Use, Firecrawl
-
-**Step 2 — Configure**
-- **Browserbase + locked** → mini paywall: *Buy ($29)* button (opens `buyUrl`) and *Enter key* button (opens shared `EnterLicenseKeyDialog`). On unlock, auto-advances to the API-key form.
-- **Browserbase + unlocked** → two inputs (API key + project ID) + "Get keys" link → save to secrets → "Restart Ron" toast.
-- **Camofox** → URL field (default `http://localhost:9377`) + persistent-sessions toggle (writes `browser.camofox.managed_persistence: true` via new `hermesAPI.setBrowserCamofoxPersistence`) + collapsible "How to run Camofox" with copyable docker/git commands.
-- **Local Chrome** → OS-detected launch command + "Open terminal" helper + marks capability as "manually configured" in `capabilityPolicy` so the probe stops nagging.
-
-After any successful save: invalidate `capabilityProbe` cache, re-run probe, close dialog.
-
-### 5. Active-backend badge (`src/components/skills/BrowserBackendBadge.tsx` — new)
-Small pill on the Web Browsing capability row: *Active: Browserbase* / *Camofox @ localhost:9377* / *Local Chrome (manual)* / *Default (no anti-bot)*. Includes "Switch backend" link that reopens the wizard.
-
-### 6. Entry points
-- **Skills page** (`src/pages/Skills.tsx`) — Web Browsing row gets **Set up browser** (replaces generic "Add key" when no backend configured) + the badge.
-- **Capability fix bubble** (`src/components/chat/CapabilityFixBubble.tsx`) — for `webBrowser` hits, primary CTA becomes "Set up browser" → opens wizard.
-- **First-run banner** (`src/pages/AgentChat.tsx`) — banner CTA opens the wizard directly.
-
-### 7. Probe + presets updates
-- `src/lib/capabilities.ts` — extend `webBrowser.candidateSecrets` with `BROWSER_USE_API_KEY`, `CAMOFOX_URL`. Add `webBrowserReadyVia(keys)` helper.
-- `src/lib/secretPresets.ts` — add presets for `BROWSERBASE_PROJECT_ID`, `BROWSER_USE_API_KEY`, `CAMOFOX_URL`, plus optional Browserbase tuning vars.
-- `src/lib/capabilityProbe.ts` — webBrowser branch returns `ready` when any backend env var is present (names the active backend in `message`); otherwise `noKey` with *"No browser backend configured. Click Set up browser to pick Browserbase, Camofox, or Local Chrome."*
-- `src/lib/systemAPI/hermes.ts` — add `setBrowserCamofoxPersistence(enabled: boolean)` that surgically updates the `browser.camofox.managed_persistence` block in `config.yaml` (same pattern as the permissions block).
+Any sudo password is collected through the existing `SudoPasswordDialog` and consumed by `sudoAPI` — nothing is ever stored, nothing is ever typed in a terminal.
 
 ## Files
 
 **New**
-- `src/lib/browserBackends.ts`
-- `src/components/skills/BrowserSetupDialog.tsx`
-- `src/components/skills/BrowserBackendBadge.tsx`
-- `src/components/upgrades/EnterLicenseKeyDialog.tsx`
+- `src/lib/systemAPI/browserSetup.ts` — orchestration helpers above.
+- `src/contexts/SudoPromptContext.tsx` — extracted from `InstallContext`; exposes `useSudoPrompt()`.
 
 **Edited**
-- `src/lib/licenses.ts` — add Browserbase upgrade
-- `src/lib/capabilities.ts` — extend webBrowser candidates + helper
-- `src/lib/secretPresets.ts` — new env-var presets
-- `src/lib/capabilityProbe.ts` — backend-aware readiness
-- `src/lib/systemAPI/hermes.ts` — Camofox config writer
-- `src/pages/Skills.tsx` — wizard entry + backend badge
-- `src/components/chat/CapabilityFixBubble.tsx` — "Set up browser" CTA
-- `src/pages/AgentChat.tsx` — first-run banner CTA opens wizard
-- `src/components/channels/UpgradeCard.tsx` — consume shared key dialog
+- `src/lib/systemAPI/hermes.ts` — `setBrowserCdpUrl`.
+- `src/lib/systemAPI/index.ts` — export new orchestration + `setBrowserCdpUrl`.
+- `src/lib/browserBackends.ts` — drop CLI snippets, retype `localChrome` as automated.
+- `src/components/skills/BrowserSetupDialog.tsx` — replace copy-blocks with action buttons + streaming log panels.
+- `src/contexts/InstallContext.tsx` — consume new sudo-prompt hook.
+- `src/components/layout/AppLayout.tsx` — mount `SudoPromptProvider`.
 
 **Untouched**
-- `src/pages/Upgrades.tsx`, all gating/probe/sidebar-badge logic, license verification.
+- Browserbase/Browser Use/Firecrawl save paths, license-unlock flow, capability probe, Skills page entry, sidebar/toast notices.
 
 ## Outcome
 
-- Three working browser options the user can pick from one screen.
-- Browserbase is gated by the same one-time license-key flow as the Discord channel — Camofox and Local Chrome stay free so there's always a no-cost path to working web access.
-- The Web Browsing row always shows which backend is active and offers a one-click switch.
-- The "permission error" dead end now ends in a button that fixes it.
+Every browser backend that involves *any* setup is now click-to-finish on macOS, Windows, and Linux. The user never opens a terminal. When elevation is required, it's collected via the same in-app password dialog already used for ffmpeg/python-venv installs, and the app drives the install to completion.
 
