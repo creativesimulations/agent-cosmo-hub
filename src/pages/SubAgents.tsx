@@ -382,7 +382,7 @@ const SubAgents = () => {
                         <p className="text-xs text-destructive/80 mt-1 break-words">{sa.reason}</p>
                       )}
                       <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
-                        <span>Failed {formatRelative(sa.failedAt)}</span>
+                        <span>Failed at {formatAbsolute(sa.failedAt)}</span>
                       </div>
                     </div>
                   </div>
@@ -419,7 +419,7 @@ const SubAgents = () => {
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-foreground break-words">{sa.goal}</p>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
-                        <span>Finished {formatRelative(sa.completedAt)}</span>
+                        <span>Finished at {formatAbsolute(sa.completedAt)}</span>
                         <span>Duration {formatDuration(sa.durationMs)}</span>
                       </div>
                     </div>
