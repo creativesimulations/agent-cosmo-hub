@@ -358,12 +358,24 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         try {
           const timeoutMs = Math.max(60, settingsRef.current.chatTimeoutSec || 600) * 1000;
 
-          // ── Live sub-agent tracking ──
-          // Watch the streamed Hermes output for sub-agent lifecycle markers
-          // and feed the in-memory store so the SubAgents tab stays useful
-          // even when ~/.hermes/logs/agent.log is disabled or hasn't flushed.
+          // ── Live activity tracking (all permission categories) ──
+          // Watch the streamed Hermes output for every permission-relevant
+          // tool call so we can: (1) feed the live SubAgents store, and
+          // (2) detect "ask"-set categories that ran without a prompt.
           let liveCount = 0;
           let spawnedThisTurn = 0;
+          // Per-category activity counters for this turn.
+          const activityThisTurn = {
+            shell: 0,
+            fileWrite: 0,
+            fileRead: 0,
+            internet: 0,
+            script: 0,
+          };
+          // Did Hermes actually emit an approval prompt this turn? If so, the
+          // user was asked at least once and we shouldn't flag a "no prompt"
+          // mismatch even when `ask` is set.
+          let approvalPromptSeen = 0;
           setLiveSubAgentCount(0);
           // Per-turn FIFO of live ids so we can pair up start → complete/fail.
           const turnLiveIds: string[] = [];
@@ -371,8 +383,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           // like a delegate_task tool call followed by its `task: "..."` arg.
           let streamBuf = "";
 
-          // Goal extraction: look for the most recent `task` / `goal`-style
-          // value in the buffer.
           const extractGoal = (buf: string): string => {
             const patterns: RegExp[] = [
               /delegate_task[\s\S]{0,400}?["']?(?:task|goal|prompt)["']?\s*[:=]\s*["']([^"']{3,300})["']/i,
@@ -386,9 +396,35 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             return "(no goal captured)";
           };
 
+          // Activity detectors — broad regexes that match the various ways
+          // Hermes (and its forks) name tool calls in streamed output.
+          const activityPatterns = {
+            shell: /\b(run_shell|shell\.run|exec_shell|bash_command|tool:\s*shell)\b/gi,
+            fileWrite: /\b(write_file|file\.write|create_file|edit_file|patch_file|append_file|tool:\s*write)\b/gi,
+            fileRead: /\b(read_file|file\.read|view_file|cat_file|tool:\s*read)\b/gi,
+            internet: /\b(fetch_url|http\.get|http\.post|web_fetch|web_search|browse_url|tool:\s*(?:fetch|browse|search))\b/gi,
+            script: /\b(run_python|run_node|run_script|execute_script|tool:\s*(?:python|node|script))\b/gi,
+          } as const;
+
           const onStream = (chunk: { type: string; data?: string }) => {
             if ((chunk.type !== "stdout" && chunk.type !== "stderr") || !chunk.data) return;
             streamBuf = (streamBuf + chunk.data).slice(-8000);
+
+            // Approval prompt sighting — anything that looks like Hermes
+            // asking us to choose o/s/a/d. We only need a rough hit count.
+            if (/Choice\s*\[\s*o\s*\/\s*s\s*\/\s*a/i.test(chunk.data) ||
+                /\[\s*o\s*\]\s*nce.*\[\s*s\s*\]\s*ession/i.test(chunk.data) ||
+                /Approve\??\s*\(\s*o\s*\/\s*s\s*\/\s*a/i.test(chunk.data) ||
+                /Permission\s+required/i.test(chunk.data) ||
+                /Awaiting\s+approval/i.test(chunk.data)) {
+              approvalPromptSeen += 1;
+            }
+
+            // Per-category activity counts.
+            for (const k of Object.keys(activityPatterns) as Array<keyof typeof activityPatterns>) {
+              const m = chunk.data.match(activityPatterns[k]);
+              if (m) activityThisTurn[k] += m.length;
+            }
 
             // Spawn detection — count distinct delegation events.
             const spawnRe = /\b(delegate_task|sub[-_ ]?agent\.start|spawn(?:ed)?\s+(?:sub[-_ ]?agent|child\s+agent))\b/gi;
