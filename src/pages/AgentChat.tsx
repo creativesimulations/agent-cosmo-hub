@@ -204,7 +204,29 @@ const AgentChat = () => {
         </div>
       </div>
 
-      <GlassCard className="flex-1 flex flex-col overflow-hidden p-0">
+      {showBrowserBanner && (
+        <div className="mb-3 p-3 rounded-lg border border-primary/30 bg-primary/5 flex items-start gap-3">
+          <Globe className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-foreground">Ron can't browse the web yet</p>
+            <p className="text-xs text-muted-foreground">
+              Pick a browser backend so Ron can actually load pages. Free options available.
+            </p>
+          </div>
+          <Button size="sm" onClick={() => setBrowserSetupOpen(true)} className="gradient-primary text-primary-foreground shrink-0">
+            Set up browser
+          </Button>
+          <button
+            type="button"
+            onClick={() => setBannerDismissed(true)}
+            className="text-muted-foreground hover:text-foreground p-1"
+            aria-label="Dismiss"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
         {!agentConnected ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center space-y-3">
