@@ -65,6 +65,7 @@ const AppSidebar = () => {
   const location = useLocation();
   const { connected, status } = useAgentConnection();
   const { unreadCount, isStreaming } = useChat();
+  const { pendingDecisionsCount } = useCapabilities();
 
   return (
     <aside className="w-[220px] h-screen sticky top-0 glass-strong flex flex-col border-r border-white/10 z-30">
@@ -92,6 +93,10 @@ const AppSidebar = () => {
               const isChatLink = item.path === "/chat";
               const showUnread = isChatLink && unreadCount > 0 && !isActive;
               const showWaiting = isChatLink && isStreaming && !showUnread;
+              const showCapBadge =
+                (item as { showCapabilityBadge?: boolean }).showCapabilityBadge &&
+                pendingDecisionsCount > 0 &&
+                !isActive;
               return (
                 <NavLink
                   key={item.path}
@@ -118,6 +123,15 @@ const AppSidebar = () => {
                       className="ml-auto w-2 h-2 rounded-full bg-warning animate-pulse"
                       aria-label="Agent is responding"
                     />
+                  )}
+                  {showCapBadge && (
+                    <span
+                      className="ml-auto flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-warning text-[10px] font-semibold text-warning-foreground shadow-[0_0_8px_hsl(var(--warning)/0.6)]"
+                      aria-label={`${pendingDecisionsCount} capabilit${pendingDecisionsCount === 1 ? "y needs" : "ies need"} setup`}
+                      title={`${pendingDecisionsCount} capabilit${pendingDecisionsCount === 1 ? "y needs" : "ies need"} setup`}
+                    >
+                      {pendingDecisionsCount > 9 ? "9+" : pendingDecisionsCount}
+                    </span>
                   )}
                 </NavLink>
               );
