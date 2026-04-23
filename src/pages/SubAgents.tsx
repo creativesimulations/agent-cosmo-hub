@@ -57,6 +57,21 @@ const formatRelative = (iso: string) => {
   return new Date(iso).toLocaleString();
 };
 
+/** Absolute clock time for finished work — doesn't change as time passes.
+ *  Shows "3:42 PM" for today, otherwise "Apr 22, 3:42 PM". */
+const formatAbsolute = (iso: string) => {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (sameDay) return time;
+  const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `${date}, ${time}`;
+};
+
 const SubAgents = () => {
   const { connected: agentConnected } = useAgentConnection();
   const { settings } = useSettings();
@@ -367,7 +382,7 @@ const SubAgents = () => {
                         <p className="text-xs text-destructive/80 mt-1 break-words">{sa.reason}</p>
                       )}
                       <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
-                        <span>Failed {formatRelative(sa.failedAt)}</span>
+                        <span>Failed at {formatAbsolute(sa.failedAt)}</span>
                       </div>
                     </div>
                   </div>
@@ -404,7 +419,7 @@ const SubAgents = () => {
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-foreground break-words">{sa.goal}</p>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
-                        <span>Finished {formatRelative(sa.completedAt)}</span>
+                        <span>Finished at {formatAbsolute(sa.completedAt)}</span>
                         <span>Duration {formatDuration(sa.durationMs)}</span>
                       </div>
                     </div>
