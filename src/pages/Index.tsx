@@ -465,20 +465,28 @@ const Index = () => {
                       </div>
                     )}
 
-                    {!installing && !installComplete && (
-                      <Button
-                        onClick={handleInstallAgent}
-                        disabled={!preflightReady}
-                        className="w-full gradient-primary text-primary-foreground disabled:opacity-50"
-                      >
-                        {!preflightReady
-                          ? "Insufficient resources"
-                          : installOutput.length > 0
-                          ? "Retry Installation"
-                          : "Install Agent"}
-                        {preflightReady && <ArrowRight className="w-4 h-4 ml-1" />}
-                      </Button>
-                    )}
+                    {!installing && !installComplete && (() => {
+                      const missingLocalPath = installSource === "local" && !localAgentPath;
+                      const disabled = !preflightReady || missingLocalPath;
+                      return (
+                        <Button
+                          onClick={handleInstallAgent}
+                          disabled={disabled}
+                          className="w-full gradient-primary text-primary-foreground disabled:opacity-50"
+                        >
+                          {!preflightReady
+                            ? "Insufficient resources"
+                            : missingLocalPath
+                            ? "Select a folder first"
+                            : installOutput.length > 0
+                            ? "Retry Installation"
+                            : installSource === "local"
+                            ? "Install From Folder"
+                            : "Install Agent"}
+                          {!disabled && <ArrowRight className="w-4 h-4 ml-1" />}
+                        </Button>
+                      );
+                    })()}
                   </div>
                 )}
 
