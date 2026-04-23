@@ -18,6 +18,9 @@ import {
   Stethoscope,
   Settings2,
   XCircle,
+  FolderOpen,
+  HardDrive,
+  Package,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -63,6 +66,8 @@ const Index = () => {
   const {
     mode, setMode,
     installStep, setInstallStep,
+    installSource, setInstallSource,
+    localAgentPath, setLocalAgentPath,
     selectedFeatures, toggleFeature,
     installing, installComplete, installProgress, installOutput,
     handleInstallAgent, cancelInstall,
