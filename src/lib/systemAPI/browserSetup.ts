@@ -420,31 +420,23 @@ export const launchChromeWithCdp = async (
     ? `"${chromePath}"`
     : `"${chromePath.replace(/"/g, '\\"')}"`;
 
+  // We use `runCommand` (not stream) with a short timeout. On macOS/Linux the
+  // `nohup … &` causes the parent shell to exit immediately so the child Chrome
+  // process is detached and the command returns in milliseconds. On Windows
+  // `cmd /c start ""` does the same. There's no long-running stream to track.
   const cmd = platform.isWindows
     ? `cmd /c start "" ${quotedPath} --remote-debugging-port=${port} --user-data-dir="${dataDir}" --no-first-run --no-default-browser-check`
-    : `bash -lc 'nohup ${quotedPath} --remote-debugging-port=${port} --user-data-dir="${dataDir}" --no-first-run --no-default-browser-check > /tmp/ronbot-chrome.log 2>&1 &'`;
+    : `bash -lc 'nohup ${quotedPath} --remote-debugging-port=${port} --user-data-dir="${dataDir}" --no-first-run --no-default-browser-check > /tmp/ronbot-chrome.log 2>&1 & disown'`;
 
   log(onOutput, `Launching Chrome with CDP on port ${port}…`);
-  // Fire-and-forget — Chrome runs detached.
-  const result = await coreAPI.runCommandStream(
-    cmd,
-    {
-      timeout: 15000,
-      onStreamId: (id) => {
-        launchedChromeStreamId = id;
-      },
-    },
-    onOutput,
-  );
+  const result = await coreAPI.runCommand(cmd, { timeout: 8000 });
+  if (result.stdout) log(onOutput, result.stdout);
+  if (result.stderr) log(onOutput, result.stderr, 'stderr');
   return result;
 };
 
 export const stopLaunchedChrome = async (onOutput?: StreamLogger): Promise<void> => {
   const platform = await coreAPI.getPlatform();
-  if (launchedChromeStreamId) {
-    await coreAPI.killStream(launchedChromeStreamId);
-    launchedChromeStreamId = null;
-  }
   // Best-effort kill of any Chrome we launched with our user-data-dir.
   if (platform.isWindows) {
     await coreAPI.runCommand(
@@ -460,6 +452,8 @@ export const stopLaunchedChrome = async (onOutput?: StreamLogger): Promise<void>
   log(onOutput, '✓ Chrome stopped.');
 };
 
-export const pollCdp = async (port: number, timeoutMs = 30000, onOutput?: StreamLogger): Promise<boolean> => {
+export const pollCdp = async (port: number, timeoutMs = 90000, onOutput?: StreamLogger): Promise<boolean> => {
+  // First-run launch with a fresh user-data-dir can take 30–60s while Chrome
+  // builds its profile, so we give the poll a generous window.
   return pollUrl(`http://127.0.0.1:${port}/json/version`, timeoutMs, onOutput);
 };
