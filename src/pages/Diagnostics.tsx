@@ -111,6 +111,28 @@ const Diagnostics = () => {
     } catch {
       setPermsBlock(null);
     }
+    try {
+      const diag = await systemAPI.getBrowserDiagnostics();
+      setBrowserDiag(diag);
+    } catch {
+      setBrowserDiag(null);
+    }
+  };
+
+  const handleRepairBrowser = async () => {
+    if (!browserDiag) return;
+    setBrowserBusy(true);
+    try {
+      // Re-write the browser block with current state — this picks up the
+      // latest format (enabled: true + managed toolsets: hermes-web).
+      await systemAPI.setBrowserCdpUrl(browserDiag.cdpUrl);
+      await refreshSummaries();
+      toast({ title: "Browser config repaired", description: "Re-wrote ~/.hermes/config.yaml with browser.enabled and hermes-web toolset." });
+    } catch (e) {
+      toast({ title: "Repair failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setBrowserBusy(false);
+    }
   };
 
 
