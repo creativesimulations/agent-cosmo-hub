@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
+import { useChat } from "@/contexts/ChatContext";
 import {
   Zap,
   Link2,
@@ -79,11 +81,22 @@ const Index = () => {
     doctorRunning, doctorOutput, doctorProgress, doctorPassed, runDoctor,
     launching, launchOutput, runLaunch,
   } = useInstall();
+  const { clearAll: clearChatHistory, startNewSession } = useChat();
 
   // Purely local UI state — fine to reset on remount
   const [connecting, setConnecting] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [preflightReady, setPreflightReady] = useState(false);
+
+  // Guard-screen state (shown when ~/.hermes already exists)
+  const [existingAgentName, setExistingAgentName] = useState<string | null>(null);
+  const [pendingSource, setPendingSource] = useState<"bundled" | "local">("bundled");
+  const [pendingLocalPath, setPendingLocalPath] = useState<string>("");
+  const [renameValue, setRenameValue] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetOutput, setResetOutput] = useState<string[]>([]);
 
   const navigate = useNavigate();
   const { refresh: refreshConnection, markConnected } = useAgentConnection();
@@ -98,20 +111,93 @@ const Index = () => {
     }
   };
 
-  const handlePickLocalAgent = async () => {
-    const res = await systemAPI.selectFolder({ title: "Select your agent folder" });
-    if (!res.success || res.canceled || !res.path) return;
-    setInstallSource("local");
-    setLocalAgentPath(res.path);
+  /** Probe ~/.hermes; if a real install is there, route the user to the
+   *  guard screen so a single-agent app never silently overwrites their
+   *  existing agent's persona, secrets, and chat history. */
+  const beginInstallFlow = async (source: "bundled" | "local", localPath = "") => {
+    setPendingSource(source);
+    setPendingLocalPath(localPath);
+    try {
+      const installed = await systemAPI.isConfigured();
+      if (installed) {
+        const name = (await systemAPI.getAgentName()) || "your agent";
+        setExistingAgentName(name);
+        setRenameValue(name);
+        setMode("guard");
+        return;
+      }
+    } catch { /* fall through to normal install */ }
+    setInstallSource(source);
+    setLocalAgentPath(localPath);
     setMode("install");
     setInstallStep(0);
   };
 
+  const handlePickLocalAgent = async () => {
+    const res = await systemAPI.selectFolder({ title: "Select your agent folder" });
+    if (!res.success || res.canceled || !res.path) return;
+    await beginInstallFlow("local", res.path);
+  };
+
   const handleStartBundledInstall = () => {
-    setInstallSource("bundled");
-    setLocalAgentPath("");
-    setMode("install");
-    setInstallStep(0);
+    void beginInstallFlow("bundled");
+  };
+
+  const handleGuardConnect = async () => {
+    markConnected("~/.hermes");
+    await refreshConnection();
+    navigate("/dashboard");
+  };
+
+  const handleGuardRename = async () => {
+    const name = renameValue.trim();
+    if (!name) return;
+    setRenaming(true);
+    try {
+      const res = await systemAPI.setAgentName(name);
+      if (!res.success) {
+        toast.error("Could not rename agent");
+        return;
+      }
+      // The running agent caches persona on the session — drop history + session
+      // so the next message starts fresh under the new name.
+      clearChatHistory();
+      startNewSession();
+      markConnected("~/.hermes");
+      await refreshConnection();
+      toast.success(`Renamed to ${name}`, { description: "Chat history was cleared so the new persona takes effect." });
+      navigate("/dashboard");
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const handleGuardReset = async () => {
+    setResetting(true);
+    setResetOutput(["Removing existing agent..."]);
+    try {
+      const res = await systemAPI.hermesUninstall((event) => {
+        if ((event.type === "stdout" || event.type === "stderr") && event.data) {
+          const lines = event.data.replace(/\r/g, "\n").split("\n").map((l) => l.trimEnd()).filter(Boolean);
+          if (lines.length) setResetOutput((prev) => [...prev, ...lines]);
+        }
+      });
+      if (!res.success) {
+        setResetOutput((prev) => [...prev, `✗ Uninstall failed (exit ${res.code ?? "?"}). You can still try the install — it may overwrite the existing folder.`]);
+      } else {
+        setResetOutput((prev) => [...prev, "✓ Existing agent removed."]);
+      }
+      clearChatHistory();
+      startNewSession();
+      setExistingAgentName(null);
+      setShowResetConfirm(false);
+      setInstallSource(pendingSource);
+      setLocalAgentPath(pendingLocalPath);
+      setMode("install");
+      setInstallStep(0);
+    } finally {
+      setResetting(false);
+    }
   };
 
   const handleSaveApiKey = async () => {
@@ -287,7 +373,93 @@ const Index = () => {
           </motion.div>
         )}
 
-        {mode === "install" && (
+        {mode === "guard" && (
+          <motion.div
+            key="guard"
+            initial={{ opacity: 0, x: 30 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -30 }}
+            className="max-w-md w-full space-y-6"
+          >
+            <Button variant="ghost" size="sm" onClick={() => setMode("choose")} className="text-muted-foreground hover:text-foreground">
+              <ArrowLeft className="w-4 h-4 mr-1" /> Back
+            </Button>
+
+            <GlassCard className="space-y-5">
+              <div className="space-y-2">
+                <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-success" />
+                  You already have an agent
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  An agent named <span className="text-primary font-semibold">{existingAgentName}</span> is already installed at <code className="text-foreground text-xs">~/.hermes</code>. Ronbot is built for a single agent — pick how you want to continue.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <Button
+                  onClick={handleGuardConnect}
+                  className="w-full gradient-primary text-primary-foreground"
+                >
+                  <Link2 className="w-4 h-4 mr-2" /> Connect to {existingAgentName}
+                </Button>
+
+                <div className="glass-subtle rounded-lg p-3 space-y-2">
+                  <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-primary" /> Rename this agent
+                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    Updates the persona file and clears chat history so the new name takes effect on the next message. Keeps secrets, skills, and the venv.
+                  </p>
+                  <div className="flex gap-2">
+                    <Input
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      placeholder="New name"
+                      disabled={renaming}
+                      className="bg-background/50 border-white/10 text-sm"
+                    />
+                    <Button
+                      onClick={handleGuardRename}
+                      disabled={renaming || !renameValue.trim() || renameValue.trim() === existingAgentName}
+                      size="sm"
+                      variant="secondary"
+                    >
+                      {renaming ? <Loader2 className="w-4 h-4 animate-spin" /> : "Rename"}
+                    </Button>
+                  </div>
+                </div>
+
+                <Button
+                  onClick={() => setShowResetConfirm(true)}
+                  variant="ghost"
+                  className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"
+                >
+                  <XCircle className="w-4 h-4 mr-2" /> Reset & install fresh
+                </Button>
+              </div>
+
+              {resetting && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Removing existing agent...
+                  </div>
+                  <div className="font-mono text-xs space-y-1 max-h-32 overflow-y-auto pr-1 glass-subtle rounded-lg p-2">
+                    {resetOutput.map((line, i) => (
+                      <p key={i} className={
+                        line.startsWith("✓") ? "text-success" :
+                        line.startsWith("✗") ? "text-destructive" :
+                        "text-foreground/70"
+                      }>{line}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </GlassCard>
+          </motion.div>
+        )}
+
+
           <motion.div
             key="install"
             initial={{ opacity: 0, x: 30 }}
@@ -787,6 +959,27 @@ const Index = () => {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Yes, cancel
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showResetConfirm} onOpenChange={(open) => !resetting && setShowResetConfirm(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset {existingAgentName} and install fresh?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete <code>~/.hermes</code> — including the agent persona, configuration, secrets, skills, sub-agent state, and chat history. This cannot be undone. After the reset, the install wizard will run from scratch.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resetting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleGuardReset}
+              disabled={resetting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {resetting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Resetting...</> : "Yes, delete and reinstall"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

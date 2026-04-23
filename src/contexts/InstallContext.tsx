@@ -4,7 +4,7 @@ import { sudoAPI, promptForPasswordMac } from "@/lib/systemAPI/sudo";
 import { useAgentConnection } from "./AgentConnectionContext";
 import { toast } from "sonner";
 
-export type Mode = "choose" | "connect" | "install";
+export type Mode = "choose" | "connect" | "install" | "guard";
 export type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 export type InstallSource = "bundled" | "local";
 
