@@ -592,6 +592,45 @@ export const readHermesPermissionsBlock = async (): Promise<string | null> => {
   return cfg.content.slice(startIdx, endIdx + PERMS_END.length);
 };
 
+/**
+ * Write/remove the managed `browser:` block in `~/.hermes/config.yaml`.
+ * Currently only manages Camofox's `managed_persistence` flag; if `enabled`
+ * is false we strip the block so the agent falls back to defaults.
+ *
+ * Idempotent: only the BROWSER_BEGIN…BROWSER_END block is touched.
+ */
+export const setBrowserCamofoxPersistence = async (
+  enabled: boolean,
+): Promise<{ success: boolean; error?: string }> => {
+  const cfg = await readHermesFile(HERMES_CONFIG);
+  const existing = cfg.success && cfg.content ? cfg.content : 'model: openrouter/auto\n';
+  const stripped = stripManagedBlock(existing, BROWSER_BEGIN, BROWSER_END).replace(/\n+$/, '');
+  let next: string;
+  if (!enabled) {
+    next = `${stripped}\n`;
+  } else {
+    const block = [
+      BROWSER_BEGIN,
+      'browser:',
+      '  camofox:',
+      '    managed_persistence: true',
+      BROWSER_END,
+    ].join('\n');
+    next = `${stripped}\n\n${block}\n`;
+  }
+  const w = await writeHermesFile(HERMES_CONFIG, next, '600');
+  agentLogs.push({
+    source: 'system',
+    level: w.success ? 'info' : 'error',
+    summary: w.success
+      ? `browser.camofox.managed_persistence ${enabled ? 'enabled' : 'cleared'} in config.yaml`
+      : 'failed to update browser block in config.yaml',
+  });
+  return w.success
+    ? { success: true }
+    : { success: false, error: 'Failed to write config.yaml browser block' };
+};
+
 /** Hermes Agent installation, configuration, and lifecycle */
 export const hermesAPI = {
   /** Force-write secrets to ~/.hermes/.env and verify. Used by Diagnostics
