@@ -213,14 +213,25 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
         setChromeStatus("ok");
         setChromeDetail(chromePath);
       }
-      if (camofoxPresent && serverStatus !== "ok") {
+      if (camofoxPresent) {
         setNodeStatus((prev) => (prev === "idle" ? "ok" : prev));
+        // Probe the local Camofox /health endpoint once so we don't show
+        // a misleading "Start Camofox" button when the server is already
+        // running from a previous session.
+        try {
+          const healthy = await browserSetup.pollCamofox(2500);
+          if (cancelled) return;
+          if (healthy) {
+            setServerStatus("ok");
+            setHealthStatus("ok");
+          }
+        } catch { /* ignore — leave status idle */ }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [open, serverStatus]);
+  }, [open]);
 
   const backend: BrowserBackend | null = picked ? getBrowserBackend(picked) ?? null : null;
   const isLocked = (b: BrowserBackend | null): boolean =>
