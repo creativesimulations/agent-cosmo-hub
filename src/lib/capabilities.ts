@@ -113,10 +113,16 @@ export const BUILTIN_CAPABILITIES: CapabilityDefinition[] = [
   {
     id: "webBrowser",
     label: "Web browsing",
-    description: "Load and read web pages with a headless browser. Needs a browser provider key.",
+    description: "Load and read web pages with a real browser. Pick a backend (Browserbase, Camofox, or Local Chrome) in Set up browser.",
     risk: "medium",
     icon: "Globe",
-    candidateSecrets: ["BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID", "FIRECRAWL_API_KEY"],
+    candidateSecrets: [
+      "BROWSERBASE_API_KEY",
+      "BROWSERBASE_PROJECT_ID",
+      "BROWSER_USE_API_KEY",
+      "CAMOFOX_URL",
+      "FIRECRAWL_API_KEY",
+    ],
     candidateSkills: ["browser", "browser_use", "web_browser", "playwright"],
     extrasPackage: "web",
     source: "builtin",
