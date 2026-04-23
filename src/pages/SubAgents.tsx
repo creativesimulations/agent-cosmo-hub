@@ -301,10 +301,10 @@ const SubAgents = () => {
           <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <Activity className="w-4 h-4 text-primary" />
             Active
-            <Badge variant="secondary" className="ml-1">{active.length}</Badge>
+            <Badge variant="secondary" className="ml-1">{mergedActive.length}</Badge>
           </h2>
         </div>
-        {active.length === 0 ? (
+        {mergedActive.length === 0 ? (
           <GlassCard className="py-8 text-center">
             <p className="text-sm text-muted-foreground">
               No sub-agents are running right now.
@@ -315,7 +315,7 @@ const SubAgents = () => {
           </GlassCard>
         ) : (
           <div className="grid gap-3">
-            {active.map((sa) => (
+            {mergedActive.map((sa) => (
               <GlassCard key={sa.id} className="space-y-2">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -342,15 +342,15 @@ const SubAgents = () => {
       </section>
 
       {/* Failed */}
-      {failed.length > 0 && (
+      {mergedFailed.length > 0 && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <XCircle className="w-4 h-4 text-destructive" />
             Failed / denied
-            <Badge variant="destructive" className="ml-1">{failed.length}</Badge>
+            <Badge variant="destructive" className="ml-1">{mergedFailed.length}</Badge>
           </h2>
           <div className="grid gap-3">
-            {failed.map((sa) => (
+            {mergedFailed.map((sa) => (
               <GlassCard key={sa.id} className="space-y-2 border-destructive/30">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -379,10 +379,10 @@ const SubAgents = () => {
           <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-primary" />
             Recently completed
-            <Badge variant="secondary" className="ml-1">{recent.length}</Badge>
+            <Badge variant="secondary" className="ml-1">{mergedRecent.length}</Badge>
           </h2>
         </div>
-        {recent.length === 0 ? (
+        {mergedRecent.length === 0 ? (
           <GlassCard className="py-8 text-center">
             <p className="text-sm text-muted-foreground">
               No completed sub-agents in the last 24 hours.
@@ -390,7 +390,7 @@ const SubAgents = () => {
           </GlassCard>
         ) : (
           <div className="grid gap-3">
-            {recent.map((sa) => (
+            {mergedRecent.map((sa) => (
               <GlassCard key={sa.id} className="space-y-2">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3 min-w-0 flex-1">
