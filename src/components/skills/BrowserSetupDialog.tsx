@@ -141,6 +141,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   // ─── Camofox automation state ──────────────────────────────────
   const [camofoxLog, setCamofoxLog] = useState<string[]>([]);
   const [camofoxBusy, setCamofoxBusy] = useState(false);
+  const [camofoxInstalled, setCamofoxInstalled] = useState(false);
   const [nodeStatus, setNodeStatus] = useState<StatusKind>("idle");
   const [nodeDetail, setNodeDetail] = useState<string | undefined>();
   const [serverStatus, setServerStatus] = useState<StatusKind>("idle");
@@ -149,6 +150,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   // ─── Local Chrome automation state ─────────────────────────────
   const [chromeLog, setChromeLog] = useState<string[]>([]);
   const [chromeBusy, setChromeBusy] = useState(false);
+  const [chromeInstalled, setChromeInstalled] = useState(false);
   const [chromeStatus, setChromeStatus] = useState<StatusKind>("idle");
   const [chromeDetail, setChromeDetail] = useState<string | undefined>();
   const [cdpStatus, setCdpStatus] = useState<StatusKind>("idle");
@@ -184,6 +186,30 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     setCdpStatus("idle");
     void refreshUnlocks();
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void (async () => {
+      const [camofoxPresent, chromePath] = await Promise.all([
+        browserSetup.detectCamofoxInstall().catch(() => false),
+        browserSetup.detectChrome().catch(() => null),
+      ]);
+      if (cancelled) return;
+      setCamofoxInstalled(camofoxPresent);
+      setChromeInstalled(!!chromePath);
+      if (chromePath) {
+        setChromeStatus("ok");
+        setChromeDetail(chromePath);
+      }
+      if (camofoxPresent && serverStatus !== "ok") {
+        setNodeStatus((prev) => (prev === "idle" ? "ok" : prev));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, serverStatus]);
 
   const backend: BrowserBackend | null = picked ? getBrowserBackend(picked) ?? null : null;
   const isLocked = (b: BrowserBackend | null): boolean =>
@@ -371,6 +397,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
         return;
       }
       setServerStatus("ok");
+      setCamofoxInstalled(true);
       setHealthStatus("busy");
       // First-run npm install + Camoufox download can take several minutes.
       const healthy = await browserSetup.pollCamofox(240000, (e) => e.data && log(e.data));
@@ -442,6 +469,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           return;
         }
       }
+      setChromeInstalled(true);
       setChromeStatus("ok");
       setChromeDetail(chromePath);
 
@@ -714,7 +742,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           ) : (
             <Play className="w-3.5 h-3.5 mr-1.5" />
           )}
-          Install &amp; start Camofox
+          {camofoxInstalled ? "Start Camofox" : "Install &amp; start Camofox"}
         </Button>
         {serverStatus === "ok" && (
           <Button variant="outline" onClick={handleInstallCamofox} disabled={camofoxBusy}>
@@ -760,7 +788,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           ) : (
             <Play className="w-3.5 h-3.5 mr-1.5" />
           )}
-          Launch Chrome &amp; connect
+          {chromeInstalled ? "Start Chrome &amp; connect" : "Install Chrome &amp; connect"}
         </Button>
         {chromeRunning && (
           <Button variant="outline" onClick={handleStopChrome} disabled={chromeBusy}>
