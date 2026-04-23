@@ -652,6 +652,43 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             ),
           );
 
+          // ── LOUD notice: when tool is reported unavailable, run the real
+          // readiness probe and surface a persistent toast + modal so the
+          // user is never left wondering. The probe overrides the agent's
+          // (often hallucinated) self-diagnosis with ground truth.
+          if (toolUnavailable) {
+            const idMap: Record<string, string> = {
+              browser: "webBrowser",
+              webSearch: "webSearch",
+              imageGen: "imageGen",
+              voice: "voice",
+              email: "email",
+              messaging: "messaging",
+              memory: "memory",
+              codeInterpreter: "script",
+              filesystem: "fileWrite",
+            };
+            const capId = idMap[toolUnavailable.capability] ?? toolUnavailable.capability;
+            void (async () => {
+              try {
+                const probe = await capabilityProbe(capId);
+                sonnerToast(`Ron tried to use ${toolUnavailable.label} and was blocked`, {
+                  description: probe.message,
+                  duration: 30_000,
+                  action: {
+                    label: "Fix it",
+                    onClick: () => openCapabilityDecision(capId, probe, `The agent reported: "${toolUnavailable.matchedText.slice(0, 120)}…"`),
+                  },
+                });
+              } catch { /* probe failed — toast still useful, fall back */
+                sonnerToast(`Ron tried to use ${toolUnavailable.label} and was blocked`, {
+                  description: toolUnavailable.hint,
+                  duration: 30_000,
+                });
+              }
+            })();
+          }
+
           if (!result.success && !result.missingKey) {
             toast({
               title: matFailed ? "Secret sync failed" : "Agent error",
