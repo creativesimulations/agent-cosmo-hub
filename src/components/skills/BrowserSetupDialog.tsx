@@ -398,7 +398,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
 
       setCdpStatus("busy");
       await browserSetup.launchChromeWithCdp(chromePath, 9222, (e) => e.data && log(e.data));
-      const cdpUp = await browserSetup.pollCdp(9222, 30000, (e) => e.data && log(e.data));
+      const cdpUp = await browserSetup.pollCdp(9222, 90000, (e) => e.data && log(e.data));
       if (!cdpUp) {
         setCdpStatus("err");
         toast.error("Chrome started but the CDP endpoint did not respond");
