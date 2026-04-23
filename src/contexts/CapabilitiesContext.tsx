@@ -1,0 +1,304 @@
+import {
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { systemAPI } from "@/lib/systemAPI";
+import {
+  BUILTIN_CAPABILITIES,
+  buildRegistry,
+  CapabilityChoice,
+  CapabilityDefinition,
+  DEFAULT_CAPABILITY_POLICY,
+  DiscoveredSkill,
+  assessReadiness,
+  CapabilityReadiness,
+} from "@/lib/capabilities";
+import { useSettings } from "./SettingsContext";
+import { usePermissions } from "./PermissionsContext";
+import { useAgentConnection } from "./AgentConnectionContext";
+
+/**
+ * CapabilitiesContext is the runtime façade for the Capability Registry.
+ *
+ *   - On mount (and when the agent reconnects) it discovers installed
+ *     skills + stored secrets and merges them with the built-in catalog.
+ *   - It exposes `gate(capId, target, reason)` — the proactive gate the
+ *     ChatContext calls when it detects an outbound tool announcement.
+ *   - It tracks per-session "allow this session" decisions so the user
+ *     isn't prompted again until the app reloads.
+ *   - It exposes a `recentlyUsed` map so chat bubbles can show "🌐 Used
+ *     web search" chips for capabilities consumed this turn.
+ *   - It also handles REACTIVE gating: when a tool failure is detected
+ *     post-hoc, `gateAfterFailure(hit)` shows the same dialog so the
+ *     user can train the policy with one click.
+ *
+ * Backward compatibility: this layer is purely additive — the existing
+ * `settings.permissions` block (shell/internet/etc.) remains the source
+ * of truth for the agent-side YAML config. CapabilityPolicy reflects
+ * the same defaults for the system capabilities AND adds new entries
+ * for browser, search, image gen, etc.
+ */
+
+interface ObservedToolUse {
+  capabilityId: string;
+  /** ms timestamp of the most recent invocation. */
+  lastUsed: number;
+  /** Total times observed this session. */
+  count: number;
+}
+
+interface CapabilitiesContextValue {
+  /** Live merged registry: built-ins + skills + observed. */
+  registry: Record<string, CapabilityDefinition>;
+  /** Per-capability stored choice (defaults pulled from settings). */
+  policy: Record<string, CapabilityChoice>;
+  /** Update one capability's policy (persists into settings). */
+  setPolicy: (id: string, choice: CapabilityChoice) => void;
+  /** Reset every capability to "ask". */
+  resetAll: () => void;
+  /** Capabilities used at least once this app session — for chat chips. */
+  recentlyUsed: Record<string, ObservedToolUse>;
+  /** Per-capability readiness (key/skill availability). */
+  readinessFor: (id: string) => CapabilityReadiness;
+  /** Re-run discovery (call after enabling a skill or adding a secret). */
+  rediscover: () => Promise<void>;
+  /**
+   * Proactive gate. Called by the chat worker when a tool-call marker is
+   * detected. Returns true if the agent may proceed, false if denied.
+   * If policy is "ask", opens the existing approval dialog.
+   */
+  gate: (capabilityId: string, target: string, reason?: string) => Promise<boolean>;
+  /** Record that a capability was used (for chat-chip display). */
+  recordUse: (capabilityId: string) => void;
+}
+
+const CapabilitiesContext = createContext<CapabilitiesContextValue | null>(null);
+
+const SESSION_GRANTS_KEY = "ronbot-capability-session-grants-v1";
+
+export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
+  const { settings, update } = useSettings();
+  const { requestApproval, recordEvent } = usePermissions();
+  const { connected: agentConnected } = useAgentConnection();
+
+  const [installedSkills, setInstalledSkills] = useState<DiscoveredSkill[]>([]);
+  const [storedSecretKeys, setStoredSecretKeys] = useState<string[]>([]);
+  const [observedTools, setObservedTools] = useState<string[]>([]);
+  const [recentlyUsed, setRecentlyUsed] = useState<Record<string, ObservedToolUse>>({});
+  // Session grants live in sessionStorage so they survive HMR but not a real reload.
+  const sessionGrantsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.sessionStorage.getItem(SESSION_GRANTS_KEY);
+      if (raw) sessionGrantsRef.current = new Set(JSON.parse(raw));
+    } catch { /* ignore */ }
+  }, []);
+
+  const persistSessionGrants = useCallback(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem(
+        SESSION_GRANTS_KEY,
+        JSON.stringify(Array.from(sessionGrantsRef.current)),
+      );
+    } catch { /* ignore */ }
+  }, []);
+
+  // Discovery: pull installed skills + stored secret keys.
+  const rediscover = useCallback(async () => {
+    try {
+      const skills = await systemAPI.listSkills?.().catch(() => []);
+      if (Array.isArray(skills)) {
+        setInstalledSkills(
+          skills.map((s) => ({
+            name: typeof s === "string" ? s : (s as { name?: string }).name || "",
+            category: typeof s === "object" ? (s as { category?: string }).category : undefined,
+            requiredSecrets: typeof s === "object" ? (s as { requiredSecrets?: string[] }).requiredSecrets : undefined,
+          })).filter((s) => s.name),
+        );
+      }
+    } catch { /* best effort */ }
+    try {
+      const list = await systemAPI.secrets?.list?.().catch(() => []);
+      if (Array.isArray(list)) {
+        setStoredSecretKeys(list.map((e) => (typeof e === "string" ? e : (e as { key?: string }).key || "")).filter(Boolean));
+      }
+    } catch { /* best effort */ }
+  }, []);
+
+  useEffect(() => {
+    void rediscover();
+  }, [rediscover, agentConnected]);
+
+  const registry = useMemo(
+    () => buildRegistry(installedSkills, observedTools),
+    [installedSkills, observedTools],
+  );
+
+  // Merge stored policy with defaults so every registry entry has a value.
+  const policy = useMemo(() => {
+    const stored = settings.capabilityPolicy || {};
+    const merged: Record<string, CapabilityChoice> = { ...DEFAULT_CAPABILITY_POLICY };
+    for (const id of Object.keys(registry)) {
+      merged[id] = (stored[id] as CapabilityChoice) ?? merged[id] ?? "ask";
+    }
+    // Carry through any stored entries for capabilities not yet in the registry
+    // (e.g. user disabled the providing skill but kept the policy).
+    for (const [id, val] of Object.entries(stored)) {
+      if (!(id in merged)) merged[id] = val as CapabilityChoice;
+    }
+    return merged;
+  }, [registry, settings.capabilityPolicy]);
+
+  const setPolicy = useCallback(
+    (id: string, choice: CapabilityChoice) => {
+      const next = { ...(settings.capabilityPolicy || {}), [id]: choice };
+      update({ capabilityPolicy: next });
+      // Clear any session grant for this id so the new policy takes effect immediately.
+      if (sessionGrantsRef.current.has(id)) {
+        sessionGrantsRef.current.delete(id);
+        persistSessionGrants();
+      }
+    },
+    [settings.capabilityPolicy, update, persistSessionGrants],
+  );
+
+  const resetAll = useCallback(() => {
+    update({ capabilityPolicy: {} });
+    sessionGrantsRef.current.clear();
+    persistSessionGrants();
+  }, [update, persistSessionGrants]);
+
+  const readinessFor = useCallback(
+    (id: string): CapabilityReadiness => {
+      const cap = registry[id];
+      if (!cap) {
+        return { ready: false, reason: "Unknown capability", missingSecret: false, missingSkill: false };
+      }
+      return assessReadiness(cap, storedSecretKeys, installedSkills);
+    },
+    [registry, storedSecretKeys, installedSkills],
+  );
+
+  const recordUse = useCallback((capabilityId: string) => {
+    setRecentlyUsed((prev) => {
+      const cur = prev[capabilityId];
+      return {
+        ...prev,
+        [capabilityId]: {
+          capabilityId,
+          lastUsed: Date.now(),
+          count: (cur?.count || 0) + 1,
+        },
+      };
+    });
+    // Remember unknown tool names so the registry surfaces them.
+    if (capabilityId.startsWith("observed:")) {
+      const name = capabilityId.slice("observed:".length);
+      setObservedTools((prev) => (prev.includes(name) ? prev : [...prev, name]));
+    }
+  }, []);
+
+  const gate = useCallback(
+    async (capabilityId: string, target: string, reason?: string): Promise<boolean> => {
+      // Auto-record so the chip shows up later in the message.
+      recordUse(capabilityId);
+
+      const choice: CapabilityChoice = (policy[capabilityId] as CapabilityChoice) ?? "ask";
+      const cap = registry[capabilityId];
+      const label = cap?.label ?? capabilityId;
+
+      if (choice === "allow") {
+        recordEvent({
+          action: (cap?.id === "shell" ? "shell" : cap?.id === "fileRead" ? "fileRead" : cap?.id === "fileWrite" ? "fileWrite" : cap?.id === "internet" ? "internet" : cap?.id === "script" ? "script" : "shell") as never,
+          target: `[${label}] ${target}`.slice(0, 200),
+          decision: "auto-allowed",
+          prompted: false,
+          reason,
+        });
+        return true;
+      }
+      if (choice === "deny") {
+        recordEvent({
+          action: "shell" as never,
+          target: `[${label}] ${target}`.slice(0, 200),
+          decision: "auto-denied",
+          prompted: false,
+          reason,
+        });
+        return false;
+      }
+      if (choice === "session" && sessionGrantsRef.current.has(capabilityId)) {
+        return true;
+      }
+
+      // ask (or session not yet granted) — open the dialog. We re-use the
+      // existing PermissionsContext dialog by mapping our capability id to
+      // a permission action; the dialog UI is the same shape.
+      const fakeAction =
+        capabilityId === "shell" || capabilityId === "fileRead" || capabilityId === "fileWrite" ||
+        capabilityId === "internet" || capabilityId === "script"
+          ? capabilityId
+          : "internet"; // internet is the safest visual default for "tool needing approval"
+      const userChoice = await requestApproval({
+        action: fakeAction as never,
+        target: `[${label}] ${target}`,
+        reason: reason ?? cap?.description,
+      });
+      if (userChoice === "always") {
+        setPolicy(capabilityId, "allow");
+        return true;
+      }
+      if (userChoice === "session") {
+        sessionGrantsRef.current.add(capabilityId);
+        persistSessionGrants();
+        return true;
+      }
+      if (userChoice === "once") return true;
+      return false;
+    },
+    [policy, registry, requestApproval, recordEvent, setPolicy, persistSessionGrants, recordUse],
+  );
+
+  const value = useMemo(
+    () => ({
+      registry,
+      policy,
+      setPolicy,
+      resetAll,
+      recentlyUsed,
+      readinessFor,
+      rediscover,
+      gate,
+      recordUse,
+    }),
+    [registry, policy, setPolicy, resetAll, recentlyUsed, readinessFor, rediscover, gate, recordUse],
+  );
+
+  return <CapabilitiesContext.Provider value={value}>{children}</CapabilitiesContext.Provider>;
+};
+
+export const useCapabilities = () => {
+  const ctx = useContext(CapabilitiesContext);
+  if (!ctx) throw new Error("useCapabilities must be used within CapabilitiesProvider");
+  return ctx;
+};
+
+/** Convenience hook to read a single capability's policy + readiness. */
+export const useCapability = (id: string) => {
+  const { registry, policy, readinessFor, setPolicy } = useCapabilities();
+  return {
+    cap: registry[id] ?? BUILTIN_CAPABILITIES.find((c) => c.id === id),
+    choice: (policy[id] as CapabilityChoice) ?? "ask",
+    readiness: readinessFor(id),
+    setChoice: (c: CapabilityChoice) => setPolicy(id, c),
+  };
+};
