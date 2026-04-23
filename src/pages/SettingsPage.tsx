@@ -414,11 +414,7 @@ const SettingsPage = () => {
       </SettingsSection>
 
       {/* ─── Notifications ─────────────────────────────────────── */}
-      <GlassCard className="p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <Bell className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Notifications</h2>
-        </div>
+      <SettingsSection icon={Bell} title="Notifications">
         <div className="-mt-2">
           <ToggleRow
             title="Desktop notification when reply lands"
@@ -459,20 +455,19 @@ const SettingsPage = () => {
             }}
           />
         </div>
-      </GlassCard>
+      </SettingsSection>
 
       {/* ─── Permissions ───────────────────────────────────────── */}
-      <PermissionsPanel />
+      <SettingsSection icon={Shield} title="Permissions" bare>
+        <PermissionsPanel />
+      </SettingsSection>
 
       {/* ─── Capabilities (auto-discovered) ────────────────────── */}
-      <CapabilitiesPanel />
+      <SettingsSection icon={Sparkles} title="Capabilities" bare>
+        <CapabilitiesPanel />
+      </SettingsSection>
 
-      <GlassCard className="p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <History className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Sessions & history</h2>
-        </div>
-
+      <SettingsSection icon={History} title="Sessions & history">
         <div className="space-y-4 -mt-2">
           <div className="flex items-start justify-between gap-4 py-3 border-b border-border/40">
             <div className="space-y-0.5 min-w-0 flex-1">
@@ -538,7 +533,7 @@ const SettingsPage = () => {
             Clearing history just empties this app's local copy of the conversation.
           </p>
         </div>
-      </GlassCard>
+      </SettingsSection>
 
       {/* ─── Updates ───────────────────────────────────────────── */}
       <GlassCard className="p-6 space-y-4">
