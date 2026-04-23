@@ -711,6 +711,11 @@ export const hermesAPI = {
   async setBrowserCamofoxPersistence(enabled: boolean) {
     return setBrowserCamofoxPersistence(enabled);
   },
+
+  /** Set (or clear) `browser.cdp_url` so Hermes auto-connects to a launched Chrome. */
+  async setBrowserCdpUrl(url: string | null) {
+    return setBrowserCdpUrl(url);
+  },
   /** Install the agent using the official install script.
    *  On Windows we always run inside WSL because hermes-agent is not published
    *  to PyPI and requires the install script (which expects a POSIX shell). */
