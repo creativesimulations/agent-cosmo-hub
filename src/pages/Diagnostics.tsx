@@ -143,6 +143,25 @@ const Diagnostics = () => {
     }
   };
 
+  const handleBrowserSelfTest = async () => {
+    setSelfTestBusy(true);
+    try {
+      const r = await systemAPI.runBrowserSelfTest();
+      setSelfTest(r);
+      toast({
+        title: "Browser self-test complete",
+        description: r.navigateOk
+          ? "Real browser navigation works."
+          : r.cdpUrl
+          ? "CDP wired but navigation didn't complete — see panel."
+          : "No CDP backend configured.",
+      });
+    } catch (e) {
+      toast({ title: "Self-test failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setSelfTestBusy(false);
+    }
+  };
 
   const handleSyncSecrets = async () => {
     setSyncing(true);
