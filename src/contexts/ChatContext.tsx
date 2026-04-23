@@ -450,7 +450,22 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             // Per-category activity counts.
             for (const k of Object.keys(activityPatterns) as Array<keyof typeof activityPatterns>) {
               const m = chunk.data.match(activityPatterns[k]);
-              if (m) activityThisTurn[k] += m.length;
+              if (m) {
+                activityThisTurn[k] += m.length;
+                // Mirror into the capability tracker so chips show up.
+                usedCapsThisTurn.add(k);
+                recordUse(k);
+              }
+            }
+
+            // Detect explicit tool announcements ("tool: web_search",
+            // "calling browser…", etc.) and record them as capability uses.
+            const toolHits = detectToolCalls(chunk.data);
+            for (const hit of toolHits) {
+              if (!usedCapsThisTurn.has(hit.capabilityId)) {
+                usedCapsThisTurn.add(hit.capabilityId);
+                recordUse(hit.capabilityId);
+              }
             }
 
             // Spawn detection — count distinct delegation events.
