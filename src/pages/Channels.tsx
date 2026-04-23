@@ -135,37 +135,47 @@ const ChannelsPage = () => {
         </div>
       </section>
 
-      {/* Paid channels */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground/70 flex items-center gap-2">
-          <Sparkles className="w-3.5 h-3.5 text-primary" />
-          Premium channels — one-time, yours forever
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {paid.map((c) => (
-            <ChannelCard
-              key={c.id}
-              channel={c}
-              status={statuses[c.id] ?? { state: "loading" }}
-              onSetUp={() => handleSetUp(c)}
-              onToggle={() => handleToggle(c)}
-              toggling={toggling === c.id}
-            />
-          ))}
-        </div>
+      {/* Paid channels (only render if any exist) */}
+      {paid.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground/70 flex items-center gap-2">
+            <Sparkles className="w-3.5 h-3.5 text-primary" />
+            Premium channels — one-time, yours forever
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {paid.map((c) => (
+              <ChannelCard
+                key={c.id}
+                channel={c}
+                status={statuses[c.id] ?? { state: "loading" }}
+                onSetUp={() => handleSetUp(c)}
+                onToggle={() => handleToggle(c)}
+                toggling={toggling === c.id}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2">
-          {UPGRADES.map((u) => (
-            <UpgradeCard
-              key={u.id}
-              upgrade={u}
-              unlocked={!!unlocks[u.id]}
-              loading={unlocksLoading}
-              onChange={refresh}
-            />
-          ))}
-        </div>
-      </section>
+      {UPGRADES.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground/70 flex items-center gap-2">
+            <Sparkles className="w-3.5 h-3.5 text-primary" />
+            Optional upgrades
+          </h2>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {UPGRADES.map((u) => (
+              <UpgradeCard
+                key={u.id}
+                upgrade={u}
+                unlocked={!!unlocks[u.id]}
+                loading={unlocksLoading}
+                onChange={refresh}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       <GlassCard className="p-4 text-xs text-muted-foreground">
         <strong className="text-foreground">How upgrades work:</strong> buy once on our website, get

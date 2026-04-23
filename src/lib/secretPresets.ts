@@ -45,20 +45,31 @@ export const SECRET_PRESETS: SecretPreset[] = [
   { envVar: 'ELEVENLABS_API_KEY', label: 'ElevenLabs',     hint: 'Text-to-speech.',                                              prefix: '',        docsUrl: 'https://elevenlabs.io/app/settings/api-keys', category: 'Voice & media' },
 
   // ─── Messaging / bots ─────────────────────────────────────────────────
-  { envVar: 'TELEGRAM_BOT_TOKEN', label: 'Telegram Bot',   hint: 'Token from @BotFather.',                                       prefix: '',        docsUrl: 'https://core.telegram.org/bots#how-do-i-create-a-bot', category: 'Messaging' },
-  { envVar: 'DISCORD_BOT_TOKEN',  label: 'Discord Bot',    hint: 'Token from the Developer Portal.',                             prefix: '',        docsUrl: 'https://discord.com/developers/applications', category: 'Messaging' },
-  { envVar: 'SLACK_BOT_TOKEN',    label: 'Slack Bot',      hint: 'xoxb-… token from a Slack app.',                               prefix: 'xoxb-',   docsUrl: 'https://api.slack.com/apps',                  category: 'Messaging' },
-  { envVar: 'SLACK_APP_TOKEN',    label: 'Slack App-Level',hint: 'xapp-… token (Socket Mode).',                                  prefix: 'xapp-',   docsUrl: 'https://api.slack.com/apps',                  category: 'Messaging' },
-  { envVar: 'WHATSAPP_PHONE_NUMBER_ID', label: 'WhatsApp Phone ID', hint: 'Numeric ID from Meta API Setup.',                    prefix: '',        docsUrl: 'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started', category: 'Messaging' },
-  { envVar: 'WHATSAPP_ACCESS_TOKEN', label: 'WhatsApp Token', hint: 'EAA… access token from Meta.',                              prefix: 'EAA',     docsUrl: 'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started', category: 'Messaging' },
-  { envVar: 'WHATSAPP_VERIFY_TOKEN', label: 'WhatsApp Verify', hint: 'Random string you choose for webhook verification.',     prefix: '',        docsUrl: 'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started', category: 'Messaging' },
-  { envVar: 'SMTP_HOST',          label: 'SMTP Host',      hint: 'e.g. smtp.gmail.com',                                          prefix: '',        category: 'Messaging' },
-  { envVar: 'SMTP_PORT',          label: 'SMTP Port',      hint: 'Usually 587.',                                                 prefix: '',        category: 'Messaging' },
-  { envVar: 'SMTP_USER',          label: 'SMTP User',      hint: 'Email address used to send.',                                  prefix: '',        category: 'Messaging' },
-  { envVar: 'SMTP_PASS',          label: 'SMTP Password',  hint: 'App password (not your normal password).',                     prefix: '',        category: 'Messaging' },
-  { envVar: 'IMAP_HOST',          label: 'IMAP Host',      hint: 'e.g. imap.gmail.com',                                          prefix: '',        category: 'Messaging' },
-  { envVar: 'IMAP_USER',          label: 'IMAP User',      hint: 'Usually your email address.',                                  prefix: '',        category: 'Messaging' },
-  { envVar: 'IMAP_PASS',          label: 'IMAP Password',  hint: 'Usually same as SMTP password.',                               prefix: '',        category: 'Messaging' },
+  // Names match the official Hermes messaging docs:
+  //   https://hermes-agent.nousresearch.com/docs/user-guide/messaging/
+  { envVar: 'TELEGRAM_BOT_TOKEN',     label: 'Telegram Bot',         hint: 'Token from @BotFather.',                                       prefix: '',        docsUrl: 'https://core.telegram.org/bots#how-do-i-create-a-bot', category: 'Messaging' },
+  { envVar: 'TELEGRAM_ALLOWED_USERS', label: 'Telegram Allowed Users', hint: 'Comma-separated numeric Telegram user IDs.',                prefix: '',        docsUrl: 'https://t.me/userinfobot', category: 'Messaging' },
+  { envVar: 'DISCORD_BOT_TOKEN',      label: 'Discord Bot',          hint: 'Token from the Developer Portal.',                             prefix: '',        docsUrl: 'https://discord.com/developers/applications', category: 'Messaging' },
+  { envVar: 'DISCORD_ALLOWED_USERS',  label: 'Discord Allowed Users', hint: 'Comma-separated Discord user IDs (Developer Mode → Copy ID).', prefix: '',       docsUrl: 'https://discord.com/developers/applications', category: 'Messaging' },
+  { envVar: 'SLACK_BOT_TOKEN',        label: 'Slack Bot',            hint: 'xoxb-… token from a Slack app.',                               prefix: 'xoxb-',   docsUrl: 'https://api.slack.com/apps',                  category: 'Messaging' },
+  { envVar: 'SLACK_APP_TOKEN',        label: 'Slack App-Level',      hint: 'xapp-… token (Socket Mode).',                                  prefix: 'xapp-',   docsUrl: 'https://api.slack.com/apps',                  category: 'Messaging' },
+  { envVar: 'SLACK_ALLOWED_USERS',    label: 'Slack Allowed Users',  hint: 'Comma-separated Slack member IDs (e.g. U01ABC2DEF3).',         prefix: '',        docsUrl: 'https://api.slack.com/apps',                  category: 'Messaging' },
+  // WhatsApp via Baileys — paired through `hermes whatsapp` (QR scan).
+  { envVar: 'WHATSAPP_ENABLED',       label: 'WhatsApp Enabled',     hint: 'Set to "true" to turn the WhatsApp adapter on.',               prefix: '',        docsUrl: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp', category: 'Messaging' },
+  { envVar: 'WHATSAPP_MODE',          label: 'WhatsApp Mode',        hint: '"bot" for a dedicated number, or "self-chat" for your own.',   prefix: '',        docsUrl: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp', category: 'Messaging' },
+  { envVar: 'WHATSAPP_ALLOWED_USERS', label: 'WhatsApp Allowed Users', hint: 'Phone numbers (country code, no +). Comma-separated, or *.',  prefix: '',       docsUrl: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp', category: 'Messaging' },
+  // Email — official Hermes vars (not the older SMTP_*/IMAP_* set).
+  { envVar: 'EMAIL_ADDRESS',          label: "Agent's email address", hint: 'e.g. ron@yourdomain.com',                                     prefix: '',        category: 'Messaging' },
+  { envVar: 'EMAIL_PASSWORD',         label: 'Email password',       hint: 'App password if your provider uses 2FA.',                      prefix: '',        category: 'Messaging' },
+  { envVar: 'EMAIL_IMAP_HOST',        label: 'Email IMAP host',      hint: 'e.g. imap.gmail.com',                                          prefix: '',        category: 'Messaging' },
+  { envVar: 'EMAIL_SMTP_HOST',        label: 'Email SMTP host',      hint: 'e.g. smtp.gmail.com',                                          prefix: '',        category: 'Messaging' },
+  { envVar: 'EMAIL_IMAP_PORT',        label: 'Email IMAP port',      hint: 'Default 993 (IMAP SSL).',                                      prefix: '',        category: 'Messaging' },
+  { envVar: 'EMAIL_SMTP_PORT',        label: 'Email SMTP port',      hint: 'Default 587 (SMTP STARTTLS).',                                 prefix: '',        category: 'Messaging' },
+  { envVar: 'EMAIL_ALLOWED_USERS',    label: 'Email Allowed Users',  hint: 'Comma-separated allowed sender addresses.',                    prefix: '',        category: 'Messaging' },
+  // Signal via signal-cli daemon.
+  { envVar: 'SIGNAL_HTTP_URL',        label: 'signal-cli URL',       hint: 'Default http://127.0.0.1:8080',                                prefix: 'http',    docsUrl: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/signal', category: 'Messaging' },
+  { envVar: 'SIGNAL_ACCOUNT',         label: 'Signal account',       hint: 'Bot phone number, E.164 format (e.g. +15551234567).',          prefix: '+',       category: 'Messaging' },
+  { envVar: 'SIGNAL_ALLOWED_USERS',   label: 'Signal Allowed Users', hint: 'E.164 numbers, comma-separated.',                              prefix: '',        category: 'Messaging' },
 ];
 
 /** Map env var → preset, for quick lookup when rendering existing secrets. */
