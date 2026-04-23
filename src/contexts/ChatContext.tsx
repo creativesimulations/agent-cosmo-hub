@@ -644,6 +644,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     materializeFailed: matFailed,
                     permissionMismatch,
                     toolUnavailable,
+                    usedCapabilities: Array.from(usedCapsThisTurn),
                   }
                 : m,
             ),
