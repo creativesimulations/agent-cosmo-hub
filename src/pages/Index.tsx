@@ -79,11 +79,22 @@ const Index = () => {
     doctorRunning, doctorOutput, doctorProgress, doctorPassed, runDoctor,
     launching, launchOutput, runLaunch,
   } = useInstall();
+  const { clearAll: clearChatHistory, startNewSession } = useChat();
 
   // Purely local UI state — fine to reset on remount
   const [connecting, setConnecting] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [preflightReady, setPreflightReady] = useState(false);
+
+  // Guard-screen state (shown when ~/.hermes already exists)
+  const [existingAgentName, setExistingAgentName] = useState<string | null>(null);
+  const [pendingSource, setPendingSource] = useState<"bundled" | "local">("bundled");
+  const [pendingLocalPath, setPendingLocalPath] = useState<string>("");
+  const [renameValue, setRenameValue] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetOutput, setResetOutput] = useState<string[]>([]);
 
   const navigate = useNavigate();
   const { refresh: refreshConnection, markConnected } = useAgentConnection();
@@ -98,20 +109,93 @@ const Index = () => {
     }
   };
 
-  const handlePickLocalAgent = async () => {
-    const res = await systemAPI.selectFolder({ title: "Select your agent folder" });
-    if (!res.success || res.canceled || !res.path) return;
-    setInstallSource("local");
-    setLocalAgentPath(res.path);
+  /** Probe ~/.hermes; if a real install is there, route the user to the
+   *  guard screen so a single-agent app never silently overwrites their
+   *  existing agent's persona, secrets, and chat history. */
+  const beginInstallFlow = async (source: "bundled" | "local", localPath = "") => {
+    setPendingSource(source);
+    setPendingLocalPath(localPath);
+    try {
+      const installed = await systemAPI.isConfigured();
+      if (installed) {
+        const name = (await systemAPI.getAgentName()) || "your agent";
+        setExistingAgentName(name);
+        setRenameValue(name);
+        setMode("guard");
+        return;
+      }
+    } catch { /* fall through to normal install */ }
+    setInstallSource(source);
+    setLocalAgentPath(localPath);
     setMode("install");
     setInstallStep(0);
   };
 
+  const handlePickLocalAgent = async () => {
+    const res = await systemAPI.selectFolder({ title: "Select your agent folder" });
+    if (!res.success || res.canceled || !res.path) return;
+    await beginInstallFlow("local", res.path);
+  };
+
   const handleStartBundledInstall = () => {
-    setInstallSource("bundled");
-    setLocalAgentPath("");
-    setMode("install");
-    setInstallStep(0);
+    void beginInstallFlow("bundled");
+  };
+
+  const handleGuardConnect = async () => {
+    markConnected("~/.hermes");
+    await refreshConnection();
+    navigate("/dashboard");
+  };
+
+  const handleGuardRename = async () => {
+    const name = renameValue.trim();
+    if (!name) return;
+    setRenaming(true);
+    try {
+      const res = await systemAPI.setAgentName(name);
+      if (!res.success) {
+        toast.error("Could not rename agent");
+        return;
+      }
+      // The running agent caches persona on the session — drop history + session
+      // so the next message starts fresh under the new name.
+      clearChatHistory();
+      startNewSession();
+      markConnected("~/.hermes");
+      await refreshConnection();
+      toast.success(`Renamed to ${name}`, { description: "Chat history was cleared so the new persona takes effect." });
+      navigate("/dashboard");
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const handleGuardReset = async () => {
+    setResetting(true);
+    setResetOutput(["Removing existing agent..."]);
+    try {
+      const res = await systemAPI.hermesUninstall((event) => {
+        if ((event.type === "stdout" || event.type === "stderr") && event.data) {
+          const lines = event.data.replace(/\r/g, "\n").split("\n").map((l) => l.trimEnd()).filter(Boolean);
+          if (lines.length) setResetOutput((prev) => [...prev, ...lines]);
+        }
+      });
+      if (!res.success) {
+        setResetOutput((prev) => [...prev, `✗ Uninstall failed (exit ${res.code ?? "?"}). You can still try the install — it may overwrite the existing folder.`]);
+      } else {
+        setResetOutput((prev) => [...prev, "✓ Existing agent removed."]);
+      }
+      clearChatHistory();
+      startNewSession();
+      setExistingAgentName(null);
+      setShowResetConfirm(false);
+      setInstallSource(pendingSource);
+      setLocalAgentPath(pendingLocalPath);
+      setMode("install");
+      setInstallStep(0);
+    } finally {
+      setResetting(false);
+    }
   };
 
   const handleSaveApiKey = async () => {
