@@ -998,6 +998,80 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
 
           {step === "pick" ? renderPick() : renderConfigure()}
 
+          {step === "configure" && showSearchCta && (
+            <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
+              <div className="flex items-start gap-2">
+                <Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                <div className="text-xs">
+                  <p className="font-semibold text-foreground">
+                    Browser is ready. Want Ron to <em>find</em> pages too?
+                  </p>
+                  <p className="text-muted-foreground mt-0.5">
+                    A search backend lets Ron discover URLs (not just open known ones). Tavily
+                    has a generous free tier and works in seconds — paste a key below.
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tavily-key" className="text-xs">Tavily API key (recommended, free tier)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="tavily-key"
+                    value={tavilyKey}
+                    onChange={(e) => setTavilyKey(e.target.value)}
+                    placeholder="tvly-…"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="font-mono text-xs"
+                  />
+                  <Button
+                    onClick={() => handleSaveSearchKey("TAVILY_API_KEY", tavilyKey, "Tavily")}
+                    disabled={searchSaving || !tavilyKey.trim()}
+                    size="sm"
+                  >
+                    Save
+                  </Button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openExternal("https://tavily.com/")}
+                  className="text-[11px] text-primary hover:underline inline-flex items-center gap-1"
+                >
+                  Get a free Tavily key <ExternalLink className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="space-y-2 pt-2 border-t border-white/5">
+                <Label htmlFor="exa-key" className="text-xs">Or use Exa (more advanced)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="exa-key"
+                    value={exaKey}
+                    onChange={(e) => setExaKey(e.target.value)}
+                    placeholder="exa-…"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="font-mono text-xs"
+                  />
+                  <Button
+                    onClick={() => handleSaveSearchKey("EXA_API_KEY", exaKey, "Exa")}
+                    disabled={searchSaving || !exaKey.trim()}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSearchCta(false)}
+                className="text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                Skip — basic HTTP only
+              </button>
+            </div>
+          )}
+
           {step === "configure" && backend && usesFooterSave(backend) && (
             <DialogFooter className="pt-2">
               <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>
