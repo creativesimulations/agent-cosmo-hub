@@ -54,6 +54,13 @@ interface ObservedToolUse {
   count: number;
 }
 
+interface PendingDecision {
+  capabilityId: string;
+  probe: CapabilityProbeResult;
+  /** Optional human-readable context shown above the checklist. */
+  context?: string;
+}
+
 interface CapabilitiesContextValue {
   /** Live merged registry: built-ins + skills + observed. */
   registry: Record<string, CapabilityDefinition>;
@@ -77,6 +84,20 @@ interface CapabilitiesContextValue {
   gate: (capabilityId: string, target: string, reason?: string) => Promise<boolean>;
   /** Record that a capability was used (for chat-chip display). */
   recordUse: (capabilityId: string) => void;
+  /** Currently open capability decision dialog (null if none). */
+  pendingDecision: PendingDecision | null;
+  /** Open the capability approval/fix dialog with a probe result. */
+  openCapabilityDecision: (capabilityId: string, probe: CapabilityProbeResult, context?: string) => void;
+  /** Close the dialog without changing policy. */
+  closePendingDecision: () => void;
+  /** Grant a capability for this session only. */
+  grantSession: (capabilityId: string) => void;
+  /** Number of capabilities currently in a "needs setup" state — drives the sidebar dot. */
+  pendingDecisionsCount: number;
+  /** Latest probe results, keyed by capability id (for badge counting). */
+  probeResults: Record<string, CapabilityProbeResult>;
+  /** Re-run probes for all web-class capabilities (refreshes badge count). */
+  refreshProbes: () => Promise<void>;
 }
 
 const CapabilitiesContext = createContext<CapabilitiesContextValue | null>(null);
