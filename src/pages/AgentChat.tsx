@@ -2,12 +2,16 @@ import { useRef, useEffect, useState } from "react";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { useChat } from "@/contexts/ChatContext";
 import { motion } from "framer-motion";
-import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw, Square, Clock, Network, ShieldAlert, Wrench } from "lucide-react";
+import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw, Square, Clock, Network, ShieldAlert, Wrench, Globe } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import CapabilityFixBubble from "@/components/chat/CapabilityFixBubble";
 import CapabilityChips from "@/components/chat/CapabilityChips";
+import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
+import { secretsStore } from "@/lib/systemAPI";
+import { useSettings } from "@/contexts/SettingsContext";
+import { isAnyBackendConfigured } from "@/lib/browserBackends";
 import {
   AlertDialog,
   AlertDialogAction,
