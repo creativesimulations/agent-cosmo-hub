@@ -319,9 +319,12 @@ const parseProbeOutput = (stdout: string): Record<string, string> => {
   }, {});
 };
 
-/** One-shot in-place repair for configs left broken by an older build of this
- *  app that wrote `allowed_paths:[]` / `blocked_paths:[]` (no space → invalid
- *  YAML). Uses sed to insert the missing space. Safe to run repeatedly. */
+/** One-shot in-place repair for configs left broken by older builds of this
+ *  app:
+ *   1. `allowed_paths:[]` / `blocked_paths:[]` (no space → invalid YAML).
+ *   2. `browser:` followed only by a comment line — PyYAML loads it as None,
+ *      crashing Hermes' `if key in browser_config:`. Replace with `browser: {}`.
+ *  Safe to run repeatedly. */
 const repairBrokenYamlList = async (): Promise<void> => {
   await runHermesShell(
     [
@@ -331,6 +334,14 @@ const repairBrokenYamlList = async (): Promise<void> => {
       `if grep -Eq '^[[:space:]]*(allowed_paths|blocked_paths):\\[' "$CFG"; then`,
       '  echo "[repair] fixing missing space in allowed_paths/blocked_paths"',
       `  sed -i -E 's/^([[:space:]]*(allowed_paths|blocked_paths)):\\[/\\1: [/' "$CFG"`,
+      'fi',
+      // Heal the null-browser-block case: a bare `browser:` line whose only
+      // child is a comment ("  # (no overrides ...)") parses as None.
+      `if grep -Eq '^browser:[[:space:]]*$' "$CFG" && grep -Eq '^[[:space:]]+# \\(no overrides' "$CFG"; then`,
+      '  echo "[repair] replacing null browser: block with empty mapping {}"',
+      // Drop the placeholder comment line, then turn the bare `browser:` into `browser: {}`.
+      `  sed -i -E '/^[[:space:]]+# \\(no overrides[^)]*\\)[[:space:]]*$/d' "$CFG"`,
+      `  sed -i -E 's/^browser:[[:space:]]*$/browser: {}/' "$CFG"`,
       'fi',
     ].join('\n'),
     { timeout: 10000 },
