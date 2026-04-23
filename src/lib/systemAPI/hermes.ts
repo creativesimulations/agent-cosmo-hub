@@ -1538,7 +1538,29 @@ export const hermesAPI = {
     // Use the caller-provided timeout when given (the UI exposes this as
     // a setting), otherwise fall back to a generous 10 min default.
     const effectiveTimeout = Math.max(60_000, timeoutMs ?? 600_000);
-    const result = await runHermesShell(script, { timeout: effectiveTimeout, onStreamId: wrappedOnStreamId }, interceptingOnOutput);
+    let result = await runHermesShell(script, { timeout: effectiveTimeout, onStreamId: wrappedOnStreamId }, interceptingOnOutput);
+
+    // Hermes refuses unknown resume ids with:
+    //   "Session not found: <id>\nUse a session ID from a previous CLI run …"
+    // This typically happens after a fresh install or after the user wiped
+    // ~/.hermes/sessions while the panel still had the old id cached. Auto-
+    // recover by retrying once WITHOUT --resume so the agent starts a brand
+    // new session, then clear the stored id by returning sessionId=null.
+    let sessionWasInvalid = false;
+    if (resumeId && /session not found:/i.test(`${result.stdout || ''}\n${result.stderr || ''}`)) {
+      sessionWasInvalid = true;
+      agentLogs.push({
+        source: 'chat',
+        level: 'warn',
+        summary: `Stale resume id ${resumeId} — starting a fresh session`,
+      });
+      const freshInvocation = HERMES_CHAT_CAPS.supportsModern
+        ? `hermes chat -p "$PROMPT"${noColorFlag} 2>&1`
+        : 'hermes chat -q "$PROMPT" 2>&1';
+      const freshScript = script.replace(chatInvocation, freshInvocation);
+      result = await runHermesShell(freshScript, { timeout: effectiveTimeout, onStreamId: wrappedOnStreamId }, interceptingOnOutput);
+    }
+
     const timedOut = !result.success && (result.code === 124 || /timed out after/i.test(result.stderr || ''));
 
     // Clean the reply: strip ANSI codes and any leftover banner/status lines.
@@ -1567,7 +1589,7 @@ export const hermesAPI = {
     // keep the conversation context — without it every turn is a fresh
     // session and the agent has no memory of what we just said.
     const sessionIdMatch = (result.stdout || '').match(/hermes\s+--resume\s+([A-Za-z0-9_\-:.]+)/);
-    const sessionId = sessionIdMatch?.[1] || resumeId;
+    const sessionId = sessionIdMatch?.[1] || (sessionWasInvalid ? null : resumeId);
     const cleaned = (() => {
       const filtered = rawLines
         .filter((line) => {

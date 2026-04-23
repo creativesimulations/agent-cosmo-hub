@@ -559,6 +559,12 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           if (result.sessionId && result.sessionId !== sessionIdRef.current) {
             sessionIdRef.current = result.sessionId;
             setSessionId(result.sessionId);
+          } else if (result.sessionId === null && sessionIdRef.current) {
+            // Hermes refused our cached resume id and we recovered with a
+            // fresh session that didn't print a new id — drop the stale one
+            // so we don't keep trying it on every turn.
+            sessionIdRef.current = null;
+            setSessionId(null);
           }
 
           // ── Permission-mismatch detection ──
