@@ -147,31 +147,183 @@ export const startDockerDaemon = async (onOutput?: StreamLogger): Promise<boolea
   return false;
 };
 
-// ─── Camofox container ───────────────────────────────────────────────────────
+// ─── Camofox (git + npm install + npm start) ─────────────────────────────────
+//
+// The upstream `jo-inc/camofox-browser` repo does NOT publish a public Docker
+// image (the GHCR `denied` error users hit was because the package is not
+// published). The project's own README installs it via `git clone && npm
+// install && npm start`, so that's what we automate here. No Docker required.
 
-const CAMOFOX_NAME = 'ronbot-camofox';
-const CAMOFOX_IMAGE = 'ghcr.io/jo-inc/camofox-browser:latest';
+const CAMOFOX_REPO = 'https://github.com/jo-inc/camofox-browser.git';
+const CAMOFOX_DIR_POSIX = '$HOME/.ronbot/camofox';
+const CAMOFOX_DIR_WIN = '%USERPROFILE%\\.ronbot\\camofox';
+const CAMOFOX_LOG_POSIX = '$HOME/.ronbot/camofox.log';
+const CAMOFOX_LOG_WIN = '%USERPROFILE%\\.ronbot\\camofox.log';
 
-export const runCamofoxContainer = async (onOutput?: StreamLogger): Promise<CommandResult> => {
-  // Stop & remove any existing container so we can start fresh.
-  await coreAPI.runCommand(`docker rm -f ${CAMOFOX_NAME}`, { timeout: 20000 });
-  log(onOutput, `Pulling ${CAMOFOX_IMAGE} (first run only — can take a few minutes)…`);
-  const pull = await coreAPI.runCommandStream(`docker pull ${CAMOFOX_IMAGE}`, { timeout: 600000 }, onOutput);
-  if (!pull.success) return pull;
-  log(onOutput, 'Starting Camofox container…');
-  return coreAPI.runCommandStream(
-    `docker run -d --name ${CAMOFOX_NAME} -p 9377:9377 --restart unless-stopped ${CAMOFOX_IMAGE}`,
-    { timeout: 60000 },
+export interface NodeStatus {
+  installed: boolean;
+  version?: string;
+}
+
+export const detectNode = async (): Promise<NodeStatus> => {
+  const r = await coreAPI.runCommand('node --version', { timeout: 8000 });
+  if (r.success && r.stdout.trim().startsWith('v')) {
+    return { installed: true, version: r.stdout.trim() };
+  }
+  return { installed: false };
+};
+
+export const detectGit = async (): Promise<boolean> => {
+  const platform = await coreAPI.getPlatform();
+  const cmd = platform.isWindows ? 'where git' : 'command -v git';
+  const r = await coreAPI.runCommand(cmd, { timeout: 8000 });
+  return r.success && !!r.stdout.trim();
+};
+
+/**
+ * Install Node.js (LTS) via the platform-native package manager.
+ * macOS: brew (no sudo); Windows: winget (UAC); Linux: nodesource via apt.
+ */
+export const installNode = async (
+  onOutput: StreamLogger | undefined,
+  sudoPassword: string | null,
+): Promise<CommandResult> => {
+  const platform = await coreAPI.getPlatform();
+  if (platform.isMac) {
+    const brew = await coreAPI.runCommand('command -v brew', { timeout: 8000 });
+    if (brew.success && brew.stdout.trim()) {
+      log(onOutput, '✓ Homebrew found — installing Node via brew…');
+      return coreAPI.runCommandStream('brew install node', { timeout: 600000 }, onOutput);
+    }
+    log(onOutput, '⚠ Homebrew not found — opening the official Node.js installer page.');
+    await coreAPI.runCommand('open https://nodejs.org/en/download', { timeout: 8000 });
+    return { success: false, stdout: '', stderr: 'Install Node from nodejs.org, then click "Install & start Camofox" again.', code: 1 };
+  }
+  if (platform.isWindows) {
+    log(onOutput, 'Installing Node.js LTS via winget (a UAC prompt may appear)…');
+    return coreAPI.runCommandStream(
+      'winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements',
+      { timeout: 900000 },
+      onOutput,
+    );
+  }
+  // Linux
+  if (sudoPassword === null) {
+    return { success: false, stdout: '', stderr: 'sudo password required to install Node.js', code: 1 };
+  }
+  log(onOutput, 'Installing Node.js LTS via apt…');
+  return sudoAPI.aptInstall(['nodejs', 'npm'], sudoPassword);
+};
+
+export const installGit = async (
+  onOutput: StreamLogger | undefined,
+  sudoPassword: string | null,
+): Promise<CommandResult> => {
+  const platform = await coreAPI.getPlatform();
+  if (platform.isMac) {
+    log(onOutput, 'Installing git via xcode-select (a system prompt will appear)…');
+    return coreAPI.runCommandStream('xcode-select --install', { timeout: 600000 }, onOutput);
+  }
+  if (platform.isWindows) {
+    log(onOutput, 'Installing Git via winget (UAC prompt may appear)…');
+    return coreAPI.runCommandStream(
+      'winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements',
+      { timeout: 900000 },
+      onOutput,
+    );
+  }
+  if (sudoPassword === null) {
+    return { success: false, stdout: '', stderr: 'sudo password required to install git', code: 1 };
+  }
+  return sudoAPI.aptInstall(['git'], sudoPassword);
+};
+
+let camofoxStreamId: string | null = null;
+
+/**
+ * End-to-end: clone (or pull) the repo, install dependencies, start the
+ * server in the background. Output streams into onOutput.
+ */
+export const setupAndStartCamofox = async (onOutput?: StreamLogger): Promise<CommandResult> => {
+  const platform = await coreAPI.getPlatform();
+  const dir = platform.isWindows ? CAMOFOX_DIR_WIN : CAMOFOX_DIR_POSIX;
+  const logPath = platform.isWindows ? CAMOFOX_LOG_WIN : CAMOFOX_LOG_POSIX;
+
+  // 1. Stop any prior instance we launched (best-effort).
+  await stopCamofoxServer().catch(() => undefined);
+
+  // 2. Clone or pull. We use a single shell line so the success criterion is
+  //    "either fresh clone OR pull succeeded".
+  if (platform.isWindows) {
+    log(onOutput, `Cloning/updating Camofox into ${dir}…`);
+    const clone = await coreAPI.runCommandStream(
+      `cmd /c "if exist ${dir}\\.git (cd /d ${dir} && git pull --ff-only) else (mkdir ${dir.replace(/\\camofox$/, '')} 2>nul & git clone ${CAMOFOX_REPO} ${dir})"`,
+      { timeout: 600000 },
+      onOutput,
+    );
+    if (!clone.success) return clone;
+  } else {
+    log(onOutput, `Cloning/updating Camofox into ${dir}…`);
+    const clone = await coreAPI.runCommandStream(
+      `bash -lc 'mkdir -p "$(dirname ${dir})" && if [ -d "${dir}/.git" ]; then cd "${dir}" && git pull --ff-only; else git clone ${CAMOFOX_REPO} "${dir}"; fi'`,
+      { timeout: 600000 },
+      onOutput,
+    );
+    if (!clone.success) return clone;
+  }
+
+  // 3. npm install (downloads Camoufox browser binary on first run — can be slow).
+  log(onOutput, 'Running npm install (this can take a few minutes the first time)…');
+  const installCmd = platform.isWindows
+    ? `cmd /c "cd /d ${dir} && npm install"`
+    : `bash -lc 'cd "${dir}" && npm install'`;
+  const inst = await coreAPI.runCommandStream(installCmd, { timeout: 1200000 }, onOutput);
+  if (!inst.success) return inst;
+
+  // 4. Start `npm start` in the background, redirecting output to a log file.
+  log(onOutput, 'Starting Camofox server (npm start)…');
+  const startCmd = platform.isWindows
+    ? `cmd /c "cd /d ${dir} && start /B cmd /c "npm start > ${logPath} 2>&1""`
+    : `bash -lc 'cd "${dir}" && nohup npm start > "${logPath}" 2>&1 &'`;
+  const start = await coreAPI.runCommandStream(
+    startCmd,
+    {
+      timeout: 8000,
+      onStreamId: (id) => {
+        camofoxStreamId = id;
+      },
+    },
     onOutput,
   );
+  // We don't fail on non-zero from the spawn wrapper because the background
+  // process is what matters — pollCamofox() decides if it actually came up.
+  log(onOutput, `Camofox launched in the background. Log file: ${logPath}`);
+  return start;
 };
 
-export const stopCamofoxContainer = async (onOutput?: StreamLogger): Promise<CommandResult> => {
-  log(onOutput, 'Stopping Camofox container…');
-  return coreAPI.runCommand(`docker rm -f ${CAMOFOX_NAME}`, { timeout: 20000 });
+export const stopCamofoxServer = async (onOutput?: StreamLogger): Promise<void> => {
+  const platform = await coreAPI.getPlatform();
+  if (camofoxStreamId) {
+    await coreAPI.killStream(camofoxStreamId).catch(() => undefined);
+    camofoxStreamId = null;
+  }
+  if (platform.isWindows) {
+    await coreAPI.runCommand(
+      'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name=\'node.exe\'\\" | Where-Object { $_.CommandLine -match \'camofox\' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"',
+      { timeout: 10000 },
+    );
+  } else {
+    await coreAPI.runCommand(
+      `bash -lc "pkill -f 'camofox-browser' || true; pkill -f 'node .*camofox' || true"`,
+      { timeout: 8000 },
+    );
+  }
+  if (onOutput) log(onOutput, '✓ Camofox stopped.');
 };
 
-export const pollCamofox = async (timeoutMs = 60000, onOutput?: StreamLogger): Promise<boolean> => {
+export const pollCamofox = async (timeoutMs = 180000, onOutput?: StreamLogger): Promise<boolean> => {
+  // First-run npm install downloads Camoufox (~300MB) so we give it a longer
+  // window than a simple service health check would warrant.
   return pollUrl('http://localhost:9377/health', timeoutMs, onOutput);
 };
 
@@ -268,31 +420,23 @@ export const launchChromeWithCdp = async (
     ? `"${chromePath}"`
     : `"${chromePath.replace(/"/g, '\\"')}"`;
 
+  // We use `runCommand` (not stream) with a short timeout. On macOS/Linux the
+  // `nohup … &` causes the parent shell to exit immediately so the child Chrome
+  // process is detached and the command returns in milliseconds. On Windows
+  // `cmd /c start ""` does the same. There's no long-running stream to track.
   const cmd = platform.isWindows
     ? `cmd /c start "" ${quotedPath} --remote-debugging-port=${port} --user-data-dir="${dataDir}" --no-first-run --no-default-browser-check`
-    : `bash -lc 'nohup ${quotedPath} --remote-debugging-port=${port} --user-data-dir="${dataDir}" --no-first-run --no-default-browser-check > /tmp/ronbot-chrome.log 2>&1 &'`;
+    : `bash -lc 'nohup ${quotedPath} --remote-debugging-port=${port} --user-data-dir="${dataDir}" --no-first-run --no-default-browser-check > /tmp/ronbot-chrome.log 2>&1 & disown'`;
 
   log(onOutput, `Launching Chrome with CDP on port ${port}…`);
-  // Fire-and-forget — Chrome runs detached.
-  const result = await coreAPI.runCommandStream(
-    cmd,
-    {
-      timeout: 15000,
-      onStreamId: (id) => {
-        launchedChromeStreamId = id;
-      },
-    },
-    onOutput,
-  );
+  const result = await coreAPI.runCommand(cmd, { timeout: 8000 });
+  if (result.stdout) log(onOutput, result.stdout);
+  if (result.stderr) log(onOutput, result.stderr, 'stderr');
   return result;
 };
 
 export const stopLaunchedChrome = async (onOutput?: StreamLogger): Promise<void> => {
   const platform = await coreAPI.getPlatform();
-  if (launchedChromeStreamId) {
-    await coreAPI.killStream(launchedChromeStreamId);
-    launchedChromeStreamId = null;
-  }
   // Best-effort kill of any Chrome we launched with our user-data-dir.
   if (platform.isWindows) {
     await coreAPI.runCommand(
@@ -308,6 +452,8 @@ export const stopLaunchedChrome = async (onOutput?: StreamLogger): Promise<void>
   log(onOutput, '✓ Chrome stopped.');
 };
 
-export const pollCdp = async (port: number, timeoutMs = 30000, onOutput?: StreamLogger): Promise<boolean> => {
+export const pollCdp = async (port: number, timeoutMs = 90000, onOutput?: StreamLogger): Promise<boolean> => {
+  // First-run launch with a fresh user-data-dir can take 30–60s while Chrome
+  // builds its profile, so we give the poll a generous window.
   return pollUrl(`http://127.0.0.1:${port}/json/version`, timeoutMs, onOutput);
 };

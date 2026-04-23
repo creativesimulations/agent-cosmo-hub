@@ -141,9 +141,9 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   // ─── Camofox automation state ──────────────────────────────────
   const [camofoxLog, setCamofoxLog] = useState<string[]>([]);
   const [camofoxBusy, setCamofoxBusy] = useState(false);
-  const [dockerStatus, setDockerStatus] = useState<StatusKind>("idle");
-  const [dockerDetail, setDockerDetail] = useState<string | undefined>();
-  const [containerStatus, setContainerStatus] = useState<StatusKind>("idle");
+  const [nodeStatus, setNodeStatus] = useState<StatusKind>("idle");
+  const [nodeDetail, setNodeDetail] = useState<string | undefined>();
+  const [serverStatus, setServerStatus] = useState<StatusKind>("idle");
   const [healthStatus, setHealthStatus] = useState<StatusKind>("idle");
 
   // ─── Local Chrome automation state ─────────────────────────────
@@ -177,8 +177,8 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     setPicked(null);
     setCamofoxLog([]);
     setChromeLog([]);
-    setDockerStatus("idle");
-    setContainerStatus("idle");
+    setNodeStatus("idle");
+    setServerStatus("idle");
     setHealthStatus("idle");
     setChromeStatus("idle");
     setCdpStatus("idle");
@@ -245,52 +245,63 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   };
 
   // ─── Camofox automation ───────────────────────────────────────────────────
-  const ensureDocker = async (logFn: (line: string) => void): Promise<boolean> => {
-    setDockerStatus("busy");
-    setDockerDetail("checking…");
-    let status = await browserSetup.detectDocker();
-    if (!status.installed) {
-      setDockerDetail("not installed — installing…");
-      logFn("Docker not found. Installing now…");
+  // We install Camofox via `git clone + npm install + npm start` (the project's
+  // own README install path) so no Docker is required. The previous Docker-pull
+  // approach failed because the upstream image isn't published publicly
+  // (GHCR returned `denied`).
+  const ensureNode = async (logFn: (line: string) => void): Promise<boolean> => {
+    setNodeStatus("busy");
+    setNodeDetail("checking…");
+    const node = await browserSetup.detectNode();
+    const gitOk = await browserSetup.detectGit();
+    if (!node.installed) {
+      setNodeDetail("Node.js missing — installing…");
+      logFn("Node.js not found. Installing now…");
       const platform = await systemAPI.getPlatform();
       let pw: string | null = null;
       if (platform.isLinux || platform.isWSL) {
-        pw = await requestSudoPassword("install Docker (needed to run Camofox)");
+        pw = await requestSudoPassword("install Node.js (needed to run Camofox)");
         if (pw === null) {
-          setDockerStatus("err");
-          setDockerDetail("install cancelled");
+          setNodeStatus("err");
+          setNodeDetail("install cancelled");
           return false;
         }
       }
-      const inst = await browserSetup.installDocker(
-        (e) => e.data && logFn(e.data),
-        pw,
-      );
+      const inst = await browserSetup.installNode((e) => e.data && logFn(e.data), pw);
       if (!inst.success) {
-        setDockerStatus("err");
-        setDockerDetail("install failed");
+        setNodeStatus("err");
+        setNodeDetail("Node install failed — see log");
         return false;
       }
-      // re-detect; on macOS without brew the user may need to drag-to-install — bail with a helpful message.
-      status = await browserSetup.detectDocker();
-      if (!status.installed) {
-        setDockerStatus("warn");
-        setDockerDetail("installer launched — finish install, then click Install & start Camofox again");
-        return false;
-      }
-    }
-    if (!status.running) {
-      setDockerDetail("starting daemon…");
-      logFn("Starting Docker daemon…");
-      const up = await browserSetup.startDockerDaemon((e) => e.data && logFn(e.data));
-      if (!up) {
-        setDockerStatus("err");
-        setDockerDetail("daemon failed to start");
+      const recheck = await browserSetup.detectNode();
+      if (!recheck.installed) {
+        setNodeStatus("warn");
+        setNodeDetail("installer launched — finish install, then click Install & start Camofox again");
         return false;
       }
     }
-    setDockerStatus("ok");
-    setDockerDetail(status.version ? `running (server ${status.version})` : "running");
+    if (!gitOk) {
+      logFn("git not found. Installing now…");
+      const platform = await systemAPI.getPlatform();
+      let pw: string | null = null;
+      if (platform.isLinux || platform.isWSL) {
+        pw = await requestSudoPassword("install git (needed to fetch Camofox)");
+        if (pw === null) {
+          setNodeStatus("err");
+          setNodeDetail("install cancelled");
+          return false;
+        }
+      }
+      const ginst = await browserSetup.installGit((e) => e.data && logFn(e.data), pw);
+      if (!ginst.success) {
+        setNodeStatus("err");
+        setNodeDetail("git install failed — see log");
+        return false;
+      }
+    }
+    const final = await browserSetup.detectNode();
+    setNodeStatus("ok");
+    setNodeDetail(final.version ? `Node ${final.version}` : "ready");
     return true;
   };
 
@@ -299,21 +310,22 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     setCamofoxLog([]);
     const log = appendLog(setCamofoxLog);
     try {
-      const dockerReady = await ensureDocker(log);
-      if (!dockerReady) {
-        toast.error("Docker is not ready", { description: "See the log for details." });
+      const ready = await ensureNode(log);
+      if (!ready) {
+        toast.error("Couldn't prepare Node.js / git", { description: "See the log for details." });
         return;
       }
-      setContainerStatus("busy");
-      const run = await browserSetup.runCamofoxContainer((e) => e.data && log(e.data));
+      setServerStatus("busy");
+      const run = await browserSetup.setupAndStartCamofox((e) => e.data && log(e.data));
       if (!run.success) {
-        setContainerStatus("err");
-        toast.error("Failed to start Camofox container");
+        setServerStatus("err");
+        toast.error("Failed to start Camofox", { description: "See the log for details." });
         return;
       }
-      setContainerStatus("ok");
+      setServerStatus("ok");
       setHealthStatus("busy");
-      const healthy = await browserSetup.pollCamofox(60000, (e) => e.data && log(e.data));
+      // First-run npm install + Camoufox download can take several minutes.
+      const healthy = await browserSetup.pollCamofox(240000, (e) => e.data && log(e.data));
       setHealthStatus(healthy ? "ok" : "warn");
       // Save URL secret + persistence config regardless of health (URL is correct).
       await secretsStore.set("CAMOFOX_URL", camofoxUrl.trim() || "http://localhost:9377");
@@ -323,8 +335,8 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
         toast.success("Camofox is running", { description: "Restart Ron to take effect." });
         onConfigured?.();
       } else {
-        toast.warning("Camofox container started but health check timed out", {
-          description: "It may still be initializing — try again in a minute.",
+        toast.warning("Camofox started but health check timed out", {
+          description: "First-run downloads (~300MB) can take a while — try the health check again in a minute.",
         });
       }
     } finally {
@@ -335,11 +347,11 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   const handleStopCamofox = async () => {
     setCamofoxBusy(true);
     const log = appendLog(setCamofoxLog);
-    await browserSetup.stopCamofoxContainer((e) => e.data && log(e.data));
-    setContainerStatus("idle");
+    await browserSetup.stopCamofoxServer((e) => e.data && log(e.data));
+    setServerStatus("idle");
     setHealthStatus("idle");
     setCamofoxBusy(false);
-    toast.success("Camofox container stopped");
+    toast.success("Camofox stopped");
   };
 
   // ─── Local Chrome automation ──────────────────────────────────────────────
@@ -386,7 +398,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
 
       setCdpStatus("busy");
       await browserSetup.launchChromeWithCdp(chromePath, 9222, (e) => e.data && log(e.data));
-      const cdpUp = await browserSetup.pollCdp(9222, 30000, (e) => e.data && log(e.data));
+      const cdpUp = await browserSetup.pollCdp(9222, 90000, (e) => e.data && log(e.data));
       if (!cdpUp) {
         setCdpStatus("err");
         toast.error("Chrome started but the CDP endpoint did not respond");
@@ -593,8 +605,8 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           className="font-mono text-xs"
         />
         <p className="text-[11px] text-muted-foreground">
-          Default points at the local container Ron will install for you. Only change this if you're
-          running Camofox on another machine.
+          Default points at the local server Ron will install for you (no Docker needed — uses Node.js + git).
+          Only change this if you're running Camofox on another machine.
         </p>
       </div>
 
@@ -610,11 +622,11 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
 
       <div className="space-y-2 p-3 rounded-md border border-white/10 bg-background/20">
         <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Status</p>
-        <StatusRow label="Docker" status={dockerStatus} detail={dockerDetail} />
+        <StatusRow label="Node.js & git" status={nodeStatus} detail={nodeDetail} />
         <StatusRow
-          label="Container"
-          status={containerStatus}
-          detail={containerStatus === "ok" ? "ronbot-camofox running" : undefined}
+          label="Camofox server"
+          status={serverStatus}
+          detail={serverStatus === "ok" ? "running on port 9377" : undefined}
         />
         <StatusRow
           label="Health"
@@ -644,14 +656,14 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           )}
           Install &amp; start Camofox
         </Button>
-        {containerStatus === "ok" && (
+        {serverStatus === "ok" && (
           <Button variant="outline" onClick={handleInstallCamofox} disabled={camofoxBusy}>
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Restart container
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Restart
           </Button>
         )}
-        {containerStatus === "ok" && (
+        {serverStatus === "ok" && (
           <Button variant="outline" onClick={handleStopCamofox} disabled={camofoxBusy}>
-            <Square className="w-3.5 h-3.5 mr-1.5" /> Stop container
+            <Square className="w-3.5 h-3.5 mr-1.5" /> Stop
           </Button>
         )}
       </div>

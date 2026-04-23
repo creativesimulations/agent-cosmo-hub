@@ -87,6 +87,9 @@ const EnterLicenseKeyDialog = ({
             autoComplete="off"
             spellCheck={false}
           />
+          <p className="text-[10px] text-muted-foreground/70">
+            Developer tip: a key starting with <code className="text-foreground/80">RONBOT-MASTER-</code> unlocks any upgrade for testing.
+          </p>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={close} disabled={validating}>
