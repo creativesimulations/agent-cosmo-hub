@@ -134,7 +134,62 @@ const SubAgents = () => {
     return () => window.clearInterval(id);
   }, [agentConnected, refresh]);
 
-  const totalCount = useMemo(() => active.length + recent.length + failed.length, [active, recent, failed]);
+  // Merge live (in-memory) entries with the log-file-derived buckets so the
+  // tab shows current activity even when file logging is disabled. Live ids
+  // are prefixed `live-` so they never collide with log-derived ids.
+  const liveActive = useMemo(
+    () => live.filter((l) => l.status === "running").map((l) => ({
+      id: l.id,
+      goal: l.goal,
+      startedAt: l.startedAt,
+      lastActivity: l.startedAt,
+      lastEvent: l.lastEvent || "running (live)",
+    })),
+    [live],
+  );
+  const liveRecent = useMemo(
+    () => live
+      .filter((l) => l.status === "completed" && l.endedAt)
+      .map((l) => ({
+        id: l.id,
+        goal: l.goal,
+        startedAt: l.startedAt,
+        completedAt: l.endedAt!,
+        durationMs: Date.parse(l.endedAt!) - Date.parse(l.startedAt),
+      })),
+    [live],
+  );
+  const liveFailed = useMemo(
+    () => live
+      .filter((l) => l.status === "failed" && l.endedAt)
+      .map((l) => ({
+        id: l.id,
+        goal: l.goal,
+        startedAt: l.startedAt,
+        failedAt: l.endedAt!,
+        reason: l.reason,
+      })),
+    [live],
+  );
+
+  const mergedActive = useMemo(() => [...liveActive, ...active], [liveActive, active]);
+  const mergedRecent = useMemo(
+    () => [...liveRecent, ...recent].sort((a, b) =>
+      a.completedAt < b.completedAt ? 1 : -1,
+    ),
+    [liveRecent, recent],
+  );
+  const mergedFailed = useMemo(
+    () => [...liveFailed, ...failed].sort((a, b) =>
+      a.failedAt < b.failedAt ? 1 : -1,
+    ),
+    [liveFailed, failed],
+  );
+
+  const totalCount = useMemo(
+    () => mergedActive.length + mergedRecent.length + mergedFailed.length,
+    [mergedActive, mergedRecent, mergedFailed],
+  );
 
   if (!agentConnected) {
     return (
