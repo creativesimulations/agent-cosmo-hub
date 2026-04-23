@@ -23,6 +23,7 @@ import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 const CapabilityFixBubble = ({ hit }: { hit: ToolUnavailableHit }) => {
   const { registry, policy, setPolicy, readinessFor } = useCapabilities();
   const { settings } = useSettings();
+  const [browserOpen, setBrowserOpen] = useState(false);
   // toolUnavailable.capability ids: "browser" → "webBrowser", "webSearch" → "webSearch"
   const idMap: Record<string, string> = {
     browser: "webBrowser",
@@ -40,6 +41,7 @@ const CapabilityFixBubble = ({ hit }: { hit: ToolUnavailableHit }) => {
   const choice = policy[capId] ?? "ask";
   const readiness = capId in registry ? readinessFor(capId) : null;
   const internetSetting = settings.permissions?.internet;
+  const isBrowser = capId === "webBrowser";
 
   const checks = [
     {
