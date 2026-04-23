@@ -77,7 +77,6 @@ export const matchesApprovalPrompt = (text: string): boolean => {
 /** Crude classifier — guess the action from the prompt context. */
 export const guessAction = (context: string): PermissionAction => {
   const t = context.toLowerCase();
-  if (/sub[-\s]?agent|delegate_task|spawn.*agent/.test(t)) return "subAgent";
   if (/fetch|http|https?:|curl|wget|download/.test(t)) return "internet";
   if (/python|node\b|bash\b|\.py\b|\.js\b|\.sh\b|run script/.test(t)) return "script";
   if (/write file|edit file|patch|create file|save to|>\s*\S+|→\s*\S+/.test(t)) return "fileWrite";

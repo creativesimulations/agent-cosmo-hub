@@ -179,9 +179,6 @@ export const PermissionsProvider = ({ children }: { children: ReactNode }) => {
           case "script":
             patch.script = "allow";
             break;
-          case "subAgent":
-            patch.subAgent = "allow";
-            break;
         }
         update({ permissions: { ...settingsRef.current.permissions, ...patch } });
       }
