@@ -732,18 +732,33 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       <LogPanel lines={camofoxLog} />
 
       <div className="flex flex-wrap gap-2">
-        <Button
-          onClick={handleInstallCamofox}
-          disabled={camofoxBusy}
-          className="gradient-primary text-primary-foreground"
-        >
-          {camofoxBusy ? (
-            <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-          ) : (
-            <Play className="w-3.5 h-3.5 mr-1.5" />
-          )}
-          {camofoxInstalled ? "Start Camofox" : "Install &amp; start Camofox"}
-        </Button>
+        {!camofoxInstalled ? (
+          <Button
+            onClick={handleInstallCamofox}
+            disabled={camofoxBusy}
+            className="gradient-primary text-primary-foreground"
+          >
+            {camofoxBusy ? (
+              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <Play className="w-3.5 h-3.5 mr-1.5" />
+            )}
+            Install &amp; start Camofox
+          </Button>
+        ) : serverStatus !== "ok" ? (
+          <Button
+            onClick={handleInstallCamofox}
+            disabled={camofoxBusy}
+            className="gradient-primary text-primary-foreground"
+          >
+            {camofoxBusy ? (
+              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <Play className="w-3.5 h-3.5 mr-1.5" />
+            )}
+            Start Camofox
+          </Button>
+        ) : null}
         {serverStatus === "ok" && (
           <Button variant="outline" onClick={handleInstallCamofox} disabled={camofoxBusy}>
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Restart
@@ -778,18 +793,33 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       <LogPanel lines={chromeLog} />
 
       <div className="flex flex-wrap gap-2">
-        <Button
-          onClick={handleLaunchChrome}
-          disabled={chromeBusy}
-          className="gradient-primary text-primary-foreground"
-        >
-          {chromeBusy ? (
-            <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-          ) : (
-            <Play className="w-3.5 h-3.5 mr-1.5" />
-          )}
-          {chromeInstalled ? "Start Chrome &amp; connect" : "Install Chrome &amp; connect"}
-        </Button>
+        {!chromeInstalled ? (
+          <Button
+            onClick={handleLaunchChrome}
+            disabled={chromeBusy}
+            className="gradient-primary text-primary-foreground"
+          >
+            {chromeBusy ? (
+              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <Play className="w-3.5 h-3.5 mr-1.5" />
+            )}
+            Install Chrome &amp; connect
+          </Button>
+        ) : !chromeRunning ? (
+          <Button
+            onClick={handleLaunchChrome}
+            disabled={chromeBusy}
+            className="gradient-primary text-primary-foreground"
+          >
+            {chromeBusy ? (
+              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <Play className="w-3.5 h-3.5 mr-1.5" />
+            )}
+            Start Chrome &amp; connect
+          </Button>
+        ) : null}
         {chromeRunning && (
           <Button variant="outline" onClick={handleStopChrome} disabled={chromeBusy}>
             <Square className="w-3.5 h-3.5 mr-1.5" /> Stop Chrome
