@@ -69,10 +69,7 @@ export const secretsStore = {
   },
 
   async set(key: string, value: string): Promise<boolean> {
-    // Hard-block invalid env var names. Hyphens / spaces / dots break bash
-    // (it tries to execute `OPENROUTER-API-KEY=...` as a command). Callers
-    // should normalize via normalizeEnvVarName() before calling — this is a
-    // last-line safety net.
+    // Hard-block invalid env var names.
     const normalized = normalizeEnvVarName(key);
     if (!isValidEnvVarName(normalized)) {
       agentLogs.push({
@@ -91,6 +88,25 @@ export const secretsStore = {
         detail: 'Env var names cannot contain hyphens, spaces, or dots — they break bash parsing.',
       });
     }
+    const ok = await this._setRaw(normalized, value);
+    // Alias mirroring: keep legacy/canonical pairs in sync so both old and
+    // new Hermes builds find the key in ~/.hermes/.env.
+    if (ok) {
+      const alias = SECRET_ALIASES[normalized];
+      if (alias) {
+        await this._setRaw(alias, value);
+        agentLogs.push({
+          source: 'system',
+          level: 'debug',
+          summary: `secretsStore.set: mirrored ${normalized} → ${alias}`,
+          detail: 'Hermes docs ↔ legacy alias kept in sync for cross-version compatibility.',
+        });
+      }
+    }
+    return ok;
+  },
+
+  async _setRaw(normalized: string, value: string): Promise<boolean> {
     if (isElectron()) {
       const r = await window.electronAPI!.secretsSet(normalized, value);
       agentLogs.push({
