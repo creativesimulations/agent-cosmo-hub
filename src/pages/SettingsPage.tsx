@@ -21,7 +21,19 @@ import {
   ChevronDown,
   Shield,
   Sparkles,
+  Puzzle,
+  Wrench,
+  FolderOpen,
+  Box,
 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import InstallSkillDialog from "@/components/skills/InstallSkillDialog";
 import GlassCard from "@/components/ui/GlassCard";
 import {
   Collapsible,
@@ -191,6 +203,72 @@ const SettingsPage = () => {
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
+
+  // Tools & Skills section
+  const [installSkillOpen, setInstallSkillOpen] = useState(false);
+  const [installToolOpen, setInstallToolOpen] = useState(false);
+  const [reloadingToolsets, setReloadingToolsets] = useState(false);
+
+  // Sandbox / terminal backend
+  const [terminalBackend, setTerminalBackend] = useState<"local" | "docker" | "ssh">("local");
+
+  useEffect(() => {
+    if (!agentConnected) return;
+    let cancelled = false;
+    (async () => {
+      const cfg = await systemAPI.readConfig();
+      if (cancelled || !cfg.success || !cfg.content) return;
+      const m = cfg.content.match(/^terminal:\s*\n(?:[ \t]+.*\n)*?[ \t]+backend:\s*([a-z]+)/im);
+      if (m && (m[1] === "local" || m[1] === "docker" || m[1] === "ssh")) {
+        setTerminalBackend(m[1]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [agentConnected]);
+
+  const handleReloadToolsets = async () => {
+    setReloadingToolsets(true);
+    const r = await systemAPI.reloadToolsets();
+    setReloadingToolsets(false);
+    if (r.success) {
+      toast.success("Toolsets reloaded", {
+        description: "The agent will pick up new skills/tools on the next message.",
+      });
+    } else {
+      toast.error("Reload failed", { description: r.error || "See Logs for details." });
+    }
+  };
+
+  const handleRevealSkillsFolder = async () => {
+    const r = await systemAPI.revealSkillsFolder();
+    if (!r.success) {
+      toast.error("Couldn't open folder", { description: r.error || "Unknown error" });
+    }
+  };
+
+  const handleTerminalBackendChange = async (next: "local" | "docker" | "ssh") => {
+    setTerminalBackend(next);
+    const cfg = await systemAPI.readConfig();
+    let body = cfg.success && cfg.content ? cfg.content : "";
+    // Strip any existing managed terminal block, then append a fresh one.
+    body = body.replace(/^terminal:\s*\n(?:[ \t]+.*\n?)*/im, "").trimEnd();
+    body += `\n\nterminal:\n  backend: ${next}\n`;
+    const w = await systemAPI.writeConfig(body);
+    if (w.success) {
+      toast.success(`Terminal backend set to ${next}`, {
+        description:
+          next === "local"
+            ? "Commands run directly on this machine."
+            : next === "docker"
+              ? "Commands run inside a sandboxed Docker container. Set DOCKER_IMAGE in Secrets."
+              : "Commands run over SSH. Set SSH_HOST / SSH_USER / SSH_KEY_PATH in Secrets.",
+      });
+    } else {
+      toast.error("Couldn't save", { description: w.error || "Failed to update config" });
+    }
+  };
 
   useEffect(() => {
     if (!agentConnected) {
@@ -467,6 +545,75 @@ const SettingsPage = () => {
         <CapabilitiesPanel />
       </SettingsSection>
 
+      {/* ─── Tools & Skills ────────────────────────────────────── */}
+      {agentConnected && (
+        <SettingsSection icon={Puzzle} title="Tools & skills">
+          <p className="text-sm text-muted-foreground">
+            Drop in any Hermes-compatible skill or tool from a folder or Git URL — we validate the
+            manifest, install it under <code className="text-xs">~/.hermes/</code>, and enable it
+            for the next agent restart.
+          </p>
+          <div className="grid sm:grid-cols-2 gap-2">
+            <Button variant="outline" onClick={() => setInstallSkillOpen(true)}>
+              <Puzzle className="w-4 h-4 mr-2" /> Install skill…
+            </Button>
+            <Button variant="outline" onClick={() => setInstallToolOpen(true)}>
+              <Wrench className="w-4 h-4 mr-2" /> Install tool…
+            </Button>
+            <Button variant="outline" onClick={handleRevealSkillsFolder}>
+              <FolderOpen className="w-4 h-4 mr-2" /> Open ~/.hermes/skills
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleReloadToolsets}
+              disabled={reloadingToolsets}
+            >
+              {reloadingToolsets ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4 mr-2" />
+              )}
+              Reload toolsets
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Power users can also drop folders directly into{" "}
+            <code className="text-xs">~/.hermes/skills/</code> or{" "}
+            <code className="text-xs">~/.hermes/tools/</code> and click "Reload toolsets".
+          </p>
+        </SettingsSection>
+      )}
+
+      {/* ─── Sandbox / terminal backend ────────────────────────── */}
+      {agentConnected && (
+        <SettingsSection icon={Box} title="Sandbox">
+          <p className="text-sm text-muted-foreground">
+            Choose where the agent's <code>terminal</code> commands run. Default is your local
+            machine; pick Docker or SSH to isolate the agent from the host.
+          </p>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Terminal backend</Label>
+            <Select value={terminalBackend} onValueChange={(v) => void handleTerminalBackendChange(v as "local" | "docker" | "ssh")}>
+              <SelectTrigger className="w-full sm:w-72 bg-background/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="local">Local (this machine)</SelectItem>
+                <SelectItem value="docker">Docker container (sandboxed)</SelectItem>
+                <SelectItem value="ssh">Remote SSH host</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {terminalBackend === "local"
+                ? "Commands run directly on this machine with your user permissions."
+                : terminalBackend === "docker"
+                  ? "Commands run inside a Docker container. Add DOCKER_IMAGE in Secrets to override the default image."
+                  : "Commands run over SSH. Add SSH_HOST, SSH_USER, and SSH_KEY_PATH in Secrets."}
+            </p>
+          </div>
+        </SettingsSection>
+      )}
+
       <SettingsSection icon={History} title="Sessions & history">
         <div className="space-y-4 -mt-2">
           <div className="flex items-start justify-between gap-4 py-3 border-b border-border/40">
@@ -652,6 +799,17 @@ const SettingsPage = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <InstallSkillDialog
+        open={installSkillOpen}
+        onOpenChange={setInstallSkillOpen}
+        kind="skill"
+      />
+      <InstallSkillDialog
+        open={installToolOpen}
+        onOpenChange={setInstallToolOpen}
+        kind="tool"
+      />
 
       {/* Suppress unused-import warning for Database icon used in design discussions */}
       <Database className="hidden" />

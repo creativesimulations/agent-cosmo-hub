@@ -902,10 +902,23 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
             </DialogTitle>
             <DialogDescription>
               {step === "pick"
-                ? "Pick a backend so Ron can actually load web pages. Most modern sites block plain HTTP — you'll want a real browser here."
+                ? "Optional. Web search and page reading already work out of the box. Pick a backend below only if you want full browser automation — clicking buttons, filling forms, and taking screenshots."
                 : backend?.description}
             </DialogDescription>
           </DialogHeader>
+
+          {step === "pick" && (
+            <div className="rounded-lg border border-success/30 bg-success/5 px-3 py-2 mb-3 flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 text-success mt-0.5 shrink-0" />
+              <div className="text-xs">
+                <p className="font-medium text-foreground">Web is already working</p>
+                <p className="text-muted-foreground">
+                  <code>web_search</code> and <code>web_extract</code> are enabled by default —
+                  you only need a backend here for click/type/screenshot automation.
+                </p>
+              </div>
+            </div>
+          )}
 
           {step === "pick" ? renderPick() : renderConfigure()}
 

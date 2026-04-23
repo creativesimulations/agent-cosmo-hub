@@ -31,10 +31,12 @@ interface Prerequisite {
 const initialPrereqs: Prerequisite[] = [
   { id: "os", name: "Operating System", description: "Detecting platform...", status: "pending", required: true },
   { id: "wsl2", name: "WSL2 (Windows)", description: "Windows Subsystem for Linux 2", status: "pending", required: true, windowsOnly: true },
-  { id: "python", name: "Python 3.11+", description: "Required runtime", status: "pending", required: true },
-  { id: "pip", name: "pip", description: "Python package manager", status: "pending", required: true },
+  { id: "git", name: "Git", description: "Version control — required by the installer", status: "pending", required: true },
   { id: "curl", name: "curl", description: "Required to download the installer", status: "pending", required: true },
-  { id: "git", name: "Git", description: "Version control", status: "pending", required: true },
+  { id: "ripgrep", name: "ripgrep (rg)", description: "Fast file search — used by the agent's file tools", status: "pending", required: true },
+  // The official Hermes installer brings these in via uv. Listed for visibility only.
+  { id: "python", name: "Python 3.11+", description: "Auto-installed by Hermes if missing", status: "pending", required: false },
+  { id: "pip", name: "pip", description: "Auto-installed by Hermes if missing", status: "pending", required: false },
 ];
 
 const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
@@ -119,6 +121,14 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
       updatePrereq("git", { status: "missing", description: "Git not found" });
     }
 
+    updatePrereq("ripgrep", { status: "checking", description: "Checking ripgrep..." });
+    const rg = await systemAPI.checkRipgrep();
+    if (rg.installed) {
+      updatePrereq("ripgrep", { status: "found", version: rg.version, description: `ripgrep ${rg.version} installed` });
+    } else {
+      updatePrereq("ripgrep", { status: "missing", description: "ripgrep not found — required by the agent's file tools" });
+    }
+
     setScanning(false);
     setScanComplete(true);
   };
@@ -160,6 +170,9 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
         break;
       case "curl":
         result = await systemAPI.installCurl();
+        break;
+      case "ripgrep":
+        result = await systemAPI.installRipgrep();
         break;
       default:
         clearInterval(interval);
