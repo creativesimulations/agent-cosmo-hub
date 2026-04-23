@@ -536,11 +536,7 @@ const SettingsPage = () => {
       </SettingsSection>
 
       {/* ─── Updates ───────────────────────────────────────────── */}
-      <GlassCard className="p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <RefreshCw className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Updates</h2>
-        </div>
+      <SettingsSection icon={RefreshCw} title="Updates">
         <div className="-mt-2">
           <ToggleRow
             title="Auto-check for app & agent updates"
@@ -549,14 +545,15 @@ const SettingsPage = () => {
             onCheckedChange={(v) => update({ autoCheckUpdates: v })}
           />
         </div>
-      </GlassCard>
+      </SettingsSection>
 
       {/* ─── Danger Zone ───────────────────────────────────────── */}
-      <GlassCard className="p-6 space-y-4 border-destructive/40 bg-destructive/5">
-        <div className="flex items-center gap-2">
-          <AlertTriangle className="w-5 h-5 text-destructive" />
-          <h2 className="text-lg font-semibold text-foreground">Danger Zone</h2>
-        </div>
+      <SettingsSection
+        icon={AlertTriangle}
+        title="Danger Zone"
+        iconClassName="text-destructive"
+        className="border-destructive/40 bg-destructive/5"
+      >
         <p className="text-sm text-muted-foreground">
           Destructive actions. Both ask for confirmation first.
         </p>
@@ -598,7 +595,7 @@ const SettingsPage = () => {
             </Button>
           </div>
         </div>
-      </GlassCard>
+      </SettingsSection>
 
       {/* ─── Confirmation dialogs ──────────────────────────────── */}
       <AlertDialog open={confirmClearChat} onOpenChange={setConfirmClearChat}>
