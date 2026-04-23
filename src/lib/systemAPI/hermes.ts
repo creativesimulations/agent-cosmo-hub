@@ -593,42 +593,94 @@ export const readHermesPermissionsBlock = async (): Promise<string | null> => {
 };
 
 /**
- * Write/remove the managed `browser:` block in `~/.hermes/config.yaml`.
- * Currently only manages Camofox's `managed_persistence` flag; if `enabled`
- * is false we strip the block so the agent falls back to defaults.
+ * Managed `browser:` block state in ~/.hermes/config.yaml.
  *
- * Idempotent: only the BROWSER_BEGIN…BROWSER_END block is touched.
+ * We keep the in-memory desired state (camofox persistence + CDP url) so each
+ * surgical update preserves the other field. The BROWSER_BEGIN…BROWSER_END
+ * block is rewritten as a unit; nothing outside it is touched.
  */
-export const setBrowserCamofoxPersistence = async (
-  enabled: boolean,
+interface BrowserBlockState {
+  camofoxPersistence: boolean;
+  cdpUrl: string | null;
+}
+
+const parseBrowserBlock = (yaml: string): BrowserBlockState => {
+  const startIdx = yaml.indexOf(BROWSER_BEGIN);
+  const state: BrowserBlockState = { camofoxPersistence: false, cdpUrl: null };
+  if (startIdx === -1) return state;
+  const endIdx = yaml.indexOf(BROWSER_END, startIdx);
+  if (endIdx === -1) return state;
+  const block = yaml.slice(startIdx, endIdx);
+  if (/managed_persistence:\s*true/.test(block)) state.camofoxPersistence = true;
+  const cdpMatch = block.match(/cdp_url:\s*"?([^"\n]+)"?/);
+  if (cdpMatch) state.cdpUrl = cdpMatch[1].trim();
+  return state;
+};
+
+const writeBrowserBlock = async (
+  next: BrowserBlockState,
 ): Promise<{ success: boolean; error?: string }> => {
   const cfg = await readHermesFile(HERMES_CONFIG);
   const existing = cfg.success && cfg.content ? cfg.content : 'model: openrouter/auto\n';
   const stripped = stripManagedBlock(existing, BROWSER_BEGIN, BROWSER_END).replace(/\n+$/, '');
-  let next: string;
-  if (!enabled) {
-    next = `${stripped}\n`;
+
+  const isEmpty = !next.camofoxPersistence && !next.cdpUrl;
+  let out: string;
+  if (isEmpty) {
+    out = `${stripped}\n`;
   } else {
-    const block = [
-      BROWSER_BEGIN,
-      'browser:',
-      '  camofox:',
-      '    managed_persistence: true',
-      BROWSER_END,
-    ].join('\n');
-    next = `${stripped}\n\n${block}\n`;
+    const lines: string[] = [BROWSER_BEGIN, 'browser:'];
+    if (next.cdpUrl) {
+      lines.push(`  cdp_url: "${next.cdpUrl}"`);
+    }
+    if (next.camofoxPersistence) {
+      lines.push('  camofox:');
+      lines.push('    managed_persistence: true');
+    }
+    lines.push(BROWSER_END);
+    out = `${stripped}\n\n${lines.join('\n')}\n`;
   }
-  const w = await writeHermesFile(HERMES_CONFIG, next, '600');
+  const w = await writeHermesFile(HERMES_CONFIG, out, '600');
+  return w.success ? { success: true } : { success: false, error: 'Failed to write config.yaml browser block' };
+};
+
+/** Toggle Camofox `managed_persistence` while preserving any cdp_url already set. */
+export const setBrowserCamofoxPersistence = async (
+  enabled: boolean,
+): Promise<{ success: boolean; error?: string }> => {
+  const cfg = await readHermesFile(HERMES_CONFIG);
+  const existing = cfg.success && cfg.content ? cfg.content : '';
+  const current = parseBrowserBlock(existing);
+  const result = await writeBrowserBlock({ ...current, camofoxPersistence: enabled });
   agentLogs.push({
     source: 'system',
-    level: w.success ? 'info' : 'error',
-    summary: w.success
+    level: result.success ? 'info' : 'error',
+    summary: result.success
       ? `browser.camofox.managed_persistence ${enabled ? 'enabled' : 'cleared'} in config.yaml`
       : 'failed to update browser block in config.yaml',
   });
-  return w.success
-    ? { success: true }
-    : { success: false, error: 'Failed to write config.yaml browser block' };
+  return result;
+};
+
+/**
+ * Write `browser.cdp_url` in config.yaml so Hermes auto-connects to a Chrome
+ * we launched with `--remote-debugging-port`. Pass `null` to clear.
+ */
+export const setBrowserCdpUrl = async (
+  url: string | null,
+): Promise<{ success: boolean; error?: string }> => {
+  const cfg = await readHermesFile(HERMES_CONFIG);
+  const existing = cfg.success && cfg.content ? cfg.content : '';
+  const current = parseBrowserBlock(existing);
+  const result = await writeBrowserBlock({ ...current, cdpUrl: url });
+  agentLogs.push({
+    source: 'system',
+    level: result.success ? 'info' : 'error',
+    summary: result.success
+      ? `browser.cdp_url ${url ? `set to ${url}` : 'cleared'} in config.yaml`
+      : 'failed to update browser.cdp_url in config.yaml',
+  });
+  return result;
 };
 
 /** Hermes Agent installation, configuration, and lifecycle */
