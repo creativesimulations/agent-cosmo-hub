@@ -271,47 +271,67 @@ const AgentChat = () => {
                       Open Diagnostics
                     </Button>
                   )}
-                  {msg.permissionMismatch && (
-                    <div className="mt-2 p-2 rounded-md border border-warning/40 bg-warning/10 text-[11px] flex items-start gap-2">
-                      <ShieldAlert className="w-3.5 h-3.5 text-warning shrink-0 mt-0.5" />
-                      <div className="space-y-1">
-                        {msg.permissionMismatch.kind === "subAgentNoPrompt" ? (
-                          <p className="text-foreground/90">
-                            Your <span className="font-semibold">Sub-agent spawn</span> permission is set to{" "}
-                            <span className="font-semibold">{msg.permissionMismatch.agentSetting}</span>, but the agent ran sub-agents without prompting you.
-                            {msg.permissionMismatch.detail ? ` ${msg.permissionMismatch.detail}` : ""}{" "}
-                            The agent may not honor per-spawn approval. Switch the setting to <span className="font-semibold">Deny</span> to block all delegation, or check Diagnostics for the active permissions block.
-                          </p>
-                        ) : (
-                          <p className="text-foreground/90">
-                            The agent reported a {msg.permissionMismatch.kind === "internet" ? "no-internet" : "no-permission"} error,
-                            but Ronbot's permission for{" "}
-                            <span className="font-semibold capitalize">{msg.permissionMismatch.kind}</span> is set to{" "}
-                            <span className="font-semibold">{msg.permissionMismatch.agentSetting}</span>.
-                            The permissions block may not have been applied to the agent.
-                          </p>
-                        )}
-                        <div className="flex gap-3">
-                          <button
-                            type="button"
-                            className="text-warning hover:underline"
-                            onClick={() => { window.location.hash = "#/diagnostics"; }}
-                          >
-                            Open Diagnostics →
-                          </button>
-                          {msg.permissionMismatch.kind === "subAgentNoPrompt" && (
+                  {msg.permissionMismatch && (() => {
+                    const m = msg.permissionMismatch;
+                    const isNoPrompt = m.kind.endsWith("NoPrompt");
+                    const labelMap: Record<string, string> = {
+                      subAgentNoPrompt: "Sub-agent spawn",
+                      shellNoPrompt: "Shell command",
+                      fileWriteNoPrompt: "File write",
+                      fileReadNoPrompt: "File read",
+                      internetNoPrompt: "Internet access",
+                      scriptNoPrompt: "Script execution",
+                      shell: "Shell command",
+                      fileWrite: "File write",
+                      fileRead: "File read",
+                      internet: "Internet access",
+                      script: "Script execution",
+                      subAgent: "Sub-agent spawn",
+                    };
+                    const isSubAgent = m.kind === "subAgent" || m.kind === "subAgentNoPrompt";
+                    return (
+                      <div className="mt-2 p-2 rounded-md border border-warning/40 bg-warning/10 text-[11px] flex items-start gap-2">
+                        <ShieldAlert className="w-3.5 h-3.5 text-warning shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                          {isNoPrompt ? (
+                            <p className="text-foreground/90">
+                              Your <span className="font-semibold">{labelMap[m.kind]}</span> permission is set to{" "}
+                              <span className="font-semibold">{m.agentSetting}</span>, but the agent acted without prompting you.
+                              {m.detail ? ` ${m.detail}` : ""}{" "}
+                              The agent may not honor per-action approval for this category. Switch the setting to{" "}
+                              <span className="font-semibold">Deny</span> to block it entirely, or check Diagnostics for the active permissions block.
+                            </p>
+                          ) : (
+                            <p className="text-foreground/90">
+                              The agent reported a permission error for{" "}
+                              <span className="font-semibold">{labelMap[m.kind] || m.kind}</span>,
+                              but Ronbot's setting for it is{" "}
+                              <span className="font-semibold">{m.agentSetting}</span>.
+                              The permissions block may not have been applied to the agent.
+                            </p>
+                          )}
+                          <div className="flex gap-3">
                             <button
                               type="button"
                               className="text-warning hover:underline"
-                              onClick={() => { window.location.hash = "#/agents"; }}
+                              onClick={() => { window.location.hash = "#/diagnostics"; }}
                             >
-                              View sub-agents →
+                              Open Diagnostics →
                             </button>
-                          )}
+                            {isSubAgent && (
+                              <button
+                                type="button"
+                                className="text-warning hover:underline"
+                                onClick={() => { window.location.hash = "#/agents"; }}
+                              >
+                                View sub-agents →
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                   {msg.diagnostics && (msg.missingKey || msg.materializeFailed || msg.content.startsWith("Error") || msg.content.startsWith("Failed")) && (
                     <details className="mt-2 text-[11px] text-muted-foreground/70">
                       <summary className="cursor-pointer hover:text-muted-foreground">Diagnostics</summary>
