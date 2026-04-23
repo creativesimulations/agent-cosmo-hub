@@ -307,11 +307,7 @@ const SettingsPage = () => {
       </div>
 
       {/* ─── Appearance ─────────────────────────────────────────── */}
-      <GlassCard className="p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <Sun className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Appearance</h2>
-        </div>
+      <SettingsSection icon={Sun} title="Appearance">
         <div>
           <Label className="text-sm font-medium text-foreground">Theme</Label>
           <p className="text-xs text-muted-foreground mb-3">
@@ -341,7 +337,7 @@ const SettingsPage = () => {
             />
           </div>
         </div>
-      </GlassCard>
+      </SettingsSection>
 
       {/* ─── Agent Identity ─────────────────────────────────────── */}
       {agentConnected ? (
