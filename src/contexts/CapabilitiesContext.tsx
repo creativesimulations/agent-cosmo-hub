@@ -115,21 +115,21 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
   // Discovery: pull installed skills + stored secret keys.
   const rediscover = useCallback(async () => {
     try {
-      const skills = await systemAPI.listSkills?.().catch(() => []);
-      if (Array.isArray(skills)) {
+      const r = await systemAPI.listSkills?.();
+      if (r && r.success && Array.isArray(r.skills)) {
         setInstalledSkills(
-          skills.map((s) => ({
-            name: typeof s === "string" ? s : (s as { name?: string }).name || "",
-            category: typeof s === "object" ? (s as { category?: string }).category : undefined,
-            requiredSecrets: typeof s === "object" ? (s as { requiredSecrets?: string[] }).requiredSecrets : undefined,
-          })).filter((s) => s.name),
+          r.skills.map((s) => ({
+            name: s.name,
+            category: s.category,
+            requiredSecrets: s.requiredSecrets,
+          })),
         );
       }
     } catch { /* best effort */ }
     try {
-      const list = await systemAPI.secrets?.list?.().catch(() => []);
-      if (Array.isArray(list)) {
-        setStoredSecretKeys(list.map((e) => (typeof e === "string" ? e : (e as { key?: string }).key || "")).filter(Boolean));
+      const r = await systemAPI.secrets?.list?.();
+      if (r && Array.isArray(r.keys)) {
+        setStoredSecretKeys(r.keys);
       }
     } catch { /* best effort */ }
   }, []);
