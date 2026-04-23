@@ -162,7 +162,7 @@ const loadStoredSessionId = (): string | null => {
 
 export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const { settings } = useSettings();
-  const { recordUse } = useCapabilities();
+  const { recordUse, openCapabilityDecision } = useCapabilities();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadStoredMessages());
   const [isStreaming, setIsStreaming] = useState(false);
   const [queuedCount, setQueuedCount] = useState(0);
