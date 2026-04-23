@@ -6,6 +6,8 @@ import { useSettings } from "./SettingsContext";
 import { handleAgentReplyArrived } from "@/lib/notify";
 import { liveSubAgents } from "@/lib/liveSubAgents";
 import { detectToolUnavailable, type ToolUnavailableHit } from "@/lib/toolUnavailable";
+import { detectToolCalls } from "@/lib/toolUseDetection";
+import { useCapabilities } from "./CapabilitiesContext";
 
 /**
  * Chat is hoisted into a top-level context so:
@@ -91,6 +93,8 @@ export interface ChatMessage {
    *  (browser tool, web search, image gen, etc.) — surfaces a one-click
    *  diagnostic linking to the relevant Skills/Secrets entries. */
   toolUnavailable?: ToolUnavailableHit;
+  /** Capability ids the agent invoked (or attempted) during this turn. */
+  usedCapabilities?: string[];
 }
 
 interface QueueItem {
