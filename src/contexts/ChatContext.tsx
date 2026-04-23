@@ -70,9 +70,21 @@ export interface ChatMessage {
   diagnostics?: string;
   materializeFailed?: boolean;
   /** Inline warning when agent reported denial despite a Ronbot Allow setting,
-   *  or when sub-agents spawned without an "ask" prompt being shown. */
+   *  or when an action ran without an "ask" prompt being shown. */
   permissionMismatch?: {
-    kind: "internet" | "subAgent" | "shell" | "fileWrite" | "fileRead" | "script" | "subAgentNoPrompt";
+    kind:
+      | "internet"
+      | "subAgent"
+      | "shell"
+      | "fileWrite"
+      | "fileRead"
+      | "script"
+      | "subAgentNoPrompt"
+      | "shellNoPrompt"
+      | "fileWriteNoPrompt"
+      | "fileReadNoPrompt"
+      | "internetNoPrompt"
+      | "scriptNoPrompt";
     agentSetting: string;
     detail?: string;
   };
