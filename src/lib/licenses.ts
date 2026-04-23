@@ -151,6 +151,11 @@ const verifyLicenseSignature = async (
 export const parseLicenseKey = async (
   raw: string,
 ): Promise<{ upgradeId: string; payload: Record<string, unknown> } | null> => {
+  // Master/skeleton key: unlocks any upgrade. The caller (enterLicenseKey or
+  // isUpgradeUnlocked) decides which upgrade id to assign it to.
+  if (isMasterKey(raw)) {
+    return { upgradeId: '*', payload: { master: true } };
+  }
   const parts = raw.trim().split('.');
   if (parts.length !== 3) return null;
   const [upgradeId, payloadB64, sigB64] = parts;
@@ -169,7 +174,8 @@ export const isUpgradeUnlocked = async (id: string): Promise<boolean> => {
   const stored = await secretsStore.get(licenseKeyName(id));
   if (!stored) return false;
   const parsed = await parseLicenseKey(stored);
-  return parsed != null && parsed.upgradeId === id;
+  // Master key (upgradeId === '*') unlocks everything; otherwise must match.
+  return parsed != null && (parsed.upgradeId === '*' || parsed.upgradeId === id);
 };
 
 /**
@@ -184,7 +190,8 @@ export const enterLicenseKey = async (
 ): Promise<'ok' | 'wrong' | 'bad'> => {
   const parsed = await parseLicenseKey(rawKey);
   if (!parsed) return 'bad';
-  if (parsed.upgradeId !== upgradeId) return 'wrong';
+  // Master key unlocks any upgrade — store under this upgrade's slot.
+  if (parsed.upgradeId !== '*' && parsed.upgradeId !== upgradeId) return 'wrong';
   const saved = await secretsStore.set(licenseKeyName(upgradeId), rawKey.trim());
   return saved ? 'ok' : 'bad';
 };
