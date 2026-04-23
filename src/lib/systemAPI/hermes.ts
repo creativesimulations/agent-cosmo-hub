@@ -2502,4 +2502,158 @@ model: ${options.model || 'openrouter/auto'}
     const r = await coreAPI.runCommand(cmd, { timeout: 5000 });
     return { success: r.success || true }; // file managers often return non-zero
   },
+
+  /**
+   * Real CDP round-trip: open a tab, navigate it to example.com, verify the
+   * frame URL came back, then close the tab. Proves the agent can actually
+   * drive Chrome — not just that the port is listening.
+   */
+  async probeBrowserNavigate(cdpUrl: string, timeoutMs = 8000): Promise<{
+    ok: boolean;
+    error?: string;
+    finalUrl?: string;
+  }> {
+    const base = cdpUrl.replace(/\/+$/, '');
+    let targetId: string | undefined;
+    let wsUrl: string | undefined;
+    try {
+      // 1. Open a new tab.
+      const newResp = await fetch(`${base}/json/new?about:blank`, { method: 'PUT' }).catch(() =>
+        fetch(`${base}/json/new?about:blank`, { method: 'GET' }),
+      );
+      if (!newResp || !newResp.ok) {
+        return { ok: false, error: `CDP /json/new returned ${newResp?.status ?? 'no response'}` };
+      }
+      const newJson = await newResp.json() as { id?: string; webSocketDebuggerUrl?: string };
+      targetId = newJson.id;
+      wsUrl = newJson.webSocketDebuggerUrl;
+      if (!wsUrl) return { ok: false, error: 'CDP /json/new missing webSocketDebuggerUrl' };
+
+      // 2-3. Open WS, send Page.navigate then Page.getFrameTree.
+      const finalUrl: string = await new Promise((resolve, reject) => {
+        const ws = new WebSocket(wsUrl!);
+        let msgId = 0;
+        const pending = new Map<number, (v: unknown) => void>();
+        const timer = setTimeout(() => {
+          try { ws.close(); } catch { /* ignore */ }
+          reject(new Error(`CDP probe timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        const send = (method: string, params?: Record<string, unknown>) => {
+          const id = ++msgId;
+          return new Promise<unknown>((res) => {
+            pending.set(id, res);
+            ws.send(JSON.stringify({ id, method, params: params ?? {} }));
+          });
+        };
+        ws.onopen = async () => {
+          try {
+            await send('Page.enable');
+            await send('Page.navigate', { url: 'https://example.com' });
+            // Give the page a moment to commit before reading the tree.
+            await new Promise((r) => setTimeout(r, 1200));
+            const tree = await send('Page.getFrameTree') as {
+              result?: { frameTree?: { frame?: { url?: string } } };
+            };
+            const url = tree?.result?.frameTree?.frame?.url ?? '';
+            clearTimeout(timer);
+            try { ws.close(); } catch { /* ignore */ }
+            resolve(url);
+          } catch (e) {
+            clearTimeout(timer);
+            try { ws.close(); } catch { /* ignore */ }
+            reject(e);
+          }
+        };
+        ws.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error('CDP WebSocket error'));
+        };
+        ws.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(typeof ev.data === 'string' ? ev.data : '');
+            if (typeof data.id === 'number' && pending.has(data.id)) {
+              const resolver = pending.get(data.id)!;
+              pending.delete(data.id);
+              resolver(data);
+            }
+          } catch { /* ignore non-JSON frames */ }
+        };
+      });
+
+      const navOk = /example\.com/i.test(finalUrl);
+      return navOk
+        ? { ok: true, finalUrl }
+        : { ok: false, error: `Navigation did not land on example.com (got "${finalUrl}")`, finalUrl };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    } finally {
+      // 4. Close the tab we opened (best-effort).
+      if (targetId) {
+        try { await fetch(`${base}/json/close/${targetId}`, { method: 'GET' }); } catch { /* ignore */ }
+      }
+    }
+  },
+
+  /**
+   * Aggregated browser self-test. Runs everything Diagnostics + the install
+   * flow want to know about Ron's browser stack in one call.
+   */
+  async runBrowserSelfTest(): Promise<{
+    cdpUrl: string | null;
+    cdpReachable: boolean | null;
+    cdpVersion?: string;
+    navigateOk: boolean | null;
+    navigateError?: string;
+    navigateFinalUrl?: string;
+    webSearchBackend: 'tavily' | 'exa' | 'firecrawl' | 'parallel' | null;
+    hermesCliToolsetLoaded: boolean;
+    doctorReportsBrowser: boolean | null;
+  }> {
+    const diag = await this.getBrowserDiagnostics();
+
+    // Which web-search backend (if any) does the user have a key for?
+    let webSearchBackend: 'tavily' | 'exa' | 'firecrawl' | 'parallel' | null = null;
+    try {
+      const keys = await secretsStore.list();
+      const set = new Set((keys.keys || []).map((k) => k.toUpperCase()));
+      if (set.has('TAVILY_API_KEY')) webSearchBackend = 'tavily';
+      else if (set.has('EXA_API_KEY')) webSearchBackend = 'exa';
+      else if (set.has('FIRECRAWL_API_KEY')) webSearchBackend = 'firecrawl';
+      else if (set.has('PARALLEL_API_KEY')) webSearchBackend = 'parallel';
+    } catch { /* ignore */ }
+
+    // Real CDP round-trip (only if CDP is wired and reachable).
+    let navigateOk: boolean | null = null;
+    let navigateError: string | undefined;
+    let navigateFinalUrl: string | undefined;
+    if (diag.cdpUrl && diag.cdpReachable) {
+      const probe = await this.probeBrowserNavigate(diag.cdpUrl);
+      navigateOk = probe.ok;
+      navigateError = probe.error;
+      navigateFinalUrl = probe.finalUrl;
+    }
+
+    // Optional doctor grep (cheap one-shot).
+    let doctorReportsBrowser: boolean | null = null;
+    try {
+      const d = await runHermesCli('hermes doctor 2>&1 || true', { timeout: 30000 });
+      const out = `${d.stdout || ''}\n${d.stderr || ''}`;
+      // Look for a positive `✓ browser` row; tolerate ANSI/box chrome.
+      doctorReportsBrowser = /[✓✔]\s*browser\b/.test(out);
+    } catch {
+      doctorReportsBrowser = null;
+    }
+
+    return {
+      cdpUrl: diag.cdpUrl,
+      cdpReachable: diag.cdpReachable,
+      cdpVersion: diag.cdpVersion,
+      navigateOk,
+      navigateError,
+      navigateFinalUrl,
+      webSearchBackend,
+      hermesCliToolsetLoaded: diag.hermesWebToolsetLoaded,
+      doctorReportsBrowser,
+    };
+  },
 };
