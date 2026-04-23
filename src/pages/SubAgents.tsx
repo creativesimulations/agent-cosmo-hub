@@ -63,6 +63,7 @@ const SubAgents = () => {
   const [active, setActive] = useState<ActiveSubAgent[]>([]);
   const [recent, setRecent] = useState<RecentSubAgent[]>([]);
   const [failed, setFailed] = useState<FailedSubAgent[]>([]);
+  const [live, setLive] = useState<LiveSubAgent[]>(() => liveSubAgents.list());
   const [loggingDisabled, setLoggingDisabled] = useState(false);
   const [enablingLog, setEnablingLog] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -71,6 +72,11 @@ const SubAgents = () => {
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
   const seenCompletedRef = useRef<Set<string>>(new Set());
   const isFirstLoadRef = useRef(true);
+
+  // Subscribe to the in-memory live event bus (fed by ChatContext as the
+  // parent agent's stream is parsed). Ground-truth for activity RIGHT NOW —
+  // works even when ~/.hermes/logs/agent.log is disabled or hasn't flushed.
+  useEffect(() => liveSubAgents.subscribe(setLive), []);
 
   const refresh = useCallback(
     async (showToast = false) => {
