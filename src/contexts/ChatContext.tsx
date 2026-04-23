@@ -74,12 +74,10 @@ export interface ChatMessage {
   permissionMismatch?: {
     kind:
       | "internet"
-      | "subAgent"
       | "shell"
       | "fileWrite"
       | "fileRead"
       | "script"
-      | "subAgentNoPrompt"
       | "shellNoPrompt"
       | "fileWriteNoPrompt"
       | "fileReadNoPrompt"

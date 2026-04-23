@@ -275,7 +275,6 @@ const AgentChat = () => {
                     const m = msg.permissionMismatch;
                     const isNoPrompt = m.kind.endsWith("NoPrompt");
                     const labelMap: Record<string, string> = {
-                      subAgentNoPrompt: "Sub-agent spawn",
                       shellNoPrompt: "Shell command",
                       fileWriteNoPrompt: "File write",
                       fileReadNoPrompt: "File read",
@@ -286,9 +285,7 @@ const AgentChat = () => {
                       fileRead: "File read",
                       internet: "Internet access",
                       script: "Script execution",
-                      subAgent: "Sub-agent spawn",
                     };
-                    const isSubAgent = m.kind === "subAgent" || m.kind === "subAgentNoPrompt";
                     return (
                       <div className="mt-2 p-2 rounded-md border border-warning/40 bg-warning/10 text-[11px] flex items-start gap-2">
                         <ShieldAlert className="w-3.5 h-3.5 text-warning shrink-0 mt-0.5" />
@@ -318,15 +315,6 @@ const AgentChat = () => {
                             >
                               Open Diagnostics →
                             </button>
-                            {isSubAgent && (
-                              <button
-                                type="button"
-                                className="text-warning hover:underline"
-                                onClick={() => { window.location.hash = "#/agents"; }}
-                              >
-                                View sub-agents →
-                              </button>
-                            )}
                           </div>
                         </div>
                       </div>
