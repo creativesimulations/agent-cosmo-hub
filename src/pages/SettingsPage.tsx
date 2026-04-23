@@ -116,6 +116,66 @@ const ThemeOption = ({
   );
 };
 
+/**
+ * A collapsible Settings section. Header (icon + title) is the trigger,
+ * a chevron rotates 180° when open. Always starts closed.
+ *
+ * `bare` skips the outer GlassCard frame — used for panels that render
+ * their own GlassCard internally.
+ */
+const SettingsSection = ({
+  icon: Icon,
+  title,
+  iconClassName,
+  bare,
+  className,
+  children,
+}: {
+  icon: typeof Sun;
+  title: string;
+  iconClassName?: string;
+  bare?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) => {
+  const Header = (
+    <CollapsibleTrigger
+      className={cn(
+        "group w-full flex items-center justify-between gap-3 rounded-lg text-left transition-colors",
+        bare ? "px-5 py-4 glass hover:bg-foreground/5" : "hover:bg-foreground/5 -m-2 p-2",
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <Icon className={cn("w-5 h-5 text-primary", iconClassName)} />
+        <h2 className="text-lg font-semibold text-foreground">{title}</h2>
+      </div>
+      <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
+    </CollapsibleTrigger>
+  );
+
+  if (bare) {
+    return (
+      <Collapsible defaultOpen={false} className={cn("rounded-xl", className)}>
+        {Header}
+        <CollapsibleContent>
+          <div className="mt-3">{children}</div>
+        </CollapsibleContent>
+      </Collapsible>
+    );
+  }
+
+  return (
+    <GlassCard className={cn("p-6", className)}>
+      <Collapsible defaultOpen={false}>
+        {Header}
+        <CollapsibleContent>
+          <div className="pt-4 space-y-4">{children}</div>
+        </CollapsibleContent>
+      </Collapsible>
+    </GlassCard>
+  );
+};
+
 const SettingsPage = () => {
   const { connected: agentConnected, refresh: refreshConnection } = useAgentConnection();
   const { settings, update, reset } = useSettings();
