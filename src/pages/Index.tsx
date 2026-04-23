@@ -963,6 +963,27 @@ const Index = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={showResetConfirm} onOpenChange={(open) => !resetting && setShowResetConfirm(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset {existingAgentName} and install fresh?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete <code>~/.hermes</code> — including the agent persona, configuration, secrets, skills, sub-agent state, and chat history. This cannot be undone. After the reset, the install wizard will run from scratch.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resetting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleGuardReset}
+              disabled={resetting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {resetting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Resetting...</> : "Yes, delete and reinstall"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
