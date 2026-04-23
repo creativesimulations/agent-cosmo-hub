@@ -459,7 +459,7 @@ const Index = () => {
           </motion.div>
         )}
 
-
+        {mode === "install" && (
           <motion.div
             key="install"
             initial={{ opacity: 0, x: 30 }}
