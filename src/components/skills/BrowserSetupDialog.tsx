@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Cloud,
   Server,
-  Chrome,
+  Chrome as ChromeIcon,
   MousePointerClick,
   Flame,
   Lock,
