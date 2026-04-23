@@ -382,14 +382,29 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           let streamBuf = "";
 
           const extractGoal = (buf: string): string => {
+            // Try the broadest set of phrasings Hermes (and its forks) emit
+            // when announcing a delegated task. Order matters — most specific
+            // first so we don't grab a generic "task" key from elsewhere.
             const patterns: RegExp[] = [
-              /delegate_task[\s\S]{0,400}?["']?(?:task|goal|prompt)["']?\s*[:=]\s*["']([^"']{3,300})["']/i,
-              /spawn(?:ed)?\s+(?:sub[-_ ]?agent|child\s+agent)[\s\S]{0,200}?["']([^"']{3,300})["']/i,
-              /sub[-_ ]?agent[\s\S]{0,200}?goal\s*[:=]\s*["']([^"']{3,300})["']/i,
+              // JSON-ish args block: "task": "...", 'goal': '...', prompt: "..."
+              /["']?(?:task|goal|prompt|instruction|description|objective)["']?\s*[:=]\s*["']([^"']{3,400})["']/i,
+              // delegate_task(...) call with the goal as first positional arg
+              /delegate_task\s*\(\s*["']([^"']{3,400})["']/i,
+              // delegate_task tool call followed (possibly multi-line) by an arg
+              /delegate_task[\s\S]{0,600}?["']?(?:task|goal|prompt|instruction|description)["']?\s*[:=]\s*["']([^"']{3,400})["']/i,
+              // "spawned sub-agent to <do something>" / "spawn child agent: <goal>"
+              /spawn(?:ed|ing)?\s+(?:a\s+)?(?:sub[-_ ]?agent|child\s+agent|worker)\s*(?:to|:)\s*([^\n"']{6,300})/i,
+              // "delegating: <goal>" or "delegation: <goal>"
+              /delegat(?:ing|ion)\s*[:\-]\s*([^\n"']{6,300})/i,
+              // Unquoted task=... up to end of line / comma
+              /(?:task|goal|prompt)\s*[:=]\s*([^,\n}]{6,300})/i,
             ];
             for (const re of patterns) {
               const m = buf.match(re);
-              if (m) return m[1].trim();
+              if (m) {
+                const cleaned = m[1].trim().replace(/[",}\s]+$/, "");
+                if (cleaned.length >= 3) return cleaned;
+              }
             }
             return "(no goal captured)";
           };
