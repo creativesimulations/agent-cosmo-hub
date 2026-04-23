@@ -23,6 +23,19 @@ export interface BackendInfo {
 // In-memory fallback for browser dev
 const memoryStore = new Map<string, string>();
 
+/**
+ * Bidirectional alias map. When the user saves one side, we also write the
+ * other so both old and new Hermes builds find the key in ~/.hermes/.env.
+ *
+ * Canonical (per official docs) ↔ legacy alias.
+ */
+const SECRET_ALIASES: Record<string, string> = {
+  GOOGLE_API_KEY: 'GEMINI_API_KEY',
+  GEMINI_API_KEY: 'GOOGLE_API_KEY',
+  HF_TOKEN: 'HUGGINGFACE_API_KEY',
+  HUGGINGFACE_API_KEY: 'HF_TOKEN',
+};
+
 function devBackend(): BackendInfo {
   return { backend: 'memory', label: 'In-memory (dev preview only)' };
 }
