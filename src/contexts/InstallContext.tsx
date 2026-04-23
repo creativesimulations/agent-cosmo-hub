@@ -91,7 +91,7 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
   const [installSource, setInstallSource] = useState<InstallSource>("bundled");
   const [localAgentPath, setLocalAgentPath] = useState<string>("");
 
-  const [selectedFeatures, setSelectedFeatures] = useState<string[]>(["voice", "messaging"]);
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>(["voice", "messaging", "web"]);
 
   const [installing, setInstalling] = useState(false);
   const [installComplete, setInstallComplete] = useState(false);

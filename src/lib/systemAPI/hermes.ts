@@ -606,6 +606,25 @@ interface BrowserBlockState {
   cdpUrl: string | null;
 }
 
+const BROWSER_DEFAULT_TOOLSETS = ['hermes-web'];
+const BROWSER_DEFAULT_ALLOWED_TOOLS = [
+  'browser',
+  'browser_navigate',
+  'browser_click',
+  'browser_type',
+  'browser_snapshot',
+  'browser_wait',
+  'web',
+];
+
+const quoteYamlScalar = (value: string): string => `"${value.replace(/"/g, '\\"')}"`;
+
+const BROWSER_EXECUTABLE_FIX_SCRIPT = [
+  'if [ -d "$HOME/.hermes/hermes-agent/node_modules/.bin" ]; then',
+  '  find "$HOME/.hermes/hermes-agent/node_modules/.bin" -maxdepth 1 -type f \\( -name "agent-browser" -o -name "playwright" -o -name "playwright-core" \\) -exec chmod +x {} + 2>/dev/null || true',
+  'fi',
+].join('\n');
+
 const parseBrowserBlock = (yaml: string): BrowserBlockState => {
   const startIdx = yaml.indexOf(BROWSER_BEGIN);
   const state: BrowserBlockState = { camofoxPersistence: false, cdpUrl: null };
@@ -629,36 +648,35 @@ const writeBrowserBlock = async (
   // hermes-web toolset is always loaded whenever a browser backend is wired.
   stripped = stripManagedBlock(stripped, TOOLSETS_BEGIN, TOOLSETS_END).replace(/\n+$/, '');
 
-  const isEmpty = !next.camofoxPersistence && !next.cdpUrl;
-  let out: string;
-  if (isEmpty) {
-    out = `${stripped}\n`;
-  } else {
-    const lines: string[] = [BROWSER_BEGIN, 'browser:'];
-    // CRITICAL: explicitly mark the browser subsystem as enabled. Without this
-    // some Hermes builds short-circuit `browser_*` tool calls with a "browser
-    // permission error" even when the toolset is loaded and the CDP url is set.
-    lines.push('  enabled: true');
-    if (next.cdpUrl) {
-      lines.push(`  cdp_url: "${next.cdpUrl}"`);
-    }
-    if (next.camofoxPersistence) {
-      lines.push('  camofox:');
-      lines.push('    managed_persistence: true');
-    }
-    lines.push(BROWSER_END);
-
-    // Toolsets: ensure hermes-web is present so browser_navigate / browser_click
-    // / etc. are actually registered with the agent. We only manage our own
-    // block; users can still add other toolsets elsewhere in the file.
-    const toolsetLines = [
-      TOOLSETS_BEGIN,
-      'toolsets:',
-      '  - hermes-web',
-      TOOLSETS_END,
-    ];
-    out = `${stripped}\n\n${lines.join('\n')}\n\n${toolsetLines.join('\n')}\n`;
+  const lines: string[] = [BROWSER_BEGIN, 'browser:'];
+  // CRITICAL: explicitly mark the browser subsystem as enabled. Without this
+  // some Hermes builds short-circuit `browser_*` tool calls with a "browser
+  // permission error" even when the toolset is loaded and the CDP url is set.
+  lines.push('  enabled: true');
+  lines.push('  allow_network: true');
+  lines.push('  tool_allowlist:');
+  for (const tool of BROWSER_DEFAULT_ALLOWED_TOOLS) {
+    lines.push(`    - ${quoteYamlScalar(tool)}`);
   }
+  if (next.cdpUrl) {
+    lines.push(`  cdp_url: "${next.cdpUrl}"`);
+  }
+  if (next.camofoxPersistence) {
+    lines.push('  camofox:');
+    lines.push('    managed_persistence: true');
+  }
+  lines.push(BROWSER_END);
+
+  // Toolsets: ensure hermes-web is present so browser_navigate / browser_click
+  // / etc. are actually registered with the agent. We only manage our own
+  // block; users can still add other toolsets elsewhere in the file.
+  const toolsetLines = [
+    TOOLSETS_BEGIN,
+    'toolsets:',
+    ...BROWSER_DEFAULT_TOOLSETS.map((toolset) => `  - ${toolset}`),
+    TOOLSETS_END,
+  ];
+  const out = `${stripped}\n\n${lines.join('\n')}\n\n${toolsetLines.join('\n')}\n`;
   const w = await writeHermesFile(HERMES_CONFIG, out, '600');
   return w.success ? { success: true } : { success: false, error: 'Failed to write config.yaml browser block' };
 };
@@ -671,6 +689,9 @@ export const setBrowserCamofoxPersistence = async (
   const existing = cfg.success && cfg.content ? cfg.content : '';
   const current = parseBrowserBlock(existing);
   const result = await writeBrowserBlock({ ...current, camofoxPersistence: enabled });
+  if (result.success) {
+    await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }).catch(() => undefined);
+  }
   agentLogs.push({
     source: 'system',
     level: result.success ? 'info' : 'error',
@@ -692,6 +713,9 @@ export const setBrowserCdpUrl = async (
   const existing = cfg.success && cfg.content ? cfg.content : '';
   const current = parseBrowserBlock(existing);
   const result = await writeBrowserBlock({ ...current, cdpUrl: url });
+  if (result.success) {
+    await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }).catch(() => undefined);
+  }
   agentLogs.push({
     source: 'system',
     level: result.success ? 'info' : 'error',
@@ -945,10 +969,15 @@ export const hermesAPI = {
     // combined with the Windows PATH it overflows OS limits when inlined).
     const baseResult = await runHermesShell(fullCmd, { timeout: 600000 }, onOutput);
     if (!baseResult.success) return baseResult;
-    if (!extrasFlag) return finalizeInstallVerification(baseResult, onOutput);
+    if (!extrasFlag) {
+      await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }, onOutput).catch(() => undefined);
+      return finalizeInstallVerification(baseResult, onOutput);
+    }
 
     const extrasResult = await runHermesShell(extrasCmd(extrasFlag), { timeout: 300000 }, onOutput);
-    return extrasResult.success ? finalizeInstallVerification(extrasResult, onOutput) : extrasResult;
+    if (!extrasResult.success) return extrasResult;
+    await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }, onOutput).catch(() => undefined);
+    return finalizeInstallVerification(extrasResult, onOutput);
   },
 
   /** Install from a local folder the user already has on disk
@@ -1026,7 +1055,9 @@ export const hermesAPI = {
     ].join('\n');
 
     const result = await runHermesShell(script, { timeout: 600000 }, onOutput);
-    return result.success ? finalizeInstallVerification(result, onOutput) : result;
+    if (!result.success) return result;
+    await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }, onOutput).catch(() => undefined);
+    return finalizeInstallVerification(result, onOutput);
   },
 
   /** Alternative: install via git clone + editable pip into the dedicated venv.
@@ -1636,6 +1667,23 @@ the user is **${trimmed}**.
 model: ${options.model || 'openrouter/auto'}
 `;
     const configResult = await this.writeConfig(configYaml);
+    if (configResult.success) {
+      await writeHermesPermissions({
+        shell: 'ask',
+        shellAllowReadOnly: true,
+        fileRead: 'allow',
+        fileReadScope: 'scoped',
+        fileWrite: 'ask',
+        fileWriteScope: 'scoped',
+        internet: 'allow',
+        script: 'ask',
+        allowedFolders: [],
+        blockedFolders: [],
+        fallback: 'ask',
+      }).catch(() => undefined);
+      await writeBrowserBlock({ camofoxPersistence: false, cdpUrl: null }).catch(() => undefined);
+      await this.setSkillEnabled('browser', true).catch(() => undefined);
+    }
 
     if (options.name && options.name.trim()) {
       await this.setAgentName(options.name);
