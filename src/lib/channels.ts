@@ -1,16 +1,23 @@
 /**
  * Channels catalog — messaging gateways the agent can speak through.
  *
- * Free channels use Hermes' built-in gateway support and are configured via
- * a guided wizard that walks the user through obtaining credentials.
- * Paid channels are gated behind a one-time `Upgrade` (see ./licenses.ts).
+ * Names, env vars, and setup steps are aligned with the official
+ * Hermes messaging docs:
+ *   https://hermes-agent.nousresearch.com/docs/user-guide/messaging/
  *
  * Each channel declares the env-var secrets it needs, where to find them,
- * and copy-paste-ready setup instructions for the wizard.
+ * and copy-paste-ready setup instructions for the wizard. The wizard
+ * writes secrets to the OS keychain and materialises them into
+ * `~/.hermes/.env` so `hermes gateway` can pick them up.
+ *
+ * Security: every Hermes platform denies all users by default unless an
+ * `*_ALLOWED_USERS` env var is set or the user is approved via DM
+ * pairing. We always collect the allowlist credential up-front so the
+ * agent works on first message instead of silently dropping everything.
  */
 
 import type { LucideIcon } from 'lucide-react';
-import { Send, MessageSquare, Mail, Phone, Hash } from 'lucide-react';
+import { Send, MessageSquare, Mail, Phone, Hash, Lock } from 'lucide-react';
 
 export type ChannelTier = 'free' | 'paid';
 
@@ -38,7 +45,7 @@ export interface ChannelSetupStep {
 
 export interface Channel {
   /** Stable id, also the gateway name in `~/.hermes/config.yaml`. */
-  id: 'telegram' | 'slack' | 'email' | 'whatsapp' | 'discord';
+  id: 'telegram' | 'slack' | 'email' | 'whatsapp' | 'discord' | 'signal';
   /** Display name. */
   name: string;
   /** One-line tagline shown on the card. */
@@ -60,6 +67,7 @@ export interface Channel {
 }
 
 export const CHANNELS: Channel[] = [
+  // ─── Telegram ─────────────────────────────────────────────────────
   {
     id: 'telegram',
     name: 'Telegram',
@@ -70,23 +78,37 @@ export const CHANNELS: Channel[] = [
     setupSteps: [
       {
         title: 'Open BotFather in Telegram',
-        body: "BotFather is Telegram's official tool for creating bots. Open it and send the message /newbot.",
+        body: "BotFather is Telegram's official tool for creating bots. Open it and send /newbot.",
         link: { label: 'Open @BotFather', url: 'https://t.me/BotFather' },
       },
       {
         title: 'Pick a name and username',
-        body: "BotFather will ask for a display name (e.g. 'Ron') then a username ending in 'bot' (e.g. ron_my_agent_bot).",
+        body: "BotFather will ask for a display name (anything) then a username that must end in 'bot' (e.g. ron_my_agent_bot).",
       },
       {
         title: 'Copy the bot token',
-        body: "BotFather will reply with a token that looks like 1234567890:ABCdef-ghIJkl. Copy it — you'll paste it in the next step. Keep it secret: anyone with it controls the bot.",
+        body: "BotFather replies with a token like 1234567890:ABCdef-ghIJkl. Copy it. Anyone with this token controls the bot — keep it secret.",
+      },
+      {
+        title: 'Find your Telegram user ID',
+        body: "Open @userinfobot in Telegram and send any message — it replies with your numeric user ID. You'll paste this as the allowed user so the bot only listens to you.",
+        link: { label: 'Open @userinfobot', url: 'https://t.me/userinfobot' },
       },
     ],
     credentials: [
       { envVar: 'TELEGRAM_BOT_TOKEN', label: 'Bot token', hint: 'Looks like 1234567890:ABCdef…' },
+      {
+        envVar: 'TELEGRAM_ALLOWED_USERS',
+        label: 'Allowed Telegram user IDs',
+        hint: 'Your numeric ID from @userinfobot. Comma-separated for multiple.',
+        inputType: 'text',
+      },
     ],
-    testHint: "We'll send a test message to confirm Telegram accepts the token.",
+    testHint:
+      "We'll verify the token with Telegram's API and confirm only the listed users can message the bot.",
   },
+
+  // ─── Slack ────────────────────────────────────────────────────────
   {
     id: 'slack',
     name: 'Slack',
@@ -97,28 +119,48 @@ export const CHANNELS: Channel[] = [
     setupSteps: [
       {
         title: 'Create a new Slack app',
-        body: "On the Slack API site click 'Create New App' → 'From scratch'. Name it after your agent and pick the workspace to install it in.",
+        body: "On api.slack.com/apps click 'Create New App' → 'From scratch'. Name it after your agent and pick the workspace to install it in.",
         link: { label: 'Open api.slack.com/apps', url: 'https://api.slack.com/apps' },
       },
       {
-        title: 'Add bot scopes and install',
-        body: "Under 'OAuth & Permissions' add the scopes chat:write, im:history, channels:history. Then click 'Install to Workspace' at the top of the page.",
+        title: 'Add bot scopes',
+        body: "Under 'OAuth & Permissions' add bot scopes: app_mentions:read, chat:write, im:history, im:read, im:write, groups:history, mpim:history, channels:history, users:read, files:read, files:write.",
       },
       {
         title: 'Enable Socket Mode',
-        body: "Under 'Socket Mode' toggle it on and generate an app-level token with the connections:write scope. You'll get an xapp- token.",
+        body: "Under 'Socket Mode' toggle it on, then generate an App-Level Token with the connections:write scope. You'll get an xapp- token — copy it.",
       },
       {
-        title: 'Copy both tokens',
-        body: "Copy the Bot User OAuth Token (starts with xoxb-) and the App-Level Token (starts with xapp-). Paste them in the next step.",
+        title: 'Subscribe to events',
+        body: "Under 'Event Subscriptions' toggle Enable Events on, then under 'Subscribe to bot events' add: message.im, message.channels, message.groups, app_mention. Save changes.",
+      },
+      {
+        title: 'Enable the Messages tab',
+        body: "Under 'App Home' → 'Show Tabs' toggle the Messages Tab on, and tick 'Allow users to send Slash commands and messages from the messages tab'. Without this, DMs are blocked.",
+      },
+      {
+        title: 'Install to workspace and copy the bot token',
+        body: "Click 'Install to Workspace' at the top and approve. You'll get a Bot User OAuth Token starting with xoxb-. Copy both that and the xapp- App-Level Token.",
+      },
+      {
+        title: 'Copy your Slack Member ID',
+        body: "Click your own avatar → View full profile → ⋮ → Copy member ID. It looks like U01ABC2DEF3. You'll paste this as the allowed user.",
       },
     ],
     credentials: [
       { envVar: 'SLACK_BOT_TOKEN', label: 'Bot token', hint: 'Starts with xoxb-' },
       { envVar: 'SLACK_APP_TOKEN', label: 'App-level token', hint: 'Starts with xapp-' },
+      {
+        envVar: 'SLACK_ALLOWED_USERS',
+        label: 'Allowed Slack member IDs',
+        hint: 'e.g. U01ABC2DEF3 — comma-separated for multiple',
+        inputType: 'text',
+      },
     ],
-    testHint: "We'll verify both tokens are accepted by Slack's API.",
+    testHint: "We'll verify both tokens are accepted by Slack and confirm the allowlist is set.",
   },
+
+  // ─── Email ────────────────────────────────────────────────────────
   {
     id: 'email',
     name: 'Email',
@@ -128,98 +170,221 @@ export const CHANNELS: Channel[] = [
     difficulty: 'Easy',
     setupSteps: [
       {
-        title: 'Pick (or create) an email address for your agent',
-        body: "We recommend a dedicated address — e.g. ron@yourdomain.com or a free Gmail. Your agent will receive messages here and reply from the same address.",
+        title: 'Pick (or create) a dedicated email address for your agent',
+        body: "Don't use your personal email — the agent stores the password and reads the inbox. We recommend a free Gmail or a dedicated address like ron@yourdomain.com.",
+      },
+      {
+        title: 'Enable IMAP',
+        body: "On Gmail: Settings → 'Forwarding and POP/IMAP' → enable IMAP. Most other providers have IMAP on by default.",
       },
       {
         title: 'Generate an app password',
-        body: "For Gmail and most providers, you need an app-specific password (not your normal password). For Gmail, enable 2-step verification first, then create an app password.",
+        body: "If your provider supports 2FA (Gmail does, and requires it), create an app-specific password instead of using your normal one.",
         link: { label: 'Gmail app passwords', url: 'https://myaccount.google.com/apppasswords' },
       },
       {
         title: 'Note your IMAP and SMTP servers',
-        body: "Gmail: smtp.gmail.com / imap.gmail.com. iCloud: smtp.mail.me.com / imap.mail.me.com. Outlook: smtp-mail.outlook.com / outlook.office365.com.",
+        body: "Gmail: imap.gmail.com / smtp.gmail.com. iCloud: imap.mail.me.com / smtp.mail.me.com. Outlook: outlook.office365.com / smtp.office365.com.",
       },
     ],
     credentials: [
-      { envVar: 'SMTP_HOST', label: 'SMTP server', hint: 'e.g. smtp.gmail.com', inputType: 'text' },
-      { envVar: 'SMTP_PORT', label: 'SMTP port', hint: 'Usually 587', inputType: 'text', optional: true },
-      { envVar: 'SMTP_USER', label: 'Email address', hint: 'The agent\'s email', inputType: 'text' },
-      { envVar: 'SMTP_PASS', label: 'App password', hint: 'Generated above' },
-      { envVar: 'IMAP_HOST', label: 'IMAP server', hint: 'e.g. imap.gmail.com', inputType: 'text' },
-      { envVar: 'IMAP_USER', label: 'IMAP user', hint: 'Usually same as email', inputType: 'text' },
-      { envVar: 'IMAP_PASS', label: 'IMAP password', hint: 'Usually same app password' },
+      {
+        envVar: 'EMAIL_ADDRESS',
+        label: "Agent's email address",
+        hint: 'e.g. ron@yourdomain.com',
+        inputType: 'text',
+      },
+      { envVar: 'EMAIL_PASSWORD', label: 'Email password', hint: 'App password if you use 2FA' },
+      {
+        envVar: 'EMAIL_IMAP_HOST',
+        label: 'IMAP server',
+        hint: 'e.g. imap.gmail.com',
+        inputType: 'text',
+      },
+      {
+        envVar: 'EMAIL_SMTP_HOST',
+        label: 'SMTP server',
+        hint: 'e.g. smtp.gmail.com',
+        inputType: 'text',
+      },
+      {
+        envVar: 'EMAIL_IMAP_PORT',
+        label: 'IMAP port',
+        hint: 'Default 993',
+        inputType: 'text',
+        optional: true,
+      },
+      {
+        envVar: 'EMAIL_SMTP_PORT',
+        label: 'SMTP port',
+        hint: 'Default 587',
+        inputType: 'text',
+        optional: true,
+      },
+      {
+        envVar: 'EMAIL_ALLOWED_USERS',
+        label: 'Allowed sender addresses',
+        hint: 'Comma-separated. Without this, the bot ignores everyone except via pairing.',
+        inputType: 'text',
+      },
     ],
-    testHint: "We'll send a test email to the agent's own address to confirm SMTP and IMAP both work.",
+    testHint:
+      "We'll verify IMAP and SMTP both connect with the credentials and confirm the allowlist is set.",
   },
+
+  // ─── WhatsApp (Baileys / WhatsApp Web) ────────────────────────────
   {
     id: 'whatsapp',
     name: 'WhatsApp',
-    tagline: 'Reach your agent on the world\'s biggest messenger.',
+    tagline: "Chat with your agent on the world's biggest messenger.",
     tier: 'free',
     icon: Phone,
-    difficulty: 'Advanced',
+    difficulty: 'Medium',
     setupSteps: [
       {
-        title: 'Create a Meta Developer account',
-        body: "WhatsApp Business is run by Meta. Sign up for a free developer account if you don't already have one.",
-        link: { label: 'Open Meta for Developers', url: 'https://developers.facebook.com/' },
+        title: 'Pick a phone number',
+        body: "Two options: dedicate a separate phone number to the bot (recommended — cleanest UX, lower ban risk), or use your personal WhatsApp and message yourself. A second SIM, Google Voice, or a prepaid number all work.",
       },
       {
-        title: 'Create a new app and add WhatsApp',
-        body: "From your dashboard click 'Create App' → 'Other' → 'Business'. Once created, on the app's page click 'Add product' and pick WhatsApp.",
+        title: 'Run the WhatsApp pairing wizard',
+        body: "After enabling WhatsApp here, open a terminal and run `hermes whatsapp`. It installs the bridge dependencies (Node.js v18+ required) and shows a QR code.",
       },
       {
-        title: 'Copy the test phone number ID and access token',
-        body: "Meta gives you a free test number you can use to message up to 5 verified phone numbers. Copy the Phone Number ID and the temporary Access Token from the API Setup page.",
+        title: 'Scan the QR code from your phone',
+        body: "On your phone open WhatsApp → Settings → Linked Devices → Link a Device, then scan the QR code in the terminal. Hermes saves the session under ~/.hermes/platforms/whatsapp/session and reuses it across restarts.",
       },
       {
-        title: 'Pick a verify token',
-        body: "Make up a long random string (any letters and numbers). You'll paste this into Meta's webhook config to prove our agent owns the webhook URL.",
-      },
-      {
-        title: 'Add your phone number as a recipient',
-        body: "Still on the API Setup page, under 'To', click 'Manage phone number list' and add your own phone number as a recipient. Confirm the code Meta texts you.",
+        title: 'Pick the allowed phone numbers',
+        body: "Enter the phone numbers (with country code, no `+` or spaces) that are allowed to message the bot — usually just yours. Use `*` to allow everyone (not recommended).",
       },
     ],
     credentials: [
-      { envVar: 'WHATSAPP_PHONE_NUMBER_ID', label: 'Phone number ID', hint: 'A long number from API Setup', inputType: 'text' },
-      { envVar: 'WHATSAPP_ACCESS_TOKEN', label: 'Access token', hint: 'Starts with EAA…' },
-      { envVar: 'WHATSAPP_VERIFY_TOKEN', label: 'Webhook verify token', hint: 'The string you made up' },
+      {
+        envVar: 'WHATSAPP_ENABLED',
+        label: 'Enable WhatsApp',
+        hint: 'Set to true to turn the WhatsApp adapter on.',
+        inputType: 'text',
+      },
+      {
+        envVar: 'WHATSAPP_MODE',
+        label: 'Mode',
+        hint: '"bot" for a dedicated bot number, or "self-chat" for your own number',
+        inputType: 'text',
+      },
+      {
+        envVar: 'WHATSAPP_ALLOWED_USERS',
+        label: 'Allowed phone numbers',
+        hint: 'e.g. 15551234567 (country code, no +). Comma-separated. Or `*` for all.',
+        inputType: 'text',
+      },
     ],
-    testHint: "We'll send a 'hello' WhatsApp message to your verified phone number.",
+    testHint:
+      "Pairing happens via QR code in the terminal — after you've run `hermes whatsapp` and scanned, we confirm the saved session exists.",
   },
+
+  // ─── Discord ──────────────────────────────────────────────────────
   {
     id: 'discord',
     name: 'Discord',
-    tagline: 'Talk to your agent in any Discord server.',
-    tier: 'paid',
-    upgradeId: 'discord',
+    tagline: 'Talk to your agent in any Discord server or DM.',
+    tier: 'free',
     icon: MessageSquare,
     difficulty: 'Medium',
     setupSteps: [
       {
         title: 'Create a Discord application',
-        body: "On the Discord developer portal, click 'New Application'. Name it after your agent.",
-        link: { label: 'Open Discord developer portal', url: 'https://discord.com/developers/applications' },
+        body: "On the Discord developer portal click 'New Application' and name it after your agent.",
+        link: {
+          label: 'Open Discord developer portal',
+          url: 'https://discord.com/developers/applications',
+        },
       },
       {
         title: 'Add a bot user',
-        body: "On the left sidebar click 'Bot' → 'Add Bot'. Under 'Privileged Gateway Intents' enable 'Message Content Intent'.",
+        body: "On the left sidebar click 'Bot' → 'Add Bot'.",
       },
       {
-        title: 'Copy the bot token',
-        body: "Click 'Reset Token' and copy the value. Anyone with this token controls the bot — keep it secret.",
+        title: 'Enable the privileged intents',
+        body: "Still on the Bot page, scroll to 'Privileged Gateway Intents' and enable BOTH 'Server Members Intent' and 'Message Content Intent'. Without Message Content, the bot literally cannot read what you typed. Click Save Changes.",
+      },
+      {
+        title: 'Reset and copy the bot token',
+        body: "Under 'Token' click 'Reset Token' and copy it immediately — Discord only shows it once. Anyone with this token controls the bot.",
       },
       {
         title: 'Invite the bot to your server',
-        body: "Under 'OAuth2' → 'URL Generator' tick 'bot' and 'applications.commands', then under 'Bot Permissions' tick 'Send Messages' and 'Read Message History'. Open the generated URL and add the bot to a server you own.",
+        body: "Under 'OAuth2' → 'URL Generator' tick `bot` and `applications.commands`, then under Bot Permissions tick: View Channels, Send Messages, Read Message History, Embed Links, Attach Files, Send Messages in Threads, Add Reactions. Open the generated URL and add the bot to a server you own.",
+      },
+      {
+        title: 'Find your Discord user ID',
+        body: "In Discord open Settings → Advanced → enable Developer Mode. Then right-click your own username anywhere → Copy User ID. It's a long number like 284102345871466496.",
       },
     ],
     credentials: [
       { envVar: 'DISCORD_BOT_TOKEN', label: 'Bot token', hint: 'Long string with dots' },
+      {
+        envVar: 'DISCORD_ALLOWED_USERS',
+        label: 'Allowed Discord user IDs',
+        hint: 'Your user ID. Comma-separated for multiple.',
+        inputType: 'text',
+      },
     ],
-    testHint: "We'll verify Discord accepts the token by fetching the bot's profile.",
+    testHint:
+      "We'll verify Discord accepts the token by fetching the bot's profile, and confirm the allowlist is set.",
+  },
+
+  // ─── Signal ───────────────────────────────────────────────────────
+  {
+    id: 'signal',
+    name: 'Signal',
+    tagline: 'End-to-end encrypted chat with your agent.',
+    tier: 'free',
+    icon: Lock,
+    difficulty: 'Advanced',
+    setupSteps: [
+      {
+        title: 'Install signal-cli',
+        body: "Hermes talks to Signal through the signal-cli daemon (requires Java 17+). On macOS: `brew install signal-cli`. On Linux: download the latest release from GitHub.",
+        link: {
+          label: 'signal-cli releases',
+          url: 'https://github.com/AsamK/signal-cli/releases',
+        },
+      },
+      {
+        title: 'Link your Signal account',
+        body: "Run `signal-cli link -n \"HermesAgent\"` in a terminal — it shows a QR code. On your phone open Signal → Settings → Linked Devices → Link New Device, then scan the QR.",
+      },
+      {
+        title: 'Start the signal-cli daemon',
+        body: "Run `signal-cli --account +YOURNUMBER daemon --http 127.0.0.1:8080` (replace +YOURNUMBER with your phone number in E.164 format). Keep it running — use systemd, tmux, or screen.",
+      },
+      {
+        title: 'Choose who can message the bot',
+        body: "Enter the phone numbers (E.164, with the leading `+`) that are allowed to talk to the agent. Without an allowlist, every Signal sender is denied for safety.",
+      },
+    ],
+    credentials: [
+      {
+        envVar: 'SIGNAL_HTTP_URL',
+        label: 'signal-cli HTTP endpoint',
+        hint: 'Default http://127.0.0.1:8080',
+        inputType: 'text',
+      },
+      {
+        envVar: 'SIGNAL_ACCOUNT',
+        label: 'Bot phone number',
+        hint: 'E.164 format, e.g. +15551234567',
+        inputType: 'text',
+      },
+      {
+        envVar: 'SIGNAL_ALLOWED_USERS',
+        label: 'Allowed phone numbers',
+        hint: 'E.164 format, comma-separated. e.g. +15551234567,+15559876543',
+        inputType: 'text',
+      },
+    ],
+    testHint:
+      "We'll ping the signal-cli daemon to make sure it's running and verify the account is linked.",
   },
 ];
 
