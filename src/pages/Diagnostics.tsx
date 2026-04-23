@@ -277,6 +277,9 @@ const Diagnostics = () => {
         )}
       </GlassCard>
 
+      {/* Recommended packages — non-blocking, install after the wizard */}
+      <RecommendedPackages />
+
       {/* Credential store snapshot — source of truth, before materialize */}
       <GlassCard className="p-4 space-y-2">
         <div className="flex items-center justify-between">
