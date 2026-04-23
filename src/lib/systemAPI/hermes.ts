@@ -1677,22 +1677,19 @@ the user is **${trimmed}**.
 model: ${options.model || 'openrouter/auto'}
 `;
     const configResult = await this.writeConfig(configYaml);
+    // Bootstrap a fresh agent with the official `hermes-cli` toolset already
+    // loaded so web/browser/terminal/file/etc. work immediately.
+    const initialYaml = `${configYaml}\n# ─── Managed by Ronbot: toolsets (do not edit) ───\ntoolsets:\n  - hermes-cli\n# ─── End Ronbot toolsets ───\n`;
+    await this.writeConfig(initialYaml).catch(() => undefined);
     if (configResult.success) {
-      await writeHermesPermissions({
-        shell: 'ask',
-        shellAllowReadOnly: true,
-        fileRead: 'allow',
-        fileReadScope: 'scoped',
-        fileWrite: 'ask',
-        fileWriteScope: 'scoped',
-        internet: 'allow',
-        script: 'ask',
-        allowedFolders: [],
-        blockedFolders: [],
-        fallback: 'ask',
-      }).catch(() => undefined);
+      // Use the up-to-date defaults so all per-tool keys are emitted.
+      const { DEFAULT_PERMISSIONS } = await import('../permissions');
+      await writeHermesPermissions(DEFAULT_PERMISSIONS).catch(() => undefined);
       await writeBrowserBlock({ camofoxPersistence: false, cdpUrl: null }).catch(() => undefined);
       await this.setSkillEnabled('browser', true).catch(() => undefined);
+      // Make sure shipped browser binaries are executable so the agent can
+      // actually call them (Errno 13 fix).
+      await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }).catch(() => undefined);
     }
 
     if (options.name && options.name.trim()) {

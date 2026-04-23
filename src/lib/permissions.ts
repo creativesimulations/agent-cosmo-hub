@@ -22,7 +22,14 @@ export type PermissionAction =
   | 'fileRead'
   | 'fileWrite'
   | 'internet'
-  | 'script';      // python / node / bash scripts
+  | 'script'       // python / node / bash scripts
+  | 'browser'      // browser_* tools (navigate, click, type, screenshot)
+  | 'codeExecution'// hermes-cli code_execution tool
+  | 'delegation'   // spawn sub-agents
+  | 'cronjob'      // schedule recurring tasks
+  | 'messaging'    // send messages on telegram/discord/slack/etc.
+  | 'imageGen'     // image generation tools
+  | 'tts';         // text-to-speech / voice
 
 export type ApprovalChoice = 'once' | 'session' | 'always' | 'deny';
 
@@ -44,6 +51,15 @@ export interface PermissionsConfig {
   internet: PermissionDefault;
   script: PermissionDefault;
 
+  // Per-tool defaults aligned with the official `hermes-cli` toolset.
+  browser: PermissionDefault;
+  codeExecution: PermissionDefault;
+  delegation: PermissionDefault;
+  cronjob: PermissionDefault;
+  messaging: PermissionDefault;
+  imageGen: PermissionDefault;
+  tts: PermissionDefault;
+
   /** Folders the agent may freely read/write inside (when scope = 'scoped'). */
   allowedFolders: string[];
   /** Folders the agent must never touch — overrides everything else. */
@@ -60,8 +76,17 @@ export const DEFAULT_PERMISSIONS: PermissionsConfig = {
   fileReadScope: 'scoped',
   fileWrite: 'ask',
   fileWriteScope: 'scoped',
-  internet: 'ask',
+  // Internet defaults to allow so basic web_search / web_extract work
+  // immediately after install — the #1 user complaint when this was 'ask'.
+  internet: 'allow',
   script: 'ask',
+  browser: 'ask',
+  codeExecution: 'ask',
+  delegation: 'allow',
+  cronjob: 'ask',
+  messaging: 'ask',
+  imageGen: 'allow',
+  tts: 'allow',
   allowedFolders: [],
   blockedFolders: [],
   fallback: 'ask',
@@ -74,6 +99,13 @@ export const PERMISSION_LABELS: Record<PermissionAction, string> = {
   fileWrite: 'File write',
   internet: 'Internet access',
   script: 'Script execution',
+  browser: 'Browser automation',
+  codeExecution: 'Code execution',
+  delegation: 'Spawn sub-agents',
+  cronjob: 'Scheduled tasks',
+  messaging: 'Send messages',
+  imageGen: 'Image generation',
+  tts: 'Text-to-speech',
 };
 
 export const RISK_BY_ACTION: Record<PermissionAction, 'low' | 'medium' | 'high'> = {
@@ -83,6 +115,13 @@ export const RISK_BY_ACTION: Record<PermissionAction, 'low' | 'medium' | 'high'>
   fileWrite: 'medium',
   internet: 'medium',
   script: 'high',
+  browser: 'medium',
+  codeExecution: 'high',
+  delegation: 'low',
+  cronjob: 'medium',
+  messaging: 'medium',
+  imageGen: 'low',
+  tts: 'low',
 };
 
 /** A single permission event recorded in history (and shown in chat/terminal). */
