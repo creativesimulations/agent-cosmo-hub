@@ -496,6 +496,8 @@ const PERMS_BEGIN = '# ─── Managed by Ronbot: permissions (do not edit) �
 const PERMS_END = '# ─── End Ronbot permissions ───';
 const LOG_BEGIN = '# ─── Managed by Ronbot: logging (do not edit) ───';
 const LOG_END = '# ─── End Ronbot logging ───';
+const BROWSER_BEGIN = '# ─── Managed by Ronbot: browser (do not edit) ───';
+const BROWSER_END = '# ─── End Ronbot browser ───';
 
 const stripManagedBlock = (yaml: string, begin: string, end: string): string => {
   const startIdx = yaml.indexOf(begin);
