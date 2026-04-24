@@ -131,10 +131,10 @@ export const BUILTIN_CAPABILITIES: CapabilityDefinition[] = [
   {
     id: "webSearch",
     label: "Web search",
-    description: "Search the web via a third-party search API (Exa, Tavily, Serper, Brave, Firecrawl).",
+    description: "Search and extract web pages via a supported provider API (Exa, Tavily, Parallel, Firecrawl).",
     risk: "low",
     icon: "Search",
-    candidateSecrets: ["EXA_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY", "BRAVE_API_KEY", "FIRECRAWL_API_KEY"],
+    candidateSecrets: ["EXA_API_KEY", "TAVILY_API_KEY", "PARALLEL_API_KEY", "FIRECRAWL_API_KEY"],
     candidateSkills: ["web_search", "search", "exa", "tavily"],
     source: "builtin",
     group: "web",

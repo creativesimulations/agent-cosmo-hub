@@ -56,7 +56,7 @@ Object.assign(TOOL_NAME_TO_CAP_ID, {
   http_get: "internet",
   http_post: "internet",
   web_fetch: "internet",
-  web_extract: "internet",
+  web_extract: "webSearch",
   web_search: "webSearch",
   browse_url: "webBrowser",
   // Browser automation (hermes-cli)

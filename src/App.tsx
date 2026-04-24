@@ -27,6 +27,7 @@ import UpdateManager from "./pages/UpdateManager";
 import BackupRestore from "./pages/BackupRestore";
 import Diagnostics from "./pages/Diagnostics";
 import Upgrades from "./pages/Upgrades";
+import Advanced from "./pages/Advanced";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -59,6 +60,7 @@ const App = () => (
             <Route path="/terminal" element={<TerminalPage />} />
             <Route path="/chat" element={<AgentChat />} />
             <Route path="/channels" element={<Channels />} />
+            <Route path="/advanced" element={<Advanced />} />
             <Route path="/logs" element={<LogViewer />} />
             <Route path="/upgrades" element={<Upgrades />} />
             <Route path="/updates" element={<UpdateManager />} />

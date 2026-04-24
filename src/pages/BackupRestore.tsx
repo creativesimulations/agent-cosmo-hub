@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
+import ActionableError from "@/components/ui/ActionableError";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -100,6 +101,7 @@ const BackupRestore = () => {
   const [homeDirPosix, setHomeDirPosix] = useState<string>("");
   const [isWindows, setIsWindows] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [actionError, setActionError] = useState<string>("");
   const { connected: agentConnected } = useAgentConnection();
 
   // Resolve home + backup dir on mount.
@@ -165,6 +167,7 @@ const BackupRestore = () => {
   const createBackup = async () => {
     if (!agentConnected || !homeDirPosix || !backupDirPosix) return;
     if (selectedItems.length === 0) {
+      setActionError("Pick at least one item to include in your backup.");
       toast.error("Pick at least one item to back up");
       return;
     }
@@ -192,11 +195,14 @@ const BackupRestore = () => {
     setCreating(false);
 
     if (exists) {
+      setActionError("");
       toast.success("Backup created", { description: `${name}.tar.gz` });
       void loadBackups();
     } else {
+      const detail = (result.stderr || result.stdout).split("\n")[0] || "Could not create archive — check Diagnostics.";
+      setActionError(detail);
       toast.error("Backup failed", {
-        description: (result.stderr || result.stdout).split("\n")[0] || "Could not create archive — check Diagnostics.",
+        description: detail,
       });
     }
     setCreateProgress(0);
@@ -210,11 +216,14 @@ const BackupRestore = () => {
     const result = await systemAPI.runCommand(wrapBash(script, isWindows));
     setRestoring(null);
     if (result.success) {
+      setActionError("");
       toast.success("Backup restored", {
         description: "Restart the agent for changes to take effect.",
       });
     } else {
-      toast.error("Restore failed", { description: (result.stderr || result.stdout).split("\n")[0] || "Unknown error" });
+      const detail = (result.stderr || result.stdout).split("\n")[0] || "Unknown error";
+      setActionError(detail);
+      toast.error("Restore failed", { description: detail });
     }
   };
 
@@ -224,10 +233,13 @@ const BackupRestore = () => {
     const result = await systemAPI.runCommand(wrapBash(`rm -f ${sh(backup.fullPath)}`, isWindows));
     setDeleting(null);
     if (result.success) {
+      setActionError("");
       toast.success("Backup deleted");
       void loadBackups();
     } else {
-      toast.error("Delete failed", { description: (result.stderr || result.stdout).split("\n")[0] });
+      const detail = (result.stderr || result.stdout).split("\n")[0] || "Delete failed.";
+      setActionError(detail);
+      toast.error("Delete failed", { description: detail });
     }
   };
 
@@ -272,6 +284,16 @@ const BackupRestore = () => {
 
   return (
     <div className="p-6 space-y-6">
+      {actionError && (
+        <ActionableError
+          title="Backup action failed"
+          summary={actionError}
+          details={actionError}
+          onFix={() => setActionError("")}
+          fixLabel="Dismiss"
+        />
+      )}
+
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">

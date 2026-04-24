@@ -25,6 +25,7 @@ import { setDebugPromptDetection, isDebugPromptDetection } from "@/lib/approvalB
 import { ShieldCheck } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import ActionableError from "@/components/ui/ActionableError";
 
 interface EnvSummary {
   loaded: boolean;
@@ -318,7 +319,13 @@ const Diagnostics = () => {
           </span>
         </div>
         {storeSummary.error ? (
-          <p className="text-xs text-destructive">{storeSummary.error}</p>
+          <ActionableError
+            title="Could not read credential store"
+            summary={storeSummary.error}
+            details={storeSummary.error}
+            onFix={refreshSummaries}
+            fixLabel="Refresh diagnostics"
+          />
         ) : storeSummary.entries.length === 0 ? (
           <p className="text-xs text-destructive">
             ⚠ No keys in the credential store. Add them in the Secrets tab. If keys disappear after re-adding,
@@ -349,7 +356,13 @@ const Diagnostics = () => {
             ~/.hermes/.env (key names + lengths only)
           </h2>
           {envSummary.error ? (
-            <p className="text-xs text-destructive">{envSummary.error}</p>
+            <ActionableError
+              title="Could not read ~/.hermes/.env"
+              summary={envSummary.error}
+              details={envSummary.error}
+              onFix={refreshSummaries}
+              fixLabel="Refresh diagnostics"
+            />
           ) : envSummary.entries.length === 0 ? (
             <p className="text-xs text-muted-foreground">No keys present in .env (or file does not exist).</p>
           ) : (
@@ -373,7 +386,13 @@ const Diagnostics = () => {
             ~/.hermes/config.yaml
           </h2>
           {cfgSummary.error ? (
-            <p className="text-xs text-destructive">{cfgSummary.error}</p>
+            <ActionableError
+              title="Could not read ~/.hermes/config.yaml"
+              summary={cfgSummary.error}
+              details={cfgSummary.error}
+              onFix={refreshSummaries}
+              fixLabel="Refresh diagnostics"
+            />
           ) : cfgSummary.modelLine ? (
             <p className="text-xs font-mono">model: <span className="text-primary">{cfgSummary.modelLine}</span></p>
           ) : (
@@ -468,9 +487,9 @@ const Diagnostics = () => {
               {browserDiag.browserEnabledInConfig
                 ? <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
                 : <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />}
-              <span className="font-mono">browser.enabled in config.yaml:</span>
+              <span className="font-mono">managed browser block present:</span>
               <span className={cn(browserDiag.browserEnabledInConfig ? "text-foreground" : "text-destructive")}>
-                {browserDiag.browserEnabledInConfig ? "true" : "missing — click Repair"}
+                {browserDiag.browserEnabledInConfig ? "yes" : "missing — click Repair"}
               </span>
             </li>
             <li className="flex items-center gap-2">

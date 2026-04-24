@@ -45,6 +45,7 @@ import EnterLicenseKeyDialog from "@/components/upgrades/EnterLicenseKeyDialog";
 import { invalidateCapabilityProbeCache } from "@/lib/capabilityProbe";
 import { useSettings } from "@/contexts/SettingsContext";
 import { useSudoPrompt } from "@/contexts/SudoPromptContext";
+import ActionableError from "@/components/ui/ActionableError";
 
 interface BrowserSetupDialogProps {
   open: boolean;
@@ -162,6 +163,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
   const [tavilyKey, setTavilyKey] = useState("");
   const [exaKey, setExaKey] = useState("");
   const [searchSaving, setSearchSaving] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   const appendLog = (setter: React.Dispatch<React.SetStateAction<string[]>>) =>
     (line: string) =>
@@ -195,6 +197,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
     setShowSearchCta(false);
     setTavilyKey("");
     setExaKey("");
+    setActionError("");
     void refreshUnlocks();
   }, [open]);
 
@@ -268,6 +271,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           toast.error("Browser tool not registered", {
             description: "Open Diagnostics and click Repair config, then re-run setup.",
           });
+          setActionError("Browser tool not registered. Open Diagnostics and click Repair config.");
           return false;
         }
         log("✓ hermes-cli toolset added (browser, web, terminal, file… now registered).");
@@ -321,11 +325,13 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       const ok = await secretsStore.set(k, v);
       if (!ok) {
         toast.error(`Failed to save ${k}`);
+        setActionError(`Failed to save ${k}`);
         allOk = false;
       }
     }
     setSaving(false);
     if (allOk) {
+      setActionError("");
       toast.success(successMsg, { description: "Restart Ron to take effect." });
       invalidateCapabilityProbeCache();
       onConfigured?.();
@@ -370,8 +376,10 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       const ok = await secretsStore.set(envVar, value.trim());
       if (!ok) {
         toast.error(`Failed to save ${envVar}`);
+        setActionError(`Failed to save ${envVar}`);
         return;
       }
+      setActionError("");
       toast.success(`${label} configured`, {
         description: "Ron will use it for web search on the next message.",
       });
@@ -451,6 +459,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       const ready = await ensureNode(log);
       if (!ready) {
         toast.error("Couldn't prepare Node.js / git", { description: "See the log for details." });
+        setActionError("Couldn't prepare Node.js / git. See the setup log for details.");
         return;
       }
       setServerStatus("busy");
@@ -458,6 +467,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       if (!run.success) {
         setServerStatus("err");
         toast.error("Failed to start Camofox", { description: "See the log for details." });
+        setActionError("Failed to start Camofox. See the setup log for details.");
         return;
       }
       setServerStatus("ok");
@@ -472,6 +482,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       await ensureBrowserSkillEnabled(log);
       invalidateCapabilityProbeCache();
       if (healthy) {
+        setActionError("");
         toast.success("Camofox is running", { description: "Send Ron a new message — config is reloaded each turn." });
         setShowSearchCta(true);
         onConfigured?.();
@@ -525,6 +536,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
           setChromeStatus("err");
           setChromeDetail("install failed");
           toast.error("Chrome install failed", { description: "See the log for details." });
+          setActionError("Chrome install failed. See the setup log for details.");
           return;
         }
         chromePath = await browserSetup.detectChrome();
@@ -544,6 +556,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       if (!cdpUp) {
         setCdpStatus("err");
         toast.error("Chrome started but the CDP endpoint did not respond");
+        setActionError("Chrome started but the CDP endpoint did not respond.");
         return;
       }
       setCdpStatus("ok");
@@ -577,6 +590,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       }
 
       invalidateCapabilityProbeCache();
+      setActionError("");
       toast.success("Local Chrome connected", {
         description: probe.ok
           ? "Real browser navigation verified. Send Ron a new message to use it."
@@ -993,6 +1007,16 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
                 : backend?.description}
             </DialogDescription>
           </DialogHeader>
+
+          {actionError && (
+            <ActionableError
+              title="Browser setup needs attention"
+              summary={actionError}
+              details={actionError}
+              onFix={() => setActionError("")}
+              fixLabel="Dismiss"
+            />
+          )}
 
           {step === "pick" && (
             <div className="rounded-lg border border-success/30 bg-success/5 px-3 py-2 mb-3 flex items-start gap-2">

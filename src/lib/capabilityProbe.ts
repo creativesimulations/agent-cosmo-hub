@@ -121,6 +121,11 @@ const checkPythonExtra = async (importName: string): Promise<boolean> => {
   }
 };
 
+const hasHermesCliToolset = (yaml: string | null): boolean => {
+  if (!yaml) return false;
+  return /(^|\n)\s*-\s*hermes-cli\b/m.test(yaml) || /(^|\n)\s*-\s*hermes-web\b/m.test(yaml);
+};
+
 const EXTRA_IMPORT: Record<string, string> = {
   web: "playwright",
   voice: "elevenlabs",
@@ -173,7 +178,8 @@ export const capabilityProbe = async (
     const lower = cs.toLowerCase();
     return ctx.installedSkillNames.has(lower) && !ctx.disabledSkillNames.has(lower);
   });
-  if (cap.candidateSkills.length > 0 && !installedAndEnabled) {
+  const builtinToolsetReady = cap.source === "builtin" && hasHermesCliToolset(ctx.configYaml);
+  if (cap.candidateSkills.length > 0 && !installedAndEnabled && !builtinToolsetReady) {
     const skillList = cap.candidateSkills.slice(0, 3).join(", ");
     const result: CapabilityProbeResult = {
       capabilityId,

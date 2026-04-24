@@ -22,6 +22,7 @@ export interface LLMProvider {
   local?: boolean;
   /** True when users typically need to type a custom model id (local runtimes, OpenRouter long tail). */
   allowCustomModel?: boolean;
+  docsUrl?: string;
 }
 
 export interface LLMModel {
@@ -38,6 +39,7 @@ export const LLM_PROVIDERS: LLMProvider[] = [
     hint: "200+ agentic models via a single API. The Auto Router picks the best one for each prompt.",
     defaultModel: "openrouter/auto",
     allowCustomModel: true,
+    docsUrl: "https://openrouter.ai/docs",
   },
   {
     id: "openai",
@@ -46,6 +48,7 @@ export const LLM_PROVIDERS: LLMProvider[] = [
     prefix: "sk-",
     hint: "GPT-4o, GPT-5 and o-series. Get a key at platform.openai.com",
     defaultModel: "openai/gpt-4o",
+    docsUrl: "https://platform.openai.com/docs",
   },
   {
     id: "anthropic",
@@ -54,14 +57,16 @@ export const LLM_PROVIDERS: LLMProvider[] = [
     prefix: "sk-ant-",
     hint: "Claude Sonnet & Opus. Get a key at console.anthropic.com",
     defaultModel: "anthropic/claude-3.5-sonnet",
+    docsUrl: "https://docs.anthropic.com",
   },
   {
     id: "google",
     label: "Google Gemini",
-    envVar: "GEMINI_API_KEY",
+    envVar: "GOOGLE_API_KEY",
     prefix: "",
     hint: "Gemini 1.5/2.0 models. Get a key at aistudio.google.com",
     defaultModel: "google/gemini-1.5-pro",
+    docsUrl: "https://ai.google.dev/gemini-api/docs",
   },
   {
     id: "deepseek",
@@ -70,6 +75,7 @@ export const LLM_PROVIDERS: LLMProvider[] = [
     prefix: "",
     hint: "DeepSeek V3/R1 — strong agentic reasoning. Get a key at platform.deepseek.com",
     defaultModel: "deepseek/deepseek-chat",
+    docsUrl: "https://api-docs.deepseek.com",
   },
   // Local runtimes (Ollama, LM Studio, llama.cpp, vLLM, …) are NOT listed
   // here — they're detected at runtime by src/lib/localModels.ts and only

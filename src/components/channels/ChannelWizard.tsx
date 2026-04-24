@@ -14,6 +14,7 @@ import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
 import type { Channel } from "@/lib/channels";
+import ActionableError from "@/components/ui/ActionableError";
 
 type Step = 0 | 1 | 2 | 3;
 
@@ -33,6 +34,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"idle" | "ok" | "fail">("idle");
   const [testError, setTestError] = useState<string>("");
+  const [formError, setFormError] = useState<string>("");
 
   // Pre-load any already-stored credentials so reconfiguring is friction-free.
   useEffect(() => {
@@ -40,6 +42,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setStep(0);
     setTestResult("idle");
     setTestError("");
+    setFormError("");
     let cancelled = false;
     (async () => {
       const next: Record<string, string> = {};
@@ -79,17 +82,20 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         const v = (values[cred.envVar] || "").trim();
         if (!v && cred.optional) continue;
         if (!v) {
+          setFormError(`${cred.label} is required`);
           toast.error(`${cred.label} is required`);
           return false;
         }
         const ok = await systemAPI.secrets.set(cred.envVar, v);
         if (!ok) {
+          setFormError(`Failed to save ${cred.label}`);
           toast.error(`Failed to save ${cred.label}`);
           return false;
         }
       }
       // Push secrets into ~/.hermes/.env so the gateway can read them.
       await systemAPI.materializeEnv();
+      setFormError("");
       return true;
     } finally {
       setSaving(false);
@@ -100,24 +106,28 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setTesting(true);
     setTestResult("idle");
     setTestError("");
-    // Sync to disk first in case the user just edited values without leaving step 2.
-    await systemAPI.materializeEnv();
-    // We don't have a per-channel test endpoint yet — but materializeEnv
-    // surfaces the missing-key path, which is the most common failure mode.
-    // The real send-test will land when we wire startGateway(channel).
     try {
-      // readEnvFile() returns a parsed Record<string, string> of the
-      // current ~/.hermes/.env. A key is "present" when it exists with
-      // a non-empty value.
-      const env = await systemAPI.readEnvFile();
-      const missing = channel.credentials
-        .filter((c) => !c.optional)
-        .filter((c) => !(env[c.envVar] && env[c.envVar].trim().length > 0));
-      if (missing.length > 0) {
-        setTestResult("fail");
-        setTestError(`Missing in ~/.hermes/.env: ${missing.map((m) => m.envVar).join(", ")}`);
-      } else {
+      await systemAPI.materializeEnv();
+      const r = await systemAPI.testChannel(channel.id);
+      if (r.success) {
         setTestResult("ok");
+        return;
+      }
+      const detail = r.stderr?.trim() || r.stdout?.trim() || "Channel test command failed.";
+      if (detail) {
+        setTestResult("fail");
+        setTestError(detail);
+      } else {
+        const env = await systemAPI.readEnvFile();
+        const missing = channel.credentials
+          .filter((c) => !c.optional)
+          .filter((c) => !(env[c.envVar] && env[c.envVar].trim().length > 0));
+        if (missing.length > 0) {
+          setTestResult("fail");
+          setTestError(`Missing in ~/.hermes/.env: ${missing.map((m) => m.envVar).join(", ")}`);
+        } else {
+          setTestResult("ok");
+        }
       }
     } catch (e) {
       setTestResult("fail");
@@ -127,17 +137,26 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   };
 
+  useEffect(() => {
+    if (open && step === 3 && testResult === "idle" && !testing) {
+      void runTest();
+    }
+  }, [open, step, testResult, testing]);
+
   const enableGateway = async () => {
     const r = await systemAPI.startGateway();
     if (r.success) {
+      setFormError("");
       toast.success(`${channel.name} channel enabled`, {
         description: "Your agent is now reachable here.",
       });
       onComplete();
       onClose();
     } else {
+      const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
+      setFormError(detail);
       toast.error("Failed to start gateway", {
-        description: r.stderr?.split("\n")[0] || "Check Logs for details.",
+        description: detail,
       });
     }
   };
@@ -160,6 +179,16 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             Step {step + 1} of 4 · {channel.difficulty} setup
           </DialogDescription>
         </DialogHeader>
+
+        {formError && (
+          <ActionableError
+            title="Channel setup needs attention"
+            summary={formError}
+            details={formError}
+            onFix={() => setFormError("")}
+            fixLabel="Dismiss"
+          />
+        )}
 
         {/* Progress bar */}
         <div className="flex gap-1.5 mb-2">

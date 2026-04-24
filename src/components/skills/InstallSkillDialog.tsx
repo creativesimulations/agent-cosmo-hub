@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
+import ActionableError from "@/components/ui/ActionableError";
 
 type Kind = "skill" | "tool";
 
@@ -39,6 +40,7 @@ const InstallSkillDialog = ({
 }: InstallSkillDialogProps) => {
   const [busy, setBusy] = useState(false);
   const [gitUrl, setGitUrl] = useState("");
+  const [actionError, setActionError] = useState("");
 
   const noun = kind === "skill" ? "Skill" : "Tool";
   const Icon = kind === "skill" ? Puzzle : Wrench;
@@ -47,6 +49,7 @@ const InstallSkillDialog = ({
     r: { success: boolean; name?: string; missingSecrets?: string[]; error?: string },
   ) => {
     if (!r.success) {
+      setActionError(r.error || `Couldn't install ${noun.toLowerCase()}.`);
       toast.error(`Couldn't install ${noun.toLowerCase()}`, {
         description: r.error || "Unknown error",
       });
@@ -61,6 +64,7 @@ const InstallSkillDialog = ({
           : "Will load on the next agent restart.",
     });
     onInstalled?.({ name, missingSecrets: missing });
+    setActionError("");
     onOpenChange(false);
     return true;
   };
@@ -72,6 +76,7 @@ const InstallSkillDialog = ({
         title: `Choose a ${noun.toLowerCase()} folder`,
       });
       if (!picked.success) {
+        setActionError(picked.error || "Folder picker failed.");
         toast.error("Folder picker failed", { description: picked.error || "Unknown error" });
         return;
       }
@@ -89,6 +94,7 @@ const InstallSkillDialog = ({
   const cloneFromGit = async () => {
     const url = gitUrl.trim();
     if (!url) {
+      setActionError("Enter a Git URL first.");
       toast.error("Enter a Git URL first");
       return;
     }
@@ -116,6 +122,16 @@ const InstallSkillDialog = ({
             and enable it for the next agent restart.
           </DialogDescription>
         </DialogHeader>
+
+        {actionError && (
+          <ActionableError
+            title={`Couldn't install ${noun.toLowerCase()}`}
+            summary={actionError}
+            details={actionError}
+            onFix={() => setActionError("")}
+            fixLabel="Dismiss"
+          />
+        )}
 
         <div className="space-y-5 py-2">
           <div className="space-y-2">

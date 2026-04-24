@@ -19,6 +19,7 @@ import { systemAPI, secretsStore } from "@/lib/systemAPI";
 import { toast } from "sonner";
 import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 import BrowserBackendBadge from "@/components/skills/BrowserBackendBadge";
+import ActionableError from "@/components/ui/ActionableError";
 
 type Skill = {
   name: string;
@@ -44,6 +45,7 @@ const Skills = () => {
   const [browserSetupOpen, setBrowserSetupOpen] = useState(false);
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
   const [installOpen, setInstallOpen] = useState(false);
+  const [actionError, setActionError] = useState<string>("");
 
   // Read ?focus=<capId> from the URL — drives a scroll + highlight of any
   // skill rows whose names match the capability's candidate skill list.
@@ -136,6 +138,7 @@ const Skills = () => {
     const r = await systemAPI.setSkillEnabled(skill.name, nextEnabled);
     setSavingToggle(null);
     if (!r.success) {
+      setActionError(r.error || "Failed to update skill state.");
       toast.error("Couldn't save", { description: r.error || "Failed to update config" });
       // Revert
       setDisabledSet((prev) => {
@@ -145,6 +148,7 @@ const Skills = () => {
       });
       return;
     }
+    setActionError("");
     toast.success(`${nextEnabled ? "Enabled" : "Disabled"} ${skill.name}`, {
       description: "Takes effect the next time the agent restarts.",
     });
@@ -205,6 +209,16 @@ const Skills = () => {
 
   return (
     <div className="p-6 space-y-6">
+      {actionError && (
+        <ActionableError
+          title="Skill update failed"
+          summary={actionError}
+          details={actionError}
+          onFix={() => setActionError("")}
+          fixLabel="Dismiss"
+        />
+      )}
+
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
@@ -351,14 +365,17 @@ const Skills = () => {
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-sm font-semibold text-foreground">Web browsing</h3>
+                <h3 className="text-sm font-semibold text-foreground">Browser automation (optional)</h3>
                 <Badge variant="outline" className="border-white/10 text-muted-foreground text-[10px]">
                   Capability
                 </Badge>
+                <Badge variant="outline" className="border-success/30 text-success text-[10px]">
+                  Web search included
+                </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Pick a browser backend so Ron can actually load web pages.
-                Most modern sites block plain HTTP — a real browser fixes this.
+                Basic web information retrieval uses <code>web_search</code>/<code>web_extract</code> and does not require browser automation.
+                Configure this only if you want interactive browser actions (click, type, navigate).
               </p>
             </div>
           </div>

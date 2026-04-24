@@ -1,64 +1,46 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
-  LayoutDashboard,
-  Network,
   Cpu,
   KeyRound,
-  Puzzle,
   Settings,
   Terminal,
-  Home,
   MessageSquare,
   FileText,
-  
   RefreshCw,
   Archive,
   Activity,
   Radio,
   Sparkles,
+  House,
+  ChevronDown,
+  Bot,
 } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import NotificationCenter from "@/components/NotificationCenter";
 import ronbotLogo from "@/assets/ronbot-logo.png";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { useChat } from "@/contexts/ChatContext";
 import { useCapabilities } from "@/contexts/CapabilitiesContext";
 
-const navGroups = [
-  {
-    label: "Monitor",
-    items: [
-      { path: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-      { path: "/agents", icon: Network, label: "Sub-Agents" },
-      { path: "/logs", icon: FileText, label: "Logs" },
-      { path: "/chat", icon: MessageSquare, label: "Agent Chat", showChatBadge: true },
-      { path: "/channels", icon: Radio, label: "Channels" },
-    ],
-  },
-  {
-    label: "Configure",
-    items: [
-      { path: "/models", icon: Cpu, label: "LLM Config" },
-      { path: "/secrets", icon: KeyRound, label: "Secrets" },
-      { path: "/skills", icon: Puzzle, label: "Skills & Tools", showCapabilityBadge: true },
-    ],
-  },
-  {
-    label: "Store",
-    items: [
-      { path: "/upgrades", icon: Sparkles, label: "Upgrades" },
-    ],
-  },
-  {
-    label: "Manage",
-    items: [
-      { path: "/updates", icon: RefreshCw, label: "Updates" },
-      { path: "/backups", icon: Archive, label: "Backups" },
-      { path: "/diagnostics", icon: Activity, label: "Diagnostics" },
-      { path: "/settings", icon: Settings, label: "Settings" },
-      { path: "/terminal", icon: Terminal, label: "Terminal" },
-    ],
-  },
+const primaryNavItems = [
+  { path: "/", icon: House, label: "Home" },
+  { path: "/chat", icon: MessageSquare, label: "Chat", showChatBadge: true },
+  { path: "/channels", icon: Radio, label: "Channels" },
+  { path: "/settings", icon: Settings, label: "Settings" },
+];
+
+const advancedNavItems = [
+  { path: "/advanced", icon: Bot, label: "Advanced", showCapabilityBadge: true },
+  { path: "/skills", icon: Sparkles, label: "Skills & Tools" },
+  { path: "/models", icon: Cpu, label: "LLM Config" },
+  { path: "/secrets", icon: KeyRound, label: "Secrets" },
+  { path: "/agents", icon: Bot, label: "Sub-Agents" },
+  { path: "/logs", icon: FileText, label: "Logs" },
+  { path: "/updates", icon: RefreshCw, label: "Updates" },
+  { path: "/backups", icon: Archive, label: "Backups" },
+  { path: "/diagnostics", icon: Activity, label: "Diagnostics" },
+  { path: "/terminal", icon: Terminal, label: "Terminal" },
 ];
 
 const AppSidebar = () => {
@@ -83,12 +65,8 @@ const AppSidebar = () => {
 
       {/* Navigation */}
       <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
-        {navGroups.map((group) => (
-          <div key={group.label} className="space-y-0.5">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 px-3 mb-1">
-              {group.label}
-            </p>
-            {group.items.map((item) => {
+        <div className="space-y-0.5">
+          {primaryNavItems.map((item) => {
               const isActive = location.pathname === item.path;
               const isChatLink = item.path === "/chat";
               const showUnread = isChatLink && unreadCount > 0 && !isActive;
@@ -136,8 +114,46 @@ const AppSidebar = () => {
                 </NavLink>
               );
             })}
-          </div>
-        ))}
+        </div>
+
+        <Collapsible defaultOpen={false} className="pt-2">
+          <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors group">
+            Advanced
+            <ChevronDown className="w-3.5 h-3.5 transition-transform group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-0.5 mt-1">
+            {advancedNavItems.map((item) => {
+              const isActive = location.pathname === item.path;
+              const showCapBadge =
+                (item as { showCapabilityBadge?: boolean }).showCapabilityBadge &&
+                pendingDecisionsCount > 0 &&
+                !isActive;
+              return (
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  className={cn(
+                    "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-200",
+                    isActive
+                      ? "bg-primary/15 text-primary border border-primary/20 shadow-sm"
+                      : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+                  )}
+                >
+                  <item.icon className={cn("w-4 h-4", isActive && "text-primary")} />
+                  <span className="font-medium">{item.label}</span>
+                  {showCapBadge && (
+                    <span
+                      className="ml-auto flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-warning text-[10px] font-semibold text-warning-foreground shadow-[0_0_8px_hsl(var(--warning)/0.6)]"
+                      aria-label={`${pendingDecisionsCount} capabilit${pendingDecisionsCount === 1 ? "y needs" : "ies need"} setup`}
+                    >
+                      {pendingDecisionsCount > 9 ? "9+" : pendingDecisionsCount}
+                    </span>
+                  )}
+                </NavLink>
+              );
+            })}
+          </CollapsibleContent>
+        </Collapsible>
       </nav>
 
       {/* Status */}

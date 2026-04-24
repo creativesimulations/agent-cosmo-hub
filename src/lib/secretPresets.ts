@@ -50,6 +50,8 @@ export const SECRET_PRESETS: SecretPreset[] = [
   { envVar: 'LMSTUDIO_BASE_URL',   label: 'LM Studio base URL',   hint: 'Default http://127.0.0.1:1234/v1.',                        prefix: 'http', category: 'Local runtime' },
 
   // ─── Search & web tools ───────────────────────────────────────────────
+  { envVar: 'TAVILY_API_KEY',     label: 'Tavily Search (recommended)', hint: 'Easiest web_search/web_extract setup for most users.',      prefix: 'tvly-',   docsUrl: 'https://app.tavily.com/home',                 category: 'Search & web' },
+  { envVar: 'PARALLEL_API_KEY',   label: 'Parallel Search',             hint: 'Alternative provider for Hermes web_search/web_extract.',   prefix: '',        docsUrl: 'https://parallel.ai/',                         category: 'Search & web' },
   { envVar: 'EXA_API_KEY',        label: 'Exa Search',     hint: 'Neural web search for agents.',                                prefix: '',        docsUrl: 'https://dashboard.exa.ai/api-keys',           category: 'Search & web' },
   { envVar: 'FIRECRAWL_API_KEY',  label: 'Firecrawl',      hint: 'Convert web pages to LLM-ready data.',                         prefix: 'fc-',     docsUrl: 'https://www.firecrawl.dev/app/api-keys',      category: 'Search & web' },
   { envVar: 'BROWSERBASE_API_KEY',label: 'Browserbase API key', hint: 'Cloud browsers for agentic workflows (paid upgrade).',    prefix: 'bb_',     docsUrl: 'https://www.browserbase.com/dashboard',       category: 'Search & web' },

@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
-import { Check, ChevronsUpDown, ExternalLink, Sparkles } from "lucide-react";
+import { useState, useMemo } from "react";
+import { Check, ChevronsUpDown, ExternalLink, Sparkles, Loader2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Command,
@@ -20,6 +20,7 @@ import {
   normalizeEnvVarName,
 } from "@/lib/secretPresets";
 import { cn } from "@/lib/utils";
+import { supportsLiveKeyTest, testKeyNow } from "@/lib/secretKeyTests";
 
 interface SecretFormProps {
   /** Initial canonical env var name (e.g. from a deep-link "Add missing key"). */
@@ -46,6 +47,8 @@ const SecretForm = ({ initialEnvVar = "", initialValue = "", saving, onSave, onC
   const [value, setValue] = useState(initialValue);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [autoDetectedFor, setAutoDetectedFor] = useState<string>("");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // Group presets by category for the picker.
   const groups = useMemo(() => {
@@ -66,6 +69,7 @@ const SecretForm = ({ initialEnvVar = "", initialValue = "", saving, onSave, onC
 
   const handleValuePaste = (raw: string) => {
     setValue(raw);
+    setTestResult(null);
     // Only auto-pick when the user hasn't already chosen a preset / typed a name.
     if (preset || envVar) return;
     if (raw === autoDetectedFor) return;
@@ -83,12 +87,22 @@ const SecretForm = ({ initialEnvVar = "", initialValue = "", saving, onSave, onC
     setEnvVar(normalized);
     // If they type away from a preset, drop it.
     if (preset && normalized !== preset.envVar) setPreset(null);
+    setTestResult(null);
   };
 
   const normalizedEnvVar = normalizeEnvVarName(envVar);
   const envValid = !!normalizedEnvVar && isValidEnvVarName(normalizedEnvVar);
   const prefixMismatch =
     !!preset && !!preset.prefix && !!value && !value.startsWith(preset.prefix);
+  const canTest = supportsLiveKeyTest(normalizedEnvVar);
+
+  const handleTestNow = async () => {
+    setTesting(true);
+    setTestResult(null);
+    const result = await testKeyNow(normalizedEnvVar, value);
+    setTestResult(result);
+    setTesting(false);
+  };
 
   return (
     <div className="space-y-4">
@@ -166,22 +180,35 @@ const SecretForm = ({ initialEnvVar = "", initialValue = "", saving, onSave, onC
                   Get key <ExternalLink className="w-3 h-3" />
                 </a>
               )}
+              {canTest && (
+                <button
+                  type="button"
+                  onClick={() => void handleTestNow()}
+                  disabled={!value.trim() || testing}
+                  className="inline-flex items-center gap-1 text-primary hover:underline disabled:opacity-60 disabled:no-underline"
+                >
+                  {testing ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                  Test key now
+                </button>
+              )}
             </p>
+            {testResult && (
+              <p className={cn("text-[11px]", testResult.ok ? "text-success" : "text-warning")}>
+                {testResult.message}
+              </p>
+            )}
             {(() => {
               // Multi-field credential helpers — most users don't realize SMTP
               // needs four entries together, not one. Surface companions inline.
               const companions: Record<string, string[]> = {
-                SMTP_HOST: ["SMTP_PORT", "SMTP_USER", "SMTP_PASS"],
-                SMTP_PORT: ["SMTP_HOST", "SMTP_USER", "SMTP_PASS"],
-                SMTP_USER: ["SMTP_HOST", "SMTP_PORT", "SMTP_PASS"],
-                SMTP_PASS: ["SMTP_HOST", "SMTP_PORT", "SMTP_USER"],
-                IMAP_HOST: ["IMAP_USER", "IMAP_PASS"],
-                IMAP_USER: ["IMAP_HOST", "IMAP_PASS"],
-                IMAP_PASS: ["IMAP_HOST", "IMAP_USER"],
-                WHATSAPP_PHONE_NUMBER_ID: ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_VERIFY_TOKEN"],
-                WHATSAPP_ACCESS_TOKEN: ["WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_VERIFY_TOKEN"],
-                WHATSAPP_VERIFY_TOKEN: ["WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN"],
+                EMAIL_ADDRESS: ["EMAIL_PASSWORD", "EMAIL_IMAP_HOST", "EMAIL_SMTP_HOST"],
+                EMAIL_PASSWORD: ["EMAIL_ADDRESS", "EMAIL_IMAP_HOST", "EMAIL_SMTP_HOST"],
+                EMAIL_IMAP_HOST: ["EMAIL_ADDRESS", "EMAIL_PASSWORD", "EMAIL_SMTP_HOST"],
+                EMAIL_SMTP_HOST: ["EMAIL_ADDRESS", "EMAIL_PASSWORD", "EMAIL_IMAP_HOST"],
                 SLACK_BOT_TOKEN: ["SLACK_APP_TOKEN"],
+                SLACK_APP_TOKEN: ["SLACK_BOT_TOKEN"],
+                BROWSERBASE_API_KEY: ["BROWSERBASE_PROJECT_ID"],
+                BROWSERBASE_PROJECT_ID: ["BROWSERBASE_API_KEY"],
               };
               const c = companions[preset.envVar];
               if (!c) return null;

@@ -5,6 +5,7 @@ import ChannelWizard from "@/components/channels/ChannelWizard";
 import UpgradeCard from "@/components/channels/UpgradeCard";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
+import ActionableError from "@/components/ui/ActionableError";
 import { CHANNELS, Channel } from "@/lib/channels";
 import { UPGRADES, isUpgradeUnlocked } from "@/lib/licenses";
 import { systemAPI } from "@/lib/systemAPI";
@@ -18,6 +19,8 @@ const ChannelsPage = () => {
   const [unlocksLoading, setUnlocksLoading] = useState(true);
   const [activeWizard, setActiveWizard] = useState<Channel | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string>("");
+  const [lastToggleChannelId, setLastToggleChannelId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     // 1. Resolve unlocks for paid channels.
@@ -79,23 +82,29 @@ const ChannelsPage = () => {
 
   const handleToggle = async (channel: Channel) => {
     setToggling(channel.id);
+    setToggleError("");
+    setLastToggleChannelId(channel.id);
     const status = statuses[channel.id];
     try {
       if (status.state === "configured" && status.running) {
-        // Hermes doesn't expose per-channel stop in its CLI today — this is
-        // a stub that surfaces a clear message until the backend lands.
-        toast.info("Stop not yet wired up", {
-          description: "Per-channel stop is coming. For now, restart the agent to disable a channel.",
-        });
+        const r = await systemAPI.stopGateway();
+        if (r.success) {
+          toast.success(`${channel.name} stopped`);
+          await refresh();
+        } else {
+          const detail = r.stderr?.split("\n")[0] || r.stdout?.split("\n")[0] || "Check Logs for details.";
+          setToggleError(detail);
+          toast.error(`Failed to stop ${channel.name}`, { description: detail });
+        }
       } else {
         const r = await systemAPI.startGateway();
         if (r.success) {
           toast.success(`${channel.name} started`);
           await refresh();
         } else {
-          toast.error(`Failed to start ${channel.name}`, {
-            description: r.stderr?.split("\n")[0] || "Check Logs for details.",
-          });
+          const detail = r.stderr?.split("\n")[0] || r.stdout?.split("\n")[0] || "Check Logs for details.";
+          setToggleError(detail);
+          toast.error(`Failed to start ${channel.name}`, { description: detail });
         }
       }
     } finally {
@@ -117,6 +126,19 @@ const ChannelsPage = () => {
           Let your agent message you through the apps you already use.
         </p>
       </div>
+
+      {toggleError && lastToggleChannelId && (
+        <ActionableError
+          title="Channel action failed"
+          summary={toggleError}
+          details={toggleError}
+          fixLabel="Try Again"
+          onFix={() => {
+            const channel = CHANNELS.find((c) => c.id === lastToggleChannelId);
+            if (channel) void handleToggle(channel);
+          }}
+        />
+      )}
 
       {/* Free channels */}
       <section className="space-y-3">

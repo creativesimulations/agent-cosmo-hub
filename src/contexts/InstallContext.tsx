@@ -22,6 +22,17 @@ export const OPTIONAL_FEATURES: OptionalFeature[] = [
   { id: "web", label: "Web tools (search + extract)", description: "Built-in web_search and web_extract — recommended; basic browsing works without a backend", pipExtra: "web" },
 ];
 
+const ALLOWED_STEP_TRANSITIONS: Record<InstallStep, InstallStep[]> = {
+  0: [1],
+  1: [0, 2],
+  2: [1, 3],
+  3: [2, 4],
+  4: [3, 5],
+  5: [4, 6],
+  6: [5, 7],
+  7: [6],
+};
+
 interface InstallContextValue {
   // Top-level mode
   mode: Mode;
@@ -87,7 +98,17 @@ const InstallContext = createContext<InstallContextValue | null>(null);
 export const InstallProvider = ({ children }: { children: ReactNode }) => {
   const { markConnected, refresh: refreshConnection } = useAgentConnection();
   const [mode, setMode] = useState<Mode>("choose");
-  const [installStep, setInstallStep] = useState<InstallStep>(0);
+  const [installStep, setInstallStepState] = useState<InstallStep>(0);
+  const setInstallStep = useCallback((next: InstallStep) => {
+    setInstallStepState((prev) => {
+      if (next === prev) return prev;
+      const allowed = ALLOWED_STEP_TRANSITIONS[prev] ?? [];
+      if (allowed.includes(next)) return next;
+      // Allow explicit restart from any step after failures/cancel/retries.
+      if (next === 0) return next;
+      return prev;
+    });
+  }, []);
   const [installSource, setInstallSource] = useState<InstallSource>("bundled");
   const [localAgentPath, setLocalAgentPath] = useState<string>("");
 
@@ -333,7 +354,7 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
         duration: 8000,
       });
       setTimeout(() => {
-        if (installIdRef.current === myInstallId) setInstallStep(3);
+        if (installIdRef.current === myInstallId) setInstallStepState(3);
       }, 1000);
     } else {
       const stderr = (result.stderr || "").trim();

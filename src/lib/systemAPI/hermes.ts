@@ -18,6 +18,8 @@ const HERMES_DIR = '$HOME/.hermes';
 const HERMES_ENV = '$HOME/.hermes/.env';
 const HERMES_CONFIG = '$HOME/.hermes/config.yaml';
 const INSTALL_SCRIPT = 'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh';
+const INSTALLER_ENTRYPOINT = 'setsid bash /tmp/hermes-install.sh --skip-setup </dev/null 2>&1';
+export const buildInstallerRunScript = (): string => INSTALLER_ENTRYPOINT;
 
 // Anything beyond ~4 KB on the argv risks ENAMETOOLONG once Windows PATH +
 // cmd.exe quoting is added. Larger scripts are written to a temp file and
@@ -859,9 +861,9 @@ export const hermesAPI = {
       ? yaml.slice(bIdx, bEnd + BROWSER_END.length)
       : null;
     const browserState = parseBrowserBlock(yaml);
-    const browserEnabledInConfig = rawBrowserBlock
-      ? /^\s*enabled:\s*true/m.test(rawBrowserBlock)
-      : false;
+    // In current Hermes config schema, presence of our managed browser block
+    // is the reliable signal. The old `browser.enabled: true` key is obsolete.
+    const browserEnabledInConfig = !!rawBrowserBlock;
 
     // Toolsets block (managed or unmanaged — we accept either)
     const tIdx = yaml.indexOf(TOOLSETS_BEGIN);
@@ -1033,7 +1035,7 @@ export const hermesAPI = {
       'echo "[install] running installer (inside venv)..."',
       // Inherit our PATH/VIRTUAL_ENV so the installer's `pip install` lands
       // in the venv and PEP 668 protection no longer applies.
-      'setsid bash /tmp/hermes-install.sh --skip-setup </dev/null 2>&1',
+      buildInstallerRunScript(),
       '',
       '# Expose the hermes CLI on the user PATH via ~/.local/bin symlink.',
       'mkdir -p "$HOME/.local/bin"',
@@ -1370,6 +1372,31 @@ export const hermesAPI = {
       detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
     });
     return r;
+  },
+
+  /** Stop the messaging gateway */
+  async stopGateway(): Promise<CommandResult> {
+    agentLogs.push({ source: 'gateway', level: 'info', summary: 'Stopping messaging gateway…' });
+    const r = await runHermesCli(
+      'hermes gateway stop 2>&1 || hermes gateway disable 2>&1 || hermes gateway status 2>&1',
+      { timeout: 30000 },
+    );
+    agentLogs.push({
+      source: 'gateway',
+      level: r.success ? 'info' : 'error',
+      summary: r.success ? 'Gateway stopped' : `Gateway stop failed (exit=${r.code})`,
+      detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
+    });
+    return r;
+  },
+
+  /** Run best-effort per-channel gateway test command */
+  async testChannel(channelId: string): Promise<CommandResult> {
+    const escaped = channelId.replace(/"/g, '\\"');
+    return runHermesCli(
+      `hermes gateway test "${escaped}" 2>&1 || hermes gateway test 2>&1 || hermes gateway status 2>&1 || hermes status 2>&1`,
+      { timeout: 30000 },
+    );
   },
 
   /** Send a single chat prompt to the agent and return its reply.
@@ -2494,13 +2521,23 @@ model: ${options.model || 'openrouter/auto'}
   /** Open the user's ~/.hermes/skills folder in the OS file manager. */
   async revealSkillsFolder(): Promise<{ success: boolean; error?: string }> {
     const platform = await coreAPI.getPlatform();
-    const cmd = platform.isWindows
-      ? 'explorer.exe "%USERPROFILE%\\.hermes\\skills"'
-      : platform.isMac
-      ? 'open "$HOME/.hermes/skills"'
-      : 'xdg-open "$HOME/.hermes/skills" 2>/dev/null || true';
+    let cmd: string;
+    if (platform.isWindows) {
+      // Hermes lives in WSL on Windows. Convert the Linux path to a Windows
+      // UNC path first so Explorer opens the actual skills directory.
+      const p = await runHermesShell('wslpath -w "$HOME/.hermes/skills" 2>/dev/null || true', { timeout: 5000 });
+      const winPath = (p.stdout || "").split(/\r?\n/).map((s) => s.trim()).find(Boolean);
+      cmd = winPath ? `explorer.exe "${winPath.replace(/"/g, '\\"')}"` : 'explorer.exe "%USERPROFILE%\\.hermes\\skills"';
+    } else if (platform.isMac) {
+      cmd = 'open "$HOME/.hermes/skills"';
+    } else {
+      cmd = 'xdg-open "$HOME/.hermes/skills" 2>/dev/null || true';
+    }
     const r = await coreAPI.runCommand(cmd, { timeout: 5000 });
-    return { success: r.success || true }; // file managers often return non-zero
+    if (!r.success) {
+      return { success: false, error: r.stderr?.trim() || r.stdout?.trim() || 'Could not open skills folder' };
+    }
+    return { success: true };
   },
 
   /**

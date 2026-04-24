@@ -9,6 +9,7 @@ import { systemAPI, secretsStore, type SecretsBackend } from "@/lib/systemAPI";
 import { findPresetByEnvVar } from "@/lib/secretPresets";
 import SecretForm from "@/components/secrets/SecretForm";
 import { toast } from "sonner";
+import ActionableError from "@/components/ui/ActionableError";
 
 interface SecretEntry {
   envVar: string;
@@ -48,6 +49,7 @@ const Secrets = () => {
   // env-var → list of skill names that reference it. Lets us show "Used by"
   // chips so users can spot typos like `X` instead of `X_BEARER_TOKEN`.
   const [skillUsage, setSkillUsage] = useState<Map<string, string[]>>(new Map());
+  const [actionError, setActionError] = useState<string>("");
 
   useEffect(() => {
     init();
@@ -110,10 +112,12 @@ const Secrets = () => {
     setSyncing(false);
     if (showToast) {
       if (res.success) {
+        setActionError("");
         toast.success("Secrets synced to agent", {
           description: `${res.count ?? 0} secret${res.count === 1 ? "" : "s"} written to ~/.hermes/.env`,
         });
       } else {
+        setActionError(res.error || "Failed to sync secrets to ~/.hermes/.env");
         toast.error("Failed to sync secrets", { description: res.error || "Unknown error" });
       }
     }
@@ -129,9 +133,11 @@ const Secrets = () => {
     setAdding(true);
     const ok = await secretsStore.set(envVar, value);
     if (ok) {
+      setActionError("");
       toast.success(`Saved ${envVar}`);
       await syncToAgent(false);
     } else {
+      setActionError(`Could not save ${envVar}. Check the credential store backend and logs.`);
       toast.error(`Could not save ${envVar}`, {
         description: "Check the Logs tab — the credential store rejected the write.",
       });
@@ -163,6 +169,16 @@ const Secrets = () => {
 
   return (
     <div className="p-6 space-y-6">
+      {actionError && (
+        <ActionableError
+          title="Secrets action failed"
+          summary={actionError}
+          details={actionError}
+          onFix={() => setActionError("")}
+          fixLabel="Dismiss"
+        />
+      )}
+
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
@@ -250,6 +266,69 @@ const Secrets = () => {
             </div>
           </div>
         )}
+      </GlassCard>
+
+      <GlassCard className="p-4 space-y-3">
+        <h3 className="text-sm font-semibold text-foreground">Not sure which key to add?</h3>
+        <p className="text-xs text-muted-foreground">
+          Start with these two. They cover the most common beginner setup with the least friction.
+        </p>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-lg border border-white/10 bg-background/40 p-3 space-y-2">
+            <p className="text-xs font-medium text-foreground">1) Chat model key</p>
+            <p className="text-[11px] text-muted-foreground">
+              Add <code className="text-foreground">OPENROUTER_API_KEY</code> to power normal chat and agent replies.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => {
+                  setPresetEnvVar("OPENROUTER_API_KEY");
+                  setShowAddForm(true);
+                }}
+              >
+                Add OPENROUTER_API_KEY
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                onClick={() => window.open("https://openrouter.ai/keys", "_blank", "noopener,noreferrer")}
+              >
+                Where to get it
+              </Button>
+            </div>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-background/40 p-3 space-y-2">
+            <p className="text-xs font-medium text-foreground">2) Web search key</p>
+            <p className="text-[11px] text-muted-foreground">
+              Add <code className="text-foreground">TAVILY_API_KEY</code> to enable <code>web_search</code> and <code>web_extract</code>.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => {
+                  setPresetEnvVar("TAVILY_API_KEY");
+                  setShowAddForm(true);
+                }}
+              >
+                Add TAVILY_API_KEY
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                onClick={() => window.open("https://app.tavily.com/home", "_blank", "noopener,noreferrer")}
+              >
+                Where to get it
+              </Button>
+            </div>
+          </div>
+        </div>
       </GlassCard>
 
       {showAddForm && (

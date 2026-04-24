@@ -92,9 +92,9 @@ const TOOL_PATTERNS: PatternDef[] = [
       /can(?:'t|not)\s+(?:perform|run|do)\s+(?:a\s+)?web\s+search/i,
       /no\s+(?:web\s+)?search\s+(?:provider|tool|api)/i,
     ],
-    candidateSecrets: ["EXA_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY", "BRAVE_API_KEY", "FIRECRAWL_API_KEY"],
+    candidateSecrets: ["EXA_API_KEY", "TAVILY_API_KEY", "PARALLEL_API_KEY", "FIRECRAWL_API_KEY"],
     candidateSkills: ["web_search", "search", "exa", "tavily"],
-    hint: "Web search needs an API key from a search provider (Exa, Tavily, Serper, Brave, or Firecrawl).",
+    hint: "Web search needs an API key from a supported provider (Exa, Tavily, Parallel, or Firecrawl).",
   },
   {
     capability: "imageGen",

@@ -25,6 +25,7 @@ import {
   Package,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
+import ActionableError from "@/components/ui/ActionableError";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -97,6 +98,7 @@ const Index = () => {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetOutput, setResetOutput] = useState<string[]>([]);
+  const [wizardError, setWizardError] = useState<string>("");
 
   const navigate = useNavigate();
   const { refresh: refreshConnection, markConnected } = useAgentConnection();
@@ -156,6 +158,7 @@ const Index = () => {
     try {
       const res = await systemAPI.setAgentName(name);
       if (!res.success) {
+        setWizardError("Could not rename agent");
         toast.error("Could not rename agent");
         return;
       }
@@ -208,10 +211,20 @@ const Index = () => {
     }
     const saved = await systemAPI.secrets.set(provider.envVar, apiKey);
     setKeySaved(saved);
+    if (!saved) {
+      setWizardError(`Could not save ${provider.envVar}. Check key format and try again.`);
+    } else {
+      setWizardError("");
+    }
   };
 
   const handleSaveModel = async () => {
-    await systemAPI.writeInitialConfig({ model: selectedModel, name: agentName });
+    const r = await systemAPI.writeInitialConfig({ model: selectedModel, name: agentName });
+    if (!r.success) {
+      setWizardError(r.error || "Could not save model config");
+      return;
+    }
+    setWizardError("");
     await refreshConnection();
     setInstallStep(6);
   };
@@ -501,6 +514,16 @@ const Index = () => {
             </div>
 
             <GlassCard className="space-y-5">
+              {wizardError && (
+                <ActionableError
+                  title="Setup step failed"
+                  summary={wizardError}
+                  details={wizardError}
+                  onFix={() => setWizardError("")}
+                  fixLabel="Dismiss"
+                />
+              )}
+
               <div className="space-y-1">
                 <p className="text-xs text-primary font-mono">Step {installStep + 1} of {installSteps.length}</p>
                 <h2 className="text-xl font-semibold text-foreground">{installSteps[installStep].title}</h2>
@@ -521,7 +544,7 @@ const Index = () => {
                       <span className="text-sm font-medium text-foreground">Optional Features</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Select which optional features to include. You can change these later.
+                      Select optional add-ons you may want later. Ron can install and chat without these.
                     </p>
 
                     <div className="space-y-2">
@@ -729,6 +752,16 @@ const Index = () => {
                     {currentProvider && (
                       <div className="glass-subtle rounded-lg p-3 text-xs text-muted-foreground">
                         {currentProvider.hint}
+                        {currentProvider.docsUrl && (
+                          <a
+                            href={currentProvider.docsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="ml-2 inline-flex items-center gap-1 text-primary hover:underline"
+                          >
+                            Provider docs <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
                       </div>
                     )}
 
@@ -929,10 +962,10 @@ const Index = () => {
                   {installStep === 7 && launchOutput.some((l) => l.includes("All systems operational")) && (
                     <Button
                       size="sm"
-                      onClick={() => navigate("/dashboard")}
+                      onClick={() => navigate("/chat")}
                       className="gradient-primary text-primary-foreground"
                     >
-                      Open Dashboard <ArrowRight className="w-4 h-4 ml-1" />
+                      Start chatting with Ron <ArrowRight className="w-4 h-4 ml-1" />
                     </Button>
                   )}
                 </div>

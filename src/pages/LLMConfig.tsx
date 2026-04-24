@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Cpu, AlertCircle, CheckCircle2, KeyRound, Loader2, Save, RefreshCw, Server, Plus } from "lucide-react";
+import { Cpu, AlertCircle, CheckCircle2, KeyRound, Loader2, Save, RefreshCw, Server, Plus, ExternalLink } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
+import ActionableError from "@/components/ui/ActionableError";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -58,6 +59,8 @@ const LLMConfig = () => {
   const [customModel, setCustomModel] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string>("");
+  const [saveError, setSaveError] = useState<string>("");
   // Detected local runtimes (Ollama, LM Studio, llama.cpp, vLLM, …).
   const [localRuntimes, setLocalRuntimes] = useState<LocalRuntime[]>([]);
   const [scanningLocal, setScanningLocal] = useState(true);
@@ -112,6 +115,11 @@ const LLMConfig = () => {
       systemAPI.readConfig(),
       systemAPI.secrets.list(),
     ]);
+    if (!config.success) {
+      setLoadError(config.error || "Could not read config.yaml");
+    } else {
+      setLoadError("");
+    }
     const current = config.success && config.content ? readConfiguredModel(config.content) : null;
     applyLoadedModel(current, secrets.keys, force);
     if (force) setRefreshing(false);
@@ -196,11 +204,13 @@ const LLMConfig = () => {
     const result = await systemAPI.setModel(draftModel);
     setSaving(false);
     if (result.success) {
+      setSaveError("");
       toast.success("Model updated", { description: draftModel });
       setModel(draftModel);
       dirtyRef.current = false;
       void refreshConnection();
     } else {
+      setSaveError(result.stderr || "Could not write config.yaml");
       toast.error("Failed to update model", {
         description: result.stderr || "Could not write config.yaml",
       });
@@ -257,6 +267,25 @@ const LLMConfig = () => {
         </GlassCard>
       ) : (
         <>
+          {loadError && (
+            <ActionableError
+              title="Could not load model settings"
+              summary={loadError}
+              details={loadError}
+              onFix={handleManualRefresh}
+            />
+          )}
+
+          {saveError && (
+            <ActionableError
+              title="Could not save model settings"
+              summary={saveError}
+              details={saveError}
+              onFix={handleSave}
+              fixLabel="Try Save Again"
+            />
+          )}
+
           <div className="grid gap-4 md:grid-cols-3">
             <GlassCard className="space-y-2">
               <p className="text-xs text-muted-foreground">Current model</p>
@@ -366,6 +395,16 @@ const LLMConfig = () => {
                   </SelectContent>
                 </Select>
                 <p className="text-[11px] text-muted-foreground/80">{providerForDraft.hint}</p>
+                {providerForDraft.docsUrl && (
+                  <a
+                    href={providerForDraft.docsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+                  >
+                    Provider docs <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -418,6 +457,16 @@ const LLMConfig = () => {
                   >
                     <Plus className="w-3 h-3 mr-1" /> Add {providerForDraft.envVar}
                   </Button>
+                  {providerForDraft.docsUrl && (
+                    <a
+                      href={providerForDraft.docsUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+                    >
+                      Where to get this key <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
                 </div>
               </div>
             )}

@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { enterLicenseKey, getUpgrade } from "@/lib/licenses";
+import ActionableError from "@/components/ui/ActionableError";
 
 interface EnterLicenseKeyDialogProps {
   /** Upgrade id to validate against (e.g. "discord", "browserbase"). */
@@ -37,9 +38,11 @@ const EnterLicenseKeyDialog = ({
   const upgrade = getUpgrade(upgradeId);
   const [keyInput, setKeyInput] = useState("");
   const [validating, setValidating] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   const close = () => {
     setKeyInput("");
+    setActionError("");
     onOpenChange(false);
   };
 
@@ -49,16 +52,19 @@ const EnterLicenseKeyDialog = ({
     const result = await enterLicenseKey(upgrade.id, keyInput);
     setValidating(false);
     if (result === "ok") {
+      setActionError("");
       toast.success(`${upgrade.name} unlocked`, {
         description: "Yours forever — including future updates.",
       });
       close();
       onUnlocked?.();
     } else if (result === "wrong") {
+      setActionError(`That license key is for a different upgrade, not "${upgrade.name}".`);
       toast.error("Wrong upgrade", {
         description: `That license key is for a different upgrade, not "${upgrade.name}".`,
       });
     } else {
+      setActionError("Invalid license key. Double-check the key from your purchase email.");
       toast.error("Invalid license key", {
         description: "Double-check the key from your purchase email. Whitespace is OK.",
       });
@@ -77,6 +83,15 @@ const EnterLicenseKeyDialog = ({
             you can re-enter it on any device you own.
           </DialogDescription>
         </DialogHeader>
+        {actionError && (
+          <ActionableError
+            title="License key couldn't be validated"
+            summary={actionError}
+            details={actionError}
+            onFix={() => setActionError("")}
+            fixLabel="Dismiss"
+          />
+        )}
         <div className="space-y-2">
           <Label htmlFor="license-key">License key</Label>
           <Input

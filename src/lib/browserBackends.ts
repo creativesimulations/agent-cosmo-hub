@@ -108,9 +108,9 @@ export const BROWSER_BACKENDS: BrowserBackend[] = [
   {
     id: 'firecrawl',
     name: 'Firecrawl',
-    tagline: 'Page-extraction API — good for content scraping.',
+    tagline: 'Cloud browser sessions with built-in extraction.',
     description:
-      "Not a full browser — Firecrawl extracts page content for the agent. Useful for reading articles and docs, less useful for sites that need clicks or logins.",
+      "Cloud browser automation through Firecrawl with strong extraction support. Good for page-reading workflows and can be used for browser tasks without local setup.",
     tier: 'free',
     icon: 'Flame',
     surface: 'cloud',

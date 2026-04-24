@@ -19,11 +19,6 @@ import {
   History,
   Network,
   ChevronDown,
-  Shield,
-  Sparkles,
-  Puzzle,
-  Wrench,
-  FolderOpen,
   Box,
 } from "lucide-react";
 import {
@@ -33,7 +28,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import InstallSkillDialog from "@/components/skills/InstallSkillDialog";
 import GlassCard from "@/components/ui/GlassCard";
 import {
   Collapsible,
@@ -66,8 +60,7 @@ import {
 } from "@/lib/notify";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import PermissionsPanel from "@/components/permissions/PermissionsPanel";
-import CapabilitiesPanel from "@/components/permissions/CapabilitiesPanel";
+import ActionableError from "@/components/ui/ActionableError";
 
 /** A labelled toggle row — keeps the page readable when there are 8+ settings. */
 const ToggleRow = ({
@@ -204,10 +197,7 @@ const SettingsPage = () => {
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
 
-  // Tools & Skills section
-  const [installSkillOpen, setInstallSkillOpen] = useState(false);
-  const [installToolOpen, setInstallToolOpen] = useState(false);
-  const [reloadingToolsets, setReloadingToolsets] = useState(false);
+  const [settingsError, setSettingsError] = useState<string>("");
 
   // Sandbox / terminal backend
   const [terminalBackend, setTerminalBackend] = useState<"local" | "docker" | "ssh">("local");
@@ -228,26 +218,6 @@ const SettingsPage = () => {
     };
   }, [agentConnected]);
 
-  const handleReloadToolsets = async () => {
-    setReloadingToolsets(true);
-    const r = await systemAPI.reloadToolsets();
-    setReloadingToolsets(false);
-    if (r.success) {
-      toast.success("Toolsets reloaded", {
-        description: "The agent will pick up new skills/tools on the next message.",
-      });
-    } else {
-      toast.error("Reload failed", { description: r.error || "See Logs for details." });
-    }
-  };
-
-  const handleRevealSkillsFolder = async () => {
-    const r = await systemAPI.revealSkillsFolder();
-    if (!r.success) {
-      toast.error("Couldn't open folder", { description: r.error || "Unknown error" });
-    }
-  };
-
   const handleTerminalBackendChange = async (next: "local" | "docker" | "ssh") => {
     setTerminalBackend(next);
     const cfg = await systemAPI.readConfig();
@@ -257,6 +227,7 @@ const SettingsPage = () => {
     body += `\n\nterminal:\n  backend: ${next}\n`;
     const w = await systemAPI.writeConfig(body);
     if (w.success) {
+      setSettingsError("");
       toast.success(`Terminal backend set to ${next}`, {
         description:
           next === "local"
@@ -266,6 +237,7 @@ const SettingsPage = () => {
               : "Commands run over SSH. Set SSH_HOST / SSH_USER / SSH_KEY_PATH in Secrets.",
       });
     } else {
+      setSettingsError(w.error || "Failed to update config");
       toast.error("Couldn't save", { description: w.error || "Failed to update config" });
     }
   };
@@ -299,11 +271,13 @@ const SettingsPage = () => {
     const result = await systemAPI.setAgentName(trimmed);
     setSaving(false);
     if (result.success) {
+      setSettingsError("");
       setOriginalName(trimmed);
       toast.success("Agent name saved", {
         description: `Your agent will introduce itself as ${trimmed} in new conversations.`,
       });
     } else {
+      setSettingsError("Failed to save agent name");
       toast.error("Failed to save agent name");
     }
   };
@@ -360,12 +334,14 @@ const SettingsPage = () => {
     const r = await systemAPI.hermesUninstall();
     setUninstalling(false);
     if (r.success) {
+      setSettingsError("");
       toast.success("Hermes uninstalled", {
         description: "All agent files and the venv have been removed.",
       });
       // Force a re-detect — connection should now flip to disconnected.
       void refreshConnection();
     } else {
+      setSettingsError(r.stderr?.split("\n")[0] || "Uninstall failed");
       toast.error("Uninstall failed", {
         description: r.stderr?.split("\n")[0] || "Check Logs for details.",
       });
@@ -384,8 +360,18 @@ const SettingsPage = () => {
         <p className="text-sm text-muted-foreground">Appearance, behavior, notifications, and maintenance</p>
       </div>
 
-      {/* ─── Appearance ─────────────────────────────────────────── */}
-      <SettingsSection icon={Sun} title="Appearance">
+      {settingsError && (
+        <ActionableError
+          title="Settings action failed"
+          summary={settingsError}
+          details={settingsError}
+          onFix={() => setSettingsError("")}
+          fixLabel="Dismiss"
+        />
+      )}
+
+      {/* ─── General ─────────────────────────────────────────── */}
+      <SettingsSection icon={Sun} title="General">
         <div>
           <Label className="text-sm font-medium text-foreground">Theme</Label>
           <p className="text-xs text-muted-foreground mb-3">
@@ -417,7 +403,7 @@ const SettingsPage = () => {
         </div>
       </SettingsSection>
 
-      {/* ─── Agent Identity ─────────────────────────────────────── */}
+      {/* ─── General: Agent Identity ───────────────────────────── */}
       {agentConnected ? (
         <SettingsSection icon={User} title="Agent Identity">
           <p className="text-sm text-muted-foreground">
@@ -467,8 +453,8 @@ const SettingsPage = () => {
         </GlassCard>
       )}
 
-      {/* ─── Behavior ──────────────────────────────────────────── */}
-      <SettingsSection icon={Play} title="Behavior">
+      {/* ─── General Behavior ─────────────────────────────────── */}
+      <SettingsSection icon={Play} title="General Behavior">
         <div className="-mt-2">
           <ToggleRow
             title="Auto-start agent on app launch"
@@ -535,55 +521,6 @@ const SettingsPage = () => {
         </div>
       </SettingsSection>
 
-      {/* ─── Permissions ───────────────────────────────────────── */}
-      <SettingsSection icon={Shield} title="Permissions" bare>
-        <PermissionsPanel />
-      </SettingsSection>
-
-      {/* ─── Capabilities (auto-discovered) ────────────────────── */}
-      <SettingsSection icon={Sparkles} title="Capabilities" bare>
-        <CapabilitiesPanel />
-      </SettingsSection>
-
-      {/* ─── Tools & Skills ────────────────────────────────────── */}
-      {agentConnected && (
-        <SettingsSection icon={Puzzle} title="Tools & skills">
-          <p className="text-sm text-muted-foreground">
-            Drop in any Hermes-compatible skill or tool from a folder or Git URL — we validate the
-            manifest, install it under <code className="text-xs">~/.hermes/</code>, and enable it
-            for the next agent restart.
-          </p>
-          <div className="grid sm:grid-cols-2 gap-2">
-            <Button variant="outline" onClick={() => setInstallSkillOpen(true)}>
-              <Puzzle className="w-4 h-4 mr-2" /> Install skill…
-            </Button>
-            <Button variant="outline" onClick={() => setInstallToolOpen(true)}>
-              <Wrench className="w-4 h-4 mr-2" /> Install tool…
-            </Button>
-            <Button variant="outline" onClick={handleRevealSkillsFolder}>
-              <FolderOpen className="w-4 h-4 mr-2" /> Open ~/.hermes/skills
-            </Button>
-            <Button
-              variant="outline"
-              onClick={handleReloadToolsets}
-              disabled={reloadingToolsets}
-            >
-              {reloadingToolsets ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4 mr-2" />
-              )}
-              Reload toolsets
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Power users can also drop folders directly into{" "}
-            <code className="text-xs">~/.hermes/skills/</code> or{" "}
-            <code className="text-xs">~/.hermes/tools/</code> and click "Reload toolsets".
-          </p>
-        </SettingsSection>
-      )}
-
       {/* ─── Sandbox / terminal backend ────────────────────────── */}
       {agentConnected && (
         <SettingsSection icon={Box} title="Sandbox">
@@ -614,7 +551,7 @@ const SettingsPage = () => {
         </SettingsSection>
       )}
 
-      <SettingsSection icon={History} title="Sessions & history">
+      <SettingsSection icon={History} title="Privacy">
         <div className="space-y-4 -mt-2">
           <div className="flex items-start justify-between gap-4 py-3 border-b border-border/40">
             <div className="space-y-0.5 min-w-0 flex-1">
@@ -682,8 +619,8 @@ const SettingsPage = () => {
         </div>
       </SettingsSection>
 
-      {/* ─── Updates ───────────────────────────────────────────── */}
-      <SettingsSection icon={RefreshCw} title="Updates">
+      {/* ─── Advanced ───────────────────────────────────────────── */}
+      <SettingsSection icon={AlertTriangle} title="Advanced">
         <div className="-mt-2">
           <ToggleRow
             title="Auto-check for app & agent updates"
@@ -694,13 +631,7 @@ const SettingsPage = () => {
         </div>
       </SettingsSection>
 
-      {/* ─── Danger Zone ───────────────────────────────────────── */}
-      <SettingsSection
-        icon={AlertTriangle}
-        title="Danger Zone"
-        iconClassName="text-destructive"
-        className="border-destructive/40 bg-destructive/5"
-      >
+      <GlassCard className="border-destructive/40 bg-destructive/5">
         <p className="text-sm text-muted-foreground">
           Destructive actions. Both ask for confirmation first.
         </p>
@@ -742,7 +673,7 @@ const SettingsPage = () => {
             </Button>
           </div>
         </div>
-      </SettingsSection>
+      </GlassCard>
 
       {/* ─── Confirmation dialogs ──────────────────────────────── */}
       <AlertDialog open={confirmClearChat} onOpenChange={setConfirmClearChat}>
@@ -800,19 +731,6 @@ const SettingsPage = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <InstallSkillDialog
-        open={installSkillOpen}
-        onOpenChange={setInstallSkillOpen}
-        kind="skill"
-      />
-      <InstallSkillDialog
-        open={installToolOpen}
-        onOpenChange={setInstallToolOpen}
-        kind="tool"
-      />
-
-      {/* Suppress unused-import warning for Database icon used in design discussions */}
-      <Database className="hidden" />
     </div>
   );
 };
