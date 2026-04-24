@@ -223,7 +223,26 @@ function showMainWindow() {
   mainWindow.focus();
 }
 
+function resolveAppIcon() {
+  // BrowserWindow.icon expects a platform-appropriate file:
+  //   - Windows: .ico (multi-resolution)
+  //   - Linux:   .png (256+ recommended)
+  //   - macOS:   ignored at runtime (Dock icon comes from the .app bundle's
+  //              Contents/Resources/electron.icns, set at package time via
+  //              electron-packager's --icon=build/icon.icns).
+  const platform = process.platform;
+  const candidates = platform === 'win32'
+    ? ['build/icon.ico', 'electron/assets/tray-icon.ico']
+    : ['build/icon.png', 'build/icon-512.png', 'electron/assets/tray-icon.png'];
+  for (const rel of candidates) {
+    const p = path.join(__dirname, '..', rel);
+    if (fs.existsSync(p)) return p;
+  }
+  return undefined;
+}
+
 function createWindow() {
+  const appIcon = resolveAppIcon();
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -232,6 +251,7 @@ function createWindow() {
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#050714',
     autoHideMenuBar: true,
+    ...(appIcon ? { icon: appIcon } : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -876,6 +896,17 @@ app.whenReady().then(() => {
   // minimal app menu (it's a system requirement).
   if (process.platform !== 'darwin') {
     try { Menu.setApplicationMenu(null); } catch { /* best effort */ }
+  }
+  // macOS Dock icon — picked up from the .icns inside the packaged .app at
+  // runtime, but in `bun run dev` we're loading raw Electron, so set it
+  // manually from the Ronbot logo so the Dock shows the right artwork.
+  if (process.platform === 'darwin' && app.dock) {
+    try {
+      const dockIconPath = path.join(__dirname, '..', 'build', 'icon.png');
+      if (fs.existsSync(dockIconPath)) {
+        app.dock.setIcon(nativeImage.createFromPath(dockIconPath));
+      }
+    } catch { /* best effort */ }
   }
   createWindow();
   // Pre-create the tray immediately so the user can find Ronbot even if
