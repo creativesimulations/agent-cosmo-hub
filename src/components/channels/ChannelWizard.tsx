@@ -183,7 +183,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             <div className="rounded-lg border border-border/60 bg-background/30 p-3 text-xs text-muted-foreground">
               <strong className="text-foreground">You'll need:</strong>
               <ul className="list-disc list-inside mt-1 space-y-0.5">
-                {channel.credentials.map((c) => (
+                {visibleCredentials.map((c) => (
                   <li key={c.envVar}>{c.label}</li>
                 ))}
               </ul>
