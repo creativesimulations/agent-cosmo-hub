@@ -897,6 +897,17 @@ app.whenReady().then(() => {
   if (process.platform !== 'darwin') {
     try { Menu.setApplicationMenu(null); } catch { /* best effort */ }
   }
+  // macOS Dock icon — picked up from the .icns inside the packaged .app at
+  // runtime, but in `bun run dev` we're loading raw Electron, so set it
+  // manually from the Ronbot logo so the Dock shows the right artwork.
+  if (process.platform === 'darwin' && app.dock) {
+    try {
+      const dockIconPath = path.join(__dirname, '..', 'build', 'icon.png');
+      if (fs.existsSync(dockIconPath)) {
+        app.dock.setIcon(nativeImage.createFromPath(dockIconPath));
+      }
+    } catch { /* best effort */ }
+  }
   createWindow();
   // Pre-create the tray immediately so the user can find Ronbot even if
   // they close the window before we get a chance to set things up.
