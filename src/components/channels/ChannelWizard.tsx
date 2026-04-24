@@ -45,7 +45,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const next: Record<string, string> = {};
       for (const cred of channel.credentials) {
         const existing = await systemAPI.secrets.get(cred.envVar);
-        next[cred.envVar] = existing || "";
+        // For hidden creds, always use defaultValue (auto). For choice, fall
+        // back to defaultValue when nothing is stored yet.
+        if (cred.kind === "hidden") {
+          next[cred.envVar] = cred.defaultValue ?? "";
+        } else if (cred.kind === "choice") {
+          next[cred.envVar] = existing || cred.defaultValue || cred.choices?.[0]?.value || "";
+        } else {
+          next[cred.envVar] = existing || "";
+        }
       }
       if (!cancelled) setValues(next);
     })();
@@ -53,6 +61,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       cancelled = true;
     };
   }, [open, channel]);
+
+  const visibleCredentials = useMemo(
+    () => channel.credentials.filter((c) => c.kind !== "hidden"),
+    [channel.credentials],
+  );
 
   const requiredFilled = useMemo(
     () => channel.credentials.every((c) => c.optional || (values[c.envVar] || "").trim().length > 0),
