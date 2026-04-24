@@ -32,6 +32,16 @@ export interface ChannelCredential {
   inputType?: 'password' | 'text';
   /** True if this credential is optional (e.g. SMTP_PORT defaults to 587). */
   optional?: boolean;
+  /**
+   * Credential kind. Defaults to 'input' (rendered as a text/password field).
+   * - 'hidden': not shown in the UI; the wizard auto-writes `defaultValue`.
+   * - 'choice': rendered as a radio group of `choices`; user picks one.
+   */
+  kind?: 'input' | 'hidden' | 'choice';
+  /** Default/auto value (used by 'hidden' and as initial selection for 'choice'). */
+  defaultValue?: string;
+  /** Options for 'choice' kind. */
+  choices?: { value: string; label: string; description?: string }[];
 }
 
 export interface ChannelSetupStep {
