@@ -30,8 +30,8 @@ const ChannelsPage = () => {
 
     // 2. Resolve per-channel configured / running state by inspecting
     //    ~/.hermes/.env (configured) and `hermes status` (running).
+    //    readEnvFile() returns a parsed Record<string, string>.
     const env = await systemAPI.readEnvFile();
-    const envText = env.success ? env.content || "" : "";
 
     let runningChannels: string[] = [];
     try {
@@ -51,7 +51,9 @@ const ChannelsPage = () => {
         continue;
       }
       const required = channel.credentials.filter((c) => !c.optional);
-      const configured = required.every((c) => envText.includes(`${c.envVar}=`));
+      const configured = required.every(
+        (c) => !!env[c.envVar] && env[c.envVar].trim().length > 0,
+      );
       if (!configured) {
         next[channel.id] = { state: "not-configured" };
       } else {
