@@ -11,11 +11,11 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "pack:win": "vite build && electron-packager . Ronbot --platform=win32 --arch=x64 --out=electron-release --overwrite --ignore=^/src --ignore=^/public --ignore=^/electron-release",
-    "pack:mac": "vite build && electron-packager . Ronbot --platform=darwin --arch=arm64 --out=electron-release --overwrite --ignore=^/src --ignore=^/public --ignore=^/electron-release",
-    "pack:mac-intel": "vite build && electron-packager . Ronbot --platform=darwin --arch=x64 --out=electron-release --overwrite --ignore=^/src --ignore=^/public --ignore=^/electron-release",
-    "pack:mac-universal": "vite build && electron-packager . Ronbot --platform=darwin --arch=universal --out=electron-release --overwrite --ignore=^/src --ignore=^/public --ignore=^/electron-release",
-    "pack:linux": "vite build && electron-packager . Ronbot --platform=linux --arch=x64 --out=electron-release --overwrite --ignore=^/src --ignore=^/public --ignore=^/electron-release"
+    "pack:win": "vite build && electron-packager . Ronbot --platform=win32 --arch=x64 --icon=build/icon.ico --out=electron-release --overwrite --ignore=^/src --ignore=^/public --ignore=^/electron-release",
+    "pack:mac": "vite build && electron-packager . Ronbot --platform=darwin --arch=arm64 --icon=build/icon.icns --out=electron-release --overwrite --ignore=^/src --ignore=^/public --ignore=^/electron-release",
+    "pack:mac-intel": "vite build && electron-packager . Ronbot --platform=darwin --arch=x64 --icon=build/icon.icns --out=electron-release --overwrite --ignore=^/src --ignore=^/public --ignore=^/electron-release",
+    "pack:mac-universal": "vite build && electron-packager . Ronbot --platform=darwin --arch=universal --icon=build/icon.icns --out=electron-release --overwrite --ignore=^/src --ignore=^/public --ignore=^/electron-release",
+    "pack:linux": "vite build && electron-packager . Ronbot --platform=linux --arch=x64 --icon=build/icon.png --out=electron-release --overwrite --ignore=^/src --ignore=^/public --ignore=^/electron-release"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
