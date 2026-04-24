@@ -272,14 +272,28 @@ export const CHANNELS: Channel[] = [
       {
         envVar: 'WHATSAPP_ENABLED',
         label: 'Enable WhatsApp',
-        hint: 'Set to true to turn the WhatsApp adapter on.',
-        inputType: 'text',
+        hint: 'Automatically set to true during setup.',
+        kind: 'hidden',
+        defaultValue: 'true',
       },
       {
         envVar: 'WHATSAPP_MODE',
         label: 'Mode',
-        hint: '"bot" for a dedicated bot number, or "self-chat" for your own number',
-        inputType: 'text',
+        hint: 'Pick how the bot uses WhatsApp.',
+        kind: 'choice',
+        defaultValue: 'self-chat',
+        choices: [
+          {
+            value: 'self-chat',
+            label: 'Self-chat (default)',
+            description: 'Use your own WhatsApp account and message yourself.',
+          },
+          {
+            value: 'bot',
+            label: 'Bot',
+            description: 'Use a dedicated bot phone number — recommended for shared use.',
+          },
+        ],
       },
       {
         envVar: 'WHATSAPP_ALLOWED_USERS',
