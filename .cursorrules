@@ -1,0 +1,72 @@
+# Cursor rules for Ronbot / NanoClaw / OpenClaw control panels
+#
+# These three apps share a single architecture: Electron desktop control
+# panel for a local AI agent. Keep the conventions identical across all
+# three repos so patterns transfer cleanly.
+
+## Stack — do not deviate
+- Vite 5 + React 18 + TypeScript 5 + Tailwind 3 + shadcn/ui + framer-motion
+- Electron 41, packaged with @electron/packager (NOT electron-builder)
+- Package manager: bun. Lockfile: bun.lockb. Do not switch to pnpm/npm/yarn.
+- State: React contexts only. No Redux, Zustand, Jotai, Recoil.
+- Routing: HashRouter only (file:// compatible). Never BrowserRouter.
+- Vite `base: "./"` in vite.config.ts is mandatory — absolute paths break Electron.
+
+## Architecture — never break these patterns
+- All OS access goes through `window.electronAPI` → `src/lib/systemAPI/*`.
+  Never import `child_process`, `fs`, `path`, `os` in renderer code.
+- IPC handlers live in `electron/main.cjs`. The bridge surface is
+  `electron/preload.cjs` (CommonJS — `.cjs` extension is required because
+  package.json sets `"type": "module"`).
+- Secrets go through `keytar` via `secretsStore` (`src/lib/systemAPI/secretsStore.ts`).
+  Never write secrets to `.env` from the UI. Materialize on demand only.
+- Long-running commands use `runCommandStream` + `onCommandOutput`.
+  Always store the unsubscribe function and call it in the cleanup effect.
+- Managed YAML edits use `BEGIN`/`END` marker blocks plus the repair routine.
+  Never free-form edit user config files.
+- Permissions / capabilities are checked via `CapabilitiesContext`.
+  Never inline `if (role === 'admin')` checks in components.
+
+## Design system — token-driven only
+- All colors are HSL CSS variables in `src/index.css`. Never use raw
+  hex/rgb/named colors in components. No inline `style={{ color: ... }}`.
+- Use semantic Tailwind tokens: `bg-background`, `text-foreground`,
+  `border-border`, `bg-primary`, `text-primary-foreground`, etc.
+- Glass utilities: `.glass`, `.glass-subtle`, `.glass-strong`,
+  `.gradient-bg`, `.gradient-primary`, `.glow-primary`, `.glow-accent`.
+- Fonts: Inter (body), JetBrains Mono (code, terminals, log panels).
+- shadcn components: customize via the variants file, not by overriding
+  `className` at the call site.
+
+## Security
+- Roles, if added later, live in a separate `user_roles` table with a
+  `has_role(uuid, app_role)` SECURITY DEFINER function. Never store
+  roles on the profile/users table.
+- Never check admin status from `localStorage` or hardcoded credentials.
+- Never echo or print secret env variables in logs.
+
+## Testing & commits
+- vitest + @testing-library/react. Co-locate as `*.test.ts(x)`.
+- Conventional commits: `feat:`, `fix:`, `chore:`, `refactor:`, `docs:`,
+  `test:`, `style:`.
+
+## Never
+- Never reintroduce Supabase or Lovable Cloud — these are local-first
+  desktop apps. No backend, no remote DB, no edge functions.
+- Never run `npm`, `pnpm`, or `bun` directly from the renderer — always
+  go through `runCommand` so Electron handles env, sudo, and streaming.
+- Never use `electron-builder` — it requires 7zip binaries that fail in
+  CI. Use `@electron/packager`.
+- Never use `child_process.exec` from the renderer — IPC only.
+- Never overwrite a user's config file blindly — always read, edit
+  managed block, write back atomically.
+
+## App-specific notes
+- Ronbot: agent backend is Hermes (NousResearch). Provider-agnostic.
+  Hermes name is allowed in UI per latest direction.
+- NanoClaw: requires Anthropic Claude Code CLI at install time. Runtime
+  provider is swappable per agent group (OpenCode, Ollama, Codex).
+- OpenClaw: provider-agnostic from day one. Default onboarding tile is
+  OpenRouter, not Anthropic. Honor `--profile` and `--dev` flags everywhere.
+
+See `docs/cursor/HANDOFF-*.md` for per-app details.
