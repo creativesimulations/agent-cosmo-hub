@@ -93,10 +93,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     // surfaces the missing-key path, which is the most common failure mode.
     // The real send-test will land when we wire startGateway(channel).
     try {
+      // readEnvFile() returns a parsed Record<string, string> of the
+      // current ~/.hermes/.env. A key is "present" when it exists with
+      // a non-empty value.
       const env = await systemAPI.readEnvFile();
       const missing = channel.credentials
         .filter((c) => !c.optional)
-        .filter((c) => !env.success || !(env.content || "").includes(`${c.envVar}=`));
+        .filter((c) => !(env[c.envVar] && env[c.envVar].trim().length > 0));
       if (missing.length > 0) {
         setTestResult("fail");
         setTestError(`Missing in ~/.hermes/.env: ${missing.map((m) => m.envVar).join(", ")}`);
