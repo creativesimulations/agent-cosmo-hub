@@ -45,7 +45,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const next: Record<string, string> = {};
       for (const cred of channel.credentials) {
         const existing = await systemAPI.secrets.get(cred.envVar);
-        next[cred.envVar] = existing || "";
+        // For hidden creds, always use defaultValue (auto). For choice, fall
+        // back to defaultValue when nothing is stored yet.
+        if (cred.kind === "hidden") {
+          next[cred.envVar] = cred.defaultValue ?? "";
+        } else if (cred.kind === "choice") {
+          next[cred.envVar] = existing || cred.defaultValue || cred.choices?.[0]?.value || "";
+        } else {
+          next[cred.envVar] = existing || "";
+        }
       }
       if (!cancelled) setValues(next);
     })();
@@ -53,6 +61,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       cancelled = true;
     };
   }, [open, channel]);
+
+  const visibleCredentials = useMemo(
+    () => channel.credentials.filter((c) => c.kind !== "hidden"),
+    [channel.credentials],
+  );
 
   const requiredFilled = useMemo(
     () => channel.credentials.every((c) => c.optional || (values[c.envVar] || "").trim().length > 0),
@@ -170,7 +183,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             <div className="rounded-lg border border-border/60 bg-background/30 p-3 text-xs text-muted-foreground">
               <strong className="text-foreground">You'll need:</strong>
               <ul className="list-disc list-inside mt-1 space-y-0.5">
-                {channel.credentials.map((c) => (
+                {visibleCredentials.map((c) => (
                   <li key={c.envVar}>{c.label}</li>
                 ))}
               </ul>
@@ -218,23 +231,66 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               These are stored in your OS keychain — never in plain text.
             </p>
             <div className="space-y-3">
-              {channel.credentials.map((cred) => (
+              {visibleCredentials.map((cred) => (
                 <div key={cred.envVar} className="space-y-1">
                   <Label htmlFor={cred.envVar} className="text-xs">
                     {cred.label}{" "}
                     {cred.optional && <span className="text-muted-foreground/60">(optional)</span>}
                   </Label>
-                  <Input
-                    id={cred.envVar}
-                    type={cred.inputType ?? "password"}
-                    value={values[cred.envVar] || ""}
-                    onChange={(e) => setValues((v) => ({ ...v, [cred.envVar]: e.target.value }))}
-                    placeholder={cred.hint}
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="bg-background/50"
-                  />
-                  <p className="text-[11px] text-muted-foreground">{cred.hint}</p>
+                  {cred.kind === "choice" && cred.choices ? (
+                    <div className="space-y-2 pt-1">
+                      {cred.choices.map((opt) => {
+                        const checked = (values[cred.envVar] || "") === opt.value;
+                        return (
+                          <label
+                            key={opt.value}
+                            htmlFor={`${cred.envVar}-${opt.value}`}
+                            className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+                              checked
+                                ? "border-primary bg-primary/5"
+                                : "border-border/60 bg-background/30 hover:border-border"
+                            }`}
+                          >
+                            <input
+                              id={`${cred.envVar}-${opt.value}`}
+                              type="radio"
+                              name={cred.envVar}
+                              value={opt.value}
+                              checked={checked}
+                              onChange={() =>
+                                setValues((v) => ({ ...v, [cred.envVar]: opt.value }))
+                              }
+                              className="mt-0.5 accent-primary"
+                            />
+                            <div className="space-y-0.5">
+                              <p className="text-sm font-medium text-foreground">{opt.label}</p>
+                              {opt.description && (
+                                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                                  {opt.description}
+                                </p>
+                              )}
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <>
+                      <Input
+                        id={cred.envVar}
+                        type={cred.inputType ?? "password"}
+                        value={values[cred.envVar] || ""}
+                        onChange={(e) =>
+                          setValues((v) => ({ ...v, [cred.envVar]: e.target.value }))
+                        }
+                        placeholder={cred.hint}
+                        autoComplete="off"
+                        spellCheck={false}
+                        className="bg-background/50"
+                      />
+                      <p className="text-[11px] text-muted-foreground">{cred.hint}</p>
+                    </>
+                  )}
                 </div>
               ))}
             </div>

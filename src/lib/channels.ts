@@ -32,6 +32,16 @@ export interface ChannelCredential {
   inputType?: 'password' | 'text';
   /** True if this credential is optional (e.g. SMTP_PORT defaults to 587). */
   optional?: boolean;
+  /**
+   * Credential kind. Defaults to 'input' (rendered as a text/password field).
+   * - 'hidden': not shown in the UI; the wizard auto-writes `defaultValue`.
+   * - 'choice': rendered as a radio group of `choices`; user picks one.
+   */
+  kind?: 'input' | 'hidden' | 'choice';
+  /** Default/auto value (used by 'hidden' and as initial selection for 'choice'). */
+  defaultValue?: string;
+  /** Options for 'choice' kind. */
+  choices?: { value: string; label: string; description?: string }[];
 }
 
 export interface ChannelSetupStep {
@@ -262,14 +272,28 @@ export const CHANNELS: Channel[] = [
       {
         envVar: 'WHATSAPP_ENABLED',
         label: 'Enable WhatsApp',
-        hint: 'Set to true to turn the WhatsApp adapter on.',
-        inputType: 'text',
+        hint: 'Automatically set to true during setup.',
+        kind: 'hidden',
+        defaultValue: 'true',
       },
       {
         envVar: 'WHATSAPP_MODE',
         label: 'Mode',
-        hint: '"bot" for a dedicated bot number, or "self-chat" for your own number',
-        inputType: 'text',
+        hint: 'Pick how the bot uses WhatsApp.',
+        kind: 'choice',
+        defaultValue: 'self-chat',
+        choices: [
+          {
+            value: 'self-chat',
+            label: 'Self-chat (default)',
+            description: 'Use your own WhatsApp account and message yourself.',
+          },
+          {
+            value: 'bot',
+            label: 'Bot',
+            description: 'Use a dedicated bot phone number — recommended for shared use.',
+          },
+        ],
       },
       {
         envVar: 'WHATSAPP_ALLOWED_USERS',
