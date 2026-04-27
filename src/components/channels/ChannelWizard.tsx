@@ -96,7 +96,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const waLastOutputAtRef = useRef(0);
   const waAutoPromptSeenRef = useRef<Set<string>>(new Set());
   const waDebugRunIdRef = useRef<string>("");
-  const waRepairRetryRef = useRef<{ streamId: string; attempts: number; lastAttemptAt: number } | null>(null);
   const [setupToolsChecked, setSetupToolsChecked] = useState(false);
   const [setupToolsOk, setSetupToolsOk] = useState(false);
   const [setupToolsDetail, setSetupToolsDetail] = useState("");
@@ -245,7 +244,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const id = waStreamIdRef.current;
       if (!id) return;
       if (/repair\?/i.test(trimmed) || (/existing session/i.test(trimmed) && /clear/i.test(trimmed))) {
-        waRepairRetryRef.current = { streamId: id, attempts: 1, lastAttemptAt: Date.now() };
         // #region agent log
         emitWaDebugLog("H3", "ChannelWizard.tsx:appendWaPairingChunk:repair", "auto-answer repair prompt", {
           streamId: id,
@@ -501,6 +499,24 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         setWaPairingPhase("idle");
         return;
       }
+      const cleared = await systemAPI.clearWhatsAppSession();
+      // #region agent log
+      emitWaDebugLog("H8", "ChannelWizard.tsx:startWaPairing:clearSession", "local WhatsApp session cleanup before pairing", {
+        success: cleared.success,
+        before: cleared.before,
+        removed: cleared.removed,
+        stderr: cleared.stderr || "",
+      });
+      // #endregion
+      if (!cleared.success) {
+        const msg = cleared.stderr || "Could not clear old WhatsApp session files.";
+        setWaPairingError(msg);
+        toast.error("Could not prepare clean WhatsApp session", {
+          description: msg.split("\n")[0] || "Try again and check file permissions.",
+        });
+        setWaPairingPhase("idle");
+        return;
+      }
       setWaPairingPhase("pairing");
       setWaStatusHint("Waiting for WhatsApp QR output from Hermes…");
       await systemAPI.runWhatsAppPairing(appendWaPairingChunk, {
@@ -531,7 +547,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingPhase("idle");
       setWaStatusHint("");
       waStreamIdRef.current = null;
-      waRepairRetryRef.current = null;
       const tail = waLogBuffer.current.trimEnd();
       if (tail) {
         const hasYesNoPrompt = /\[[Yy]\/[Nn]\]/.test(tail) || /\(y\/N\)/.test(tail) || /\[y\/n\]/i.test(tail);
@@ -625,7 +640,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairingPhase("idle");
     setWaStatusHint("");
     waStreamIdRef.current = null;
-    waRepairRetryRef.current = null;
     if (id) {
       await systemAPI.killStream(id);
     }
@@ -720,27 +734,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     if (!waPairingActive) return;
     const timer = window.setInterval(() => {
       const elapsed = Date.now() - (waLastOutputAtRef.current || 0);
-      const repairRetry = waRepairRetryRef.current;
-      if (
-        repairRetry &&
-        repairRetry.streamId === waStreamIdRef.current &&
-        elapsed >= 4000 &&
-        Date.now() - repairRetry.lastAttemptAt >= 3000 &&
-        repairRetry.attempts < 3
-      ) {
-        repairRetry.attempts += 1;
-        repairRetry.lastAttemptAt = Date.now();
-        waRepairRetryRef.current = repairRetry;
-        // #region agent log
-        emitWaDebugLog("H7", "ChannelWizard.tsx:repairRetry", "retrying repair input after no output", {
-          streamId: repairRetry.streamId,
-          attempts: repairRetry.attempts,
-          elapsedSinceOutputMs: elapsed,
-          answer: "y\\r",
-        });
-        // #endregion
-        void systemAPI.writeStreamStdin(repairRetry.streamId, "y\r");
-      }
       if (elapsed < 15000) return;
       if (waPairingPhase === "pairing") {
         setWaStatusHint("Still waiting for QR output… this can take a bit on first repair. If it stays stuck, cancel and retry.");

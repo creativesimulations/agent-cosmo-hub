@@ -1781,6 +1781,42 @@ export const hermesAPI = {
     return { success: true, paired: /PAIRED=1/.test(out) };
   },
 
+  /** Force-clear WhatsApp local session files so pairing starts cleanly. */
+  async clearWhatsAppSession(): Promise<{ success: boolean; removed: number; before: number; stderr?: string }> {
+    const r = await runHermesShell(
+      [
+        "set +e",
+        "SESSION_DIR=\"$HOME/.hermes/platforms/whatsapp/session\"",
+        "if [ ! -d \"$SESSION_DIR\" ]; then",
+        "  echo \"SESSION_BEFORE=0\"",
+        "  echo \"SESSION_REMOVED=0\"",
+        "  exit 0",
+        "fi",
+        "SESSION_BEFORE=\"$(ls -A \"$SESSION_DIR\" 2>/dev/null | wc -l | tr -d ' ')\"",
+        "rm -rf \"$SESSION_DIR\"/* \"$SESSION_DIR\"/.[!.]* \"$SESSION_DIR\"/..?* 2>/dev/null || true",
+        "SESSION_AFTER=\"$(ls -A \"$SESSION_DIR\" 2>/dev/null | wc -l | tr -d ' ')\"",
+        "SESSION_REMOVED=$((SESSION_BEFORE - SESSION_AFTER))",
+        "echo \"SESSION_BEFORE=$SESSION_BEFORE\"",
+        "echo \"SESSION_REMOVED=$SESSION_REMOVED\"",
+        "if [ \"$SESSION_AFTER\" -gt 0 ]; then",
+        "  echo \"[ronbot] Some WhatsApp session files could not be removed\" >&2",
+        "  exit 1",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { timeout: 15000 },
+    );
+    const out = `${r.stdout || ""}\n${r.stderr || ""}`;
+    const before = Number((out.match(/SESSION_BEFORE=(\d+)/)?.[1] ?? "0"));
+    const removed = Number((out.match(/SESSION_REMOVED=(\d+)/)?.[1] ?? "0"));
+    return {
+      success: r.success,
+      before,
+      removed,
+      stderr: r.stderr || undefined,
+    };
+  },
+
   /**
    * Stream `hermes whatsapp` (QR + logs) for in-app pairing. Uses `timeout: 0`
    * so the child is not killed while the user scans. Call `killStream` from
