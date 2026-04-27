@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle, RotateCcw, Trash2 } from "lucide-react";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
 import type { Channel } from "@/lib/channels";
