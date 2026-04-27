@@ -95,6 +95,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waStatusHint, setWaStatusHint] = useState("");
   const waLastOutputAtRef = useRef(0);
   const waAutoPromptSeenRef = useRef<Set<string>>(new Set());
+  const waDebugRunIdRef = useRef<string>("");
   const [setupToolsChecked, setSetupToolsChecked] = useState(false);
   const [setupToolsOk, setSetupToolsOk] = useState(false);
   const [setupToolsDetail, setSetupToolsDetail] = useState("");
@@ -158,6 +159,27 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     [channel.credentials],
   );
 
+  const emitWaDebugLog = useCallback((hypothesisId: string, location: string, message: string, data: Record<string, unknown>) => {
+    // #region agent log
+    fetch("http://127.0.0.1:7544/ingest/13d5d95c-e042-47dd-9c7b-02723faafae2", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "8f17d1",
+      },
+      body: JSON.stringify({
+        sessionId: "8f17d1",
+        runId: waDebugRunIdRef.current || "unset",
+        hypothesisId,
+        location,
+        message,
+        data,
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+  }, []);
+
   const requiredFilled = useMemo(
     () => channel.credentials.every((c) => c.optional || (values[c.envVar] || "").trim().length > 0),
     [channel.credentials, values],
@@ -165,6 +187,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
   const appendWaPairingChunk = useCallback((event: { type: string; data?: string }) => {
     if ((event.type !== "stdout" && event.type !== "stderr") || !event.data) return;
+    // #region agent log
+    emitWaDebugLog("H1", "ChannelWizard.tsx:appendWaPairingChunk:start", "chunk received", {
+      eventType: event.type,
+      streamId: waStreamIdRef.current,
+      chunkLen: event.data.length,
+      hasRepairWord: /repair\?/i.test(event.data),
+      hasYesNo: /\[[Yy]\/[Nn]\]|\(y\/N\)|\[y\/n\]/i.test(event.data),
+    });
+    // #endregion
     waLastOutputAtRef.current = Date.now();
     setWaTerminalRaw((prev) => {
       const next = prev + event.data!;
@@ -188,6 +219,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingPhase("idle");
     }
     waLogBuffer.current += cleanedData.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    // #region agent log
+    emitWaDebugLog("H2", "ChannelWizard.tsx:appendWaPairingChunk:buffer", "buffer state before split", {
+      streamId: waStreamIdRef.current,
+      bufferLen: waLogBuffer.current.length,
+      bufferHasRepairPrompt: /repair\?/i.test(waLogBuffer.current) && /\[[Yy]\/[Nn]\]|\(y\/N\)|\[y\/n\]/i.test(waLogBuffer.current),
+      bufferEndsWithNewline: waLogBuffer.current.endsWith("\n"),
+    });
+    // #endregion
     const parts = waLogBuffer.current.split("\n");
     waLogBuffer.current = parts.pop() ?? "";
     if (parts.length === 0) return;
@@ -200,7 +239,23 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const id = waStreamIdRef.current;
       if (!id) continue;
       if (/repair\?/i.test(trimmed)) {
-        void systemAPI.writeStreamStdin(id, "y\n");
+        // #region agent log
+        emitWaDebugLog("H3", "ChannelWizard.tsx:appendWaPairingChunk:repair", "auto-answer repair prompt", {
+          streamId: id,
+          prompt: trimmed,
+          answer: "y",
+        });
+        // #endregion
+        void (async () => {
+          const writeResult = await systemAPI.writeStreamStdin(id, "y\n");
+          // #region agent log
+          emitWaDebugLog("H3", "ChannelWizard.tsx:appendWaPairingChunk:repair:result", "repair prompt write result", {
+            streamId: id,
+            success: writeResult.success,
+            error: writeResult.error || "",
+          });
+          // #endregion
+        })();
         setWaStatusHint("Repair confirmed automatically; continuing pairing.");
         continue;
       }
@@ -213,7 +268,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaStatusHint("Answered a setup prompt automatically to keep pairing moving.");
     }
     setWaPairingLines((prev) => [...prev, ...parts].slice(-400));
-  }, [waPairingPhase]);
+  }, [emitWaDebugLog, waPairingPhase]);
 
   const saveCredentials = async (): Promise<boolean> => {
     setSaving(true);
@@ -360,6 +415,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   ]);
 
   const startWaPairing = async () => {
+    waDebugRunIdRef.current = `wa-${Date.now()}`;
+    // #region agent log
+    emitWaDebugLog("H4", "ChannelWizard.tsx:startWaPairing:start", "start pairing requested", {
+      runId: waDebugRunIdRef.current,
+      prereqChecked: waPairPrereqChecked,
+      prereqOk: waPairPrereqOk,
+    });
+    // #endregion
     setWaPairingError("");
     waLogBuffer.current = "";
     setWaPairingLines([]);
@@ -380,6 +443,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const bridge = await systemAPI.ensureWhatsAppBridgeDeps(appendWaPairingChunk, {
         onStreamId: (id: string) => {
           waStreamIdRef.current = id;
+          // #region agent log
+          emitWaDebugLog("H1", "ChannelWizard.tsx:startWaPairing:bridgeStream", "bridge deps stream id assigned", { streamId: id });
+          // #endregion
         },
       });
       if (!bridge.success) {
@@ -396,11 +462,27 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       await systemAPI.runWhatsAppPairing(appendWaPairingChunk, {
         onStreamId: (id) => {
           waStreamIdRef.current = id;
+          // #region agent log
+          emitWaDebugLog("H1", "ChannelWizard.tsx:startWaPairing:pairStream", "pairing stream id assigned", { streamId: id });
+          // #endregion
         },
       });
     } catch (e) {
+      // #region agent log
+      emitWaDebugLog("H5", "ChannelWizard.tsx:startWaPairing:catch", "start pairing threw", {
+        error: e instanceof Error ? e.message : String(e),
+        phase: waPairingPhase,
+      });
+      // #endregion
       setWaPairingError(e instanceof Error ? e.message : String(e));
     } finally {
+      // #region agent log
+      emitWaDebugLog("H5", "ChannelWizard.tsx:startWaPairing:finally", "start pairing finalized", {
+        streamId: waStreamIdRef.current,
+        phase: waPairingPhase,
+        bufferedTailLen: waLogBuffer.current.length,
+      });
+      // #endregion
       setWaPairingActive(false);
       setWaPairingPhase("idle");
       setWaStatusHint("");
