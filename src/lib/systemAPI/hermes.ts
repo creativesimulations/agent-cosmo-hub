@@ -157,6 +157,19 @@ const runHermesShell = async (
     : coreAPI.runCommand(cmd, options);
 };
 
+const extractWhatsAppQrPayload = (text: string): string | null => {
+  const patterns = [
+    /(?:QR(?:_PAYLOAD)?|WA_QR)\s*[:=]\s*([A-Za-z0-9+/_=-]{40,})/i,
+    /\b(2@[A-Za-z0-9+/_=-]{60,})\b/,
+    /\b(?:qr|qrcode)\s*[:=]\s*([A-Za-z0-9+/_=-]{40,})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return null;
+};
+
 /** Prepended to Hermes CLI invocations so `npm`, Homebrew Node, etc. resolve (WhatsApp bridge). */
 const HERMES_PATH_EXPORT =
   'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/snap/bin:$PATH"';
@@ -1806,6 +1819,18 @@ export const hermesAPI = {
       };
     }
     const streamOpts = { ...(options ?? {}), timeout: 0 };
+    let lastQrPayload = '';
+    const wrappedOutput: CommandOutputHandler | undefined = onOutput
+      ? (event) => {
+          onOutput(event);
+          if ((event.type !== 'stdout' && event.type !== 'stderr') || !event.data) return;
+          const payload = extractWhatsAppQrPayload(event.data);
+          if (payload && payload !== lastQrPayload) {
+            lastQrPayload = payload;
+            onOutput({ type: 'stdout', data: `[ronbot-qr-payload]${payload}\n` });
+          }
+        }
+      : undefined;
     // Hermes refuses a non-TTY. Export PATH in this shell, then run `hermes whatsapp`
     // inside script(1) so it sees a pseudo-terminal (GNU + BSD/macOS).
     return runHermesShell(
@@ -1826,7 +1851,7 @@ export const hermesAPI = {
         'fi',
       ].join('\n'),
       streamOpts,
-      onOutput,
+      wrappedOutput,
     );
   },
 

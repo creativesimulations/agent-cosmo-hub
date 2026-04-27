@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import type { Channel } from "@/lib/channels";
 import ActionableError from "@/components/ui/ActionableError";
 import { useSudoPrompt } from "@/contexts/SudoPromptContext";
+import QRCode from "qrcode";
 
 type Step = 0 | 1 | 2 | 3;
 type WaPairingPhase = "idle" | "runtime" | "bridge-deps" | "pairing";
@@ -83,6 +84,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waPairingActive, setWaPairingActive] = useState(false);
   const [waPairingPhase, setWaPairingPhase] = useState<WaPairingPhase>("idle");
   const [waPairingLines, setWaPairingLines] = useState<string[]>([]);
+  const [waQrPayload, setWaQrPayload] = useState("");
+  const [waQrDataUrl, setWaQrDataUrl] = useState("");
   const [waPairingError, setWaPairingError] = useState("");
   const [waPairPrereqChecked, setWaPairPrereqChecked] = useState(false);
   const [waPairPrereqOk, setWaPairPrereqOk] = useState(false);
@@ -109,6 +112,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairingActive(false);
     setWaPairingPhase("idle");
     setWaPairingLines([]);
+    setWaQrPayload("");
+    setWaQrDataUrl("");
     setWaPairingError("");
     setWaPairPrereqChecked(false);
     setWaPairPrereqOk(false);
@@ -154,7 +159,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const appendWaPairingChunk = useCallback((event: { type: string; data?: string }) => {
     if ((event.type !== "stdout" && event.type !== "stderr") || !event.data) return;
     const cleanedData = stripAnsiLike(event.data).replace(/\u200b/g, "");
-    if (cleanedData.includes("[process] Command timed out")) {
+    const markerRegex = /\[ronbot-qr-payload\]([^\s\n]+)/g;
+    let markerMatch: RegExpExecArray | null;
+    let dataSansMarker = cleanedData;
+    while ((markerMatch = markerRegex.exec(cleanedData)) !== null) {
+      const payload = markerMatch[1]?.trim();
+      if (payload) setWaQrPayload(payload);
+    }
+    dataSansMarker = dataSansMarker.replace(markerRegex, "");
+    if (dataSansMarker.includes("[process] Command timed out")) {
       const sid = waStreamIdRef.current;
       if (sid) {
         void systemAPI.killStream(sid);
@@ -170,12 +183,35 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingError(`${phaseMessage} Try again; Ronbot will continue from any cached progress.`);
       setWaPairingPhase("idle");
     }
-    waLogBuffer.current += cleanedData.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    waLogBuffer.current += dataSansMarker.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     const parts = waLogBuffer.current.split("\n");
     waLogBuffer.current = parts.pop() ?? "";
     if (parts.length === 0) return;
     setWaPairingLines((prev) => [...prev, ...parts].slice(-400));
   }, [waPairingPhase]);
+
+  useEffect(() => {
+    if (!waQrPayload) {
+      setWaQrDataUrl("");
+      return;
+    }
+    let cancelled = false;
+    void QRCode.toDataURL(waQrPayload, {
+      errorCorrectionLevel: "M",
+      margin: 4,
+      scale: 8,
+      color: { dark: "#000000", light: "#ffffff" },
+    })
+      .then((url) => {
+        if (!cancelled) setWaQrDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setWaQrDataUrl("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [waQrPayload]);
 
   const saveCredentials = async (): Promise<boolean> => {
     setSaving(true);
@@ -848,6 +884,19 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 <p className="text-[11px] text-muted-foreground">
                   Tip: ASCII QR codes need a monospace font and equal line height. If it still looks cramped, widen the window and zoom your display to 100%.
                 </p>
+                {waQrDataUrl ? (
+                  <div className="rounded-md border border-border/50 bg-white p-4 flex items-center justify-center">
+                    <img
+                      src={waQrDataUrl}
+                      alt="WhatsApp pairing QR code"
+                      className="w-[22rem] h-[22rem] max-w-full max-h-[60vh] object-contain image-rendering-pixelated"
+                    />
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">
+                    Waiting for machine-readable QR payload from Hermes. The text log below is used as fallback if payload is unavailable.
+                  </p>
+                )}
                 <div className="rounded-md border border-border/50 bg-background/50 h-[52vh] min-h-[22rem] overflow-x-auto overflow-y-auto p-2">
                   <pre
                     className="text-[10px] leading-[10px] font-mono text-foreground/90 whitespace-pre min-w-max"
