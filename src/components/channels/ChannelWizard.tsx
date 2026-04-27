@@ -928,20 +928,41 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
   const enableGateway = async () => {
     const r = await systemAPI.startGateway();
-    if (r.success) {
-      setFormError("");
-      toast.success(`${channel.name} channel enabled`, {
-        description: "Your agent is now reachable here.",
-      });
-      onComplete();
-      onClose();
-    } else {
+    if (!r.success) {
       const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
       setFormError(detail);
-      toast.error("Failed to start gateway", {
-        description: detail,
-      });
+      toast.error("Failed to start gateway", { description: detail });
+      return;
     }
+    if (channel.id === "whatsapp") {
+      const deadline = Date.now() + 30000;
+      let lastHealth: Awaited<ReturnType<typeof systemAPI.getWhatsAppGatewayHealth>> | null = null;
+      while (Date.now() < deadline) {
+        const h = await systemAPI.getWhatsAppGatewayHealth();
+        lastHealth = h;
+        if (h.running && h.whatsappActive) break;
+        await new Promise((res) => setTimeout(res, 2500));
+      }
+      if (!lastHealth?.running || !lastHealth.whatsappActive) {
+        const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
+        const detail = tail
+          ? `Gateway is running but WhatsApp bridge didn't confirm a connection within 30s. Last bridge output:\n${tail.split("\n").slice(-6).join("\n")}`
+          : "Gateway started but WhatsApp didn't connect within 30s. Re-pair WhatsApp or check Logs.";
+        setFormError(detail);
+        toast.error("WhatsApp bridge not connected", {
+          description: "Gateway started but WhatsApp didn't connect.",
+        });
+        return;
+      }
+    }
+    setFormError("");
+    toast.success(`${channel.name} channel enabled`, {
+      description: channel.id === "whatsapp"
+        ? "WhatsApp bridge is live — your agent will reply to incoming messages."
+        : "Your agent is now reachable here.",
+    });
+    onComplete();
+    onClose();
   };
 
   /**
