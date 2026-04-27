@@ -16,7 +16,7 @@ import { toast } from "sonner";
 import type { Channel } from "@/lib/channels";
 import ActionableError from "@/components/ui/ActionableError";
 import { useSudoPrompt } from "@/contexts/SudoPromptContext";
-import QRCode from "qrcode";
+import WhatsAppTerminal from "@/components/channels/WhatsAppTerminal";
 
 type Step = 0 | 1 | 2 | 3;
 type WaPairingPhase = "idle" | "runtime" | "bridge-deps" | "pairing";
@@ -84,8 +84,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waPairingActive, setWaPairingActive] = useState(false);
   const [waPairingPhase, setWaPairingPhase] = useState<WaPairingPhase>("idle");
   const [waPairingLines, setWaPairingLines] = useState<string[]>([]);
-  const [waQrPayload, setWaQrPayload] = useState("");
-  const [waQrDataUrl, setWaQrDataUrl] = useState("");
+  const [waTerminalRaw, setWaTerminalRaw] = useState("");
+  const [waTerminalResetTick, setWaTerminalResetTick] = useState(0);
+  const [waTerminalReady, setWaTerminalReady] = useState(false);
   const [waPairingError, setWaPairingError] = useState("");
   const [waPairPrereqChecked, setWaPairPrereqChecked] = useState(false);
   const [waPairPrereqOk, setWaPairPrereqOk] = useState(false);
@@ -112,8 +113,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairingActive(false);
     setWaPairingPhase("idle");
     setWaPairingLines([]);
-    setWaQrPayload("");
-    setWaQrDataUrl("");
+    setWaTerminalRaw("");
+    setWaTerminalResetTick((n) => n + 1);
+    setWaTerminalReady(false);
     setWaPairingError("");
     setWaPairPrereqChecked(false);
     setWaPairPrereqOk(false);
@@ -158,16 +160,12 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
   const appendWaPairingChunk = useCallback((event: { type: string; data?: string }) => {
     if ((event.type !== "stdout" && event.type !== "stderr") || !event.data) return;
+    setWaTerminalRaw((prev) => {
+      const next = prev + event.data!;
+      return next.length > 220000 ? next.slice(-220000) : next;
+    });
     const cleanedData = stripAnsiLike(event.data).replace(/\u200b/g, "");
-    const markerRegex = /\[ronbot-qr-payload\]([^\s\n]+)/g;
-    let markerMatch: RegExpExecArray | null;
-    let dataSansMarker = cleanedData;
-    while ((markerMatch = markerRegex.exec(cleanedData)) !== null) {
-      const payload = markerMatch[1]?.trim();
-      if (payload) setWaQrPayload(payload);
-    }
-    dataSansMarker = dataSansMarker.replace(markerRegex, "");
-    if (dataSansMarker.includes("[process] Command timed out")) {
+    if (cleanedData.includes("[process] Command timed out")) {
       const sid = waStreamIdRef.current;
       if (sid) {
         void systemAPI.killStream(sid);
@@ -183,35 +181,12 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingError(`${phaseMessage} Try again; Ronbot will continue from any cached progress.`);
       setWaPairingPhase("idle");
     }
-    waLogBuffer.current += dataSansMarker.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    waLogBuffer.current += cleanedData.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     const parts = waLogBuffer.current.split("\n");
     waLogBuffer.current = parts.pop() ?? "";
     if (parts.length === 0) return;
     setWaPairingLines((prev) => [...prev, ...parts].slice(-400));
   }, [waPairingPhase]);
-
-  useEffect(() => {
-    if (!waQrPayload) {
-      setWaQrDataUrl("");
-      return;
-    }
-    let cancelled = false;
-    void QRCode.toDataURL(waQrPayload, {
-      errorCorrectionLevel: "M",
-      margin: 4,
-      scale: 8,
-      color: { dark: "#000000", light: "#ffffff" },
-    })
-      .then((url) => {
-        if (!cancelled) setWaQrDataUrl(url);
-      })
-      .catch(() => {
-        if (!cancelled) setWaQrDataUrl("");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [waQrPayload]);
 
   const saveCredentials = async (): Promise<boolean> => {
     setSaving(true);
@@ -359,6 +334,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairingError("");
     waLogBuffer.current = "";
     setWaPairingLines([]);
+    setWaTerminalRaw("");
+    setWaTerminalResetTick((n) => n + 1);
     setWaPairingActive(true);
     setWaPairingPhase("runtime");
     waStreamIdRef.current = null;
@@ -882,34 +859,41 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                   </Button>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  Tip: ASCII QR codes need a monospace font and equal line height. If it still looks cramped, widen the window and zoom your display to 100%.
+                  Tip: Hold your phone about 20-30 cm away, keep screen brightness high, and avoid glare while scanning.
                 </p>
-                {waQrDataUrl ? (
-                  <div className="rounded-md border border-border/50 bg-white p-4 flex items-center justify-center">
-                    <img
-                      src={waQrDataUrl}
-                      alt="WhatsApp pairing QR code"
-                      className="w-[22rem] h-[22rem] max-w-full max-h-[60vh] object-contain image-rendering-pixelated"
-                    />
+                <div className="rounded-md border border-border/50 bg-background/50 h-[62vh] min-h-[26rem] overflow-hidden p-2">
+                  <WhatsAppTerminal
+                    content={waTerminalRaw}
+                    resetKey={waTerminalResetTick}
+                    onReadyChange={setWaTerminalReady}
+                    className="h-full w-full rounded-md border border-border/50 bg-black/90"
+                  />
+                </div>
+                {!waTerminalReady && (
+                  <div className="rounded-md border border-border/50 bg-background/50 h-[38vh] min-h-[12rem] overflow-x-auto overflow-y-auto p-2">
+                    <pre
+                      className="text-[10px] leading-[10px] font-mono text-foreground/90 whitespace-pre min-w-max"
+                      style={{ letterSpacing: "0", fontVariantLigatures: "none", fontFeatureSettings: '"liga" 0, "calt" 0' }}
+                    >
+                      {(waPairingLines.length > 0 || waLogBuffer.current)
+                        ? [...waPairingLines, ...(waLogBuffer.current ? [waLogBuffer.current] : [])].join("\n")
+                        : waPairingActive
+                          ? "Starting…"
+                          : "Output from Hermes will appear here."}
+                    </pre>
+                    <div ref={waLogEndRef} />
                   </div>
-                ) : (
+                )}
+                {waTerminalReady && (
                   <p className="text-[11px] text-muted-foreground">
-                    Waiting for machine-readable QR payload from Hermes. The text log below is used as fallback if payload is unavailable.
+                    If scanning fails, press &quot;I already scanned — check link&quot; after scanning once to verify session state.
                   </p>
                 )}
-                <div className="rounded-md border border-border/50 bg-background/50 h-[52vh] min-h-[22rem] overflow-x-auto overflow-y-auto p-2">
-                  <pre
-                    className="text-[10px] leading-[10px] font-mono text-foreground/90 whitespace-pre min-w-max"
-                    style={{ letterSpacing: "0", fontVariantLigatures: "none", fontFeatureSettings: '"liga" 0, "calt" 0' }}
-                  >
-                    {(waPairingLines.length > 0 || waLogBuffer.current)
-                      ? [...waPairingLines, ...(waLogBuffer.current ? [waLogBuffer.current] : [])].join("\n")
-                      : waPairingActive
-                        ? "Starting…"
-                        : "Output from Hermes will appear here."}
-                  </pre>
-                  <div ref={waLogEndRef} />
-                </div>
+                {!waTerminalReady && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Terminal renderer is unavailable, using plain-text fallback output for diagnostics.
+                  </p>
+                )}
               </div>
             )}
 
