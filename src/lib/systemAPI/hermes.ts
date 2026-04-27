@@ -1558,11 +1558,7 @@ export const hermesAPI = {
     return r;
   },
 
-  /**
-   * Verify channel credentials. Uses `hermes gateway test` when available;
-   * falls back to direct HTTP / filesystem checks when the CLI has no `test`
-   * subcommand (common on current Hermes releases).
-   */
+  /** Verify channel credentials with supported direct HTTP / filesystem checks. */
   async testChannel(channelId: string): Promise<CommandResult> {
     if (!/^(telegram|slack|whatsapp|discord|signal)$/.test(channelId)) {
       return runHermesShell('echo "Invalid channel" >&2; exit 2', { timeout: 5000 });
