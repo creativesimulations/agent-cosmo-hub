@@ -74,6 +74,7 @@ export const systemAPI = {
   startGateway: hermesAPI.startGateway.bind(hermesAPI),
   stopGateway: hermesAPI.stopGateway.bind(hermesAPI),
   testChannel: hermesAPI.testChannel.bind(hermesAPI),
+  isWhatsAppPaired: hermesAPI.isWhatsAppPaired.bind(hermesAPI),
   chatAgent: hermesAPI.chat.bind(hermesAPI),
   writeInitialConfig: hermesAPI.writeInitialConfig.bind(hermesAPI),
   setAgentName: hermesAPI.setAgentName.bind(hermesAPI),

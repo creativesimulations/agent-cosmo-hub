@@ -17,7 +17,7 @@
  */
 
 import type { LucideIcon } from 'lucide-react';
-import { Send, MessageSquare, Mail, Phone, Hash, Lock } from 'lucide-react';
+import { Send, MessageSquare, Phone, Hash, Lock } from 'lucide-react';
 
 export type ChannelTier = 'free' | 'paid';
 
@@ -55,7 +55,7 @@ export interface ChannelSetupStep {
 
 export interface Channel {
   /** Stable id, also the gateway name in `~/.hermes/config.yaml`. */
-  id: 'telegram' | 'slack' | 'email' | 'whatsapp' | 'discord' | 'signal';
+  id: 'telegram' | 'slack' | 'whatsapp' | 'discord' | 'signal';
   /** Display name. */
   name: string;
   /** One-line tagline shown on the card. */
@@ -86,6 +86,11 @@ export const CHANNELS: Channel[] = [
     icon: Send,
     difficulty: 'Easy',
     setupSteps: [
+      {
+        title: 'Open the official Hermes Telegram guide',
+        body: "Follow Hermes' channel-specific Telegram checklist if you want a canonical reference while setting up.",
+        link: { label: 'Hermes Telegram docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/telegram/' },
+      },
       {
         title: 'Open BotFather in Telegram',
         body: "BotFather is Telegram's official tool for creating bots. Open it and send /newbot.",
@@ -170,78 +175,6 @@ export const CHANNELS: Channel[] = [
     testHint: "We'll verify both tokens are accepted by Slack and confirm the allowlist is set.",
   },
 
-  // ─── Email ────────────────────────────────────────────────────────
-  {
-    id: 'email',
-    name: 'Email',
-    tagline: 'Email your agent from anywhere.',
-    tier: 'free',
-    icon: Mail,
-    difficulty: 'Easy',
-    setupSteps: [
-      {
-        title: 'Pick (or create) a dedicated email address for your agent',
-        body: "Don't use your personal email — the agent stores the password and reads the inbox. We recommend a free Gmail or a dedicated address like ron@yourdomain.com.",
-      },
-      {
-        title: 'Enable IMAP',
-        body: "On Gmail: Settings → 'Forwarding and POP/IMAP' → enable IMAP. Most other providers have IMAP on by default.",
-      },
-      {
-        title: 'Generate an app password',
-        body: "If your provider supports 2FA (Gmail does, and requires it), create an app-specific password instead of using your normal one.",
-        link: { label: 'Gmail app passwords', url: 'https://myaccount.google.com/apppasswords' },
-      },
-      {
-        title: 'Note your IMAP and SMTP servers',
-        body: "Gmail: imap.gmail.com / smtp.gmail.com. iCloud: imap.mail.me.com / smtp.mail.me.com. Outlook: outlook.office365.com / smtp.office365.com.",
-      },
-    ],
-    credentials: [
-      {
-        envVar: 'EMAIL_ADDRESS',
-        label: "Agent's email address",
-        hint: 'e.g. ron@yourdomain.com',
-        inputType: 'text',
-      },
-      { envVar: 'EMAIL_PASSWORD', label: 'Email password', hint: 'App password if you use 2FA' },
-      {
-        envVar: 'EMAIL_IMAP_HOST',
-        label: 'IMAP server',
-        hint: 'e.g. imap.gmail.com',
-        inputType: 'text',
-      },
-      {
-        envVar: 'EMAIL_SMTP_HOST',
-        label: 'SMTP server',
-        hint: 'e.g. smtp.gmail.com',
-        inputType: 'text',
-      },
-      {
-        envVar: 'EMAIL_IMAP_PORT',
-        label: 'IMAP port',
-        hint: 'Default 993',
-        inputType: 'text',
-        optional: true,
-      },
-      {
-        envVar: 'EMAIL_SMTP_PORT',
-        label: 'SMTP port',
-        hint: 'Default 587',
-        inputType: 'text',
-        optional: true,
-      },
-      {
-        envVar: 'EMAIL_ALLOWED_USERS',
-        label: 'Allowed sender addresses',
-        hint: 'Comma-separated. Without this, the bot ignores everyone except via pairing.',
-        inputType: 'text',
-      },
-    ],
-    testHint:
-      "We'll verify IMAP and SMTP both connect with the credentials and confirm the allowlist is set.",
-  },
-
   // ─── WhatsApp (Baileys / WhatsApp Web) ────────────────────────────
   {
     id: 'whatsapp',
@@ -316,6 +249,11 @@ export const CHANNELS: Channel[] = [
     difficulty: 'Medium',
     setupSteps: [
       {
+        title: 'Open the official Hermes Discord guide',
+        body: "Use the Hermes Discord guide as the source of truth for required bot intents and permissions.",
+        link: { label: 'Hermes Discord docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/discord/' },
+      },
+      {
         title: 'Create a Discord application',
         body: "On the Discord developer portal click 'New Application' and name it after your agent.",
         link: {
@@ -366,6 +304,11 @@ export const CHANNELS: Channel[] = [
     icon: Lock,
     difficulty: 'Advanced',
     setupSteps: [
+      {
+        title: 'Open the official Hermes Signal guide',
+        body: "Keep Hermes' Signal guide open to verify daemon/account expectations while you configure signal-cli.",
+        link: { label: 'Hermes Signal docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/signal/' },
+      },
       {
         title: 'Install signal-cli',
         body: "Hermes talks to Signal through the signal-cli daemon (requires Java 17+). On macOS: `brew install signal-cli`. On Linux: download the latest release from GitHub.",

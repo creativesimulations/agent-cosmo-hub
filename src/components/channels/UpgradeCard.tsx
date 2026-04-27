@@ -2,8 +2,7 @@ import { useState } from "react";
 import { ExternalLink, KeyRound, Loader2, Lock, Sparkles, CheckCircle2 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
-import { Upgrade, removeLicenseKey } from "@/lib/licenses";
+import { Upgrade } from "@/lib/licenses";
 import EnterLicenseKeyDialog from "@/components/upgrades/EnterLicenseKeyDialog";
 
 interface UpgradeCardProps {
@@ -20,14 +19,6 @@ const openExternal = (url: string) => {
 
 const UpgradeCard = ({ upgrade, unlocked, loading, onChange }: UpgradeCardProps) => {
   const [enterOpen, setEnterOpen] = useState(false);
-
-  const handleRemove = async () => {
-    const ok = await removeLicenseKey(upgrade.id);
-    if (ok) {
-      toast.info(`${upgrade.name} license removed from this device`);
-      onChange();
-    }
-  };
 
   return (
     <>
@@ -58,9 +49,9 @@ const UpgradeCard = ({ upgrade, unlocked, loading, onChange }: UpgradeCardProps)
         <p className="text-sm text-muted-foreground leading-relaxed">{upgrade.description}</p>
 
         {unlocked ? (
-          <Button variant="outline" size="sm" onClick={handleRemove} className="w-full">
-            Remove license from this device
-          </Button>
+          <div className="rounded-md border border-success/20 bg-success/5 px-3 py-2 text-xs text-success">
+            Unlocked on this device.
+          </div>
         ) : (
           <div className="grid grid-cols-2 gap-2">
             <Button

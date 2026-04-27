@@ -108,27 +108,37 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setTestError("");
     try {
       await systemAPI.materializeEnv();
+      if (channel.id === "whatsapp") {
+        const paired = await systemAPI.isWhatsAppPaired();
+        if (!paired.success) {
+          setTestResult("fail");
+          setTestError(paired.error || "Couldn't verify WhatsApp pairing.");
+          return;
+        }
+        if (!paired.paired) {
+          setTestResult("fail");
+          setTestError(
+            "WhatsApp isn't paired yet. Run `hermes whatsapp` in a terminal and scan the QR code, then click Try again.",
+          );
+          return;
+        }
+      }
       const r = await systemAPI.testChannel(channel.id);
       if (r.success) {
         setTestResult("ok");
         return;
       }
       const detail = r.stderr?.trim() || r.stdout?.trim() || "Channel test command failed.";
-      if (detail) {
-        setTestResult("fail");
-        setTestError(detail);
-      } else {
-        const env = await systemAPI.readEnvFile();
-        const missing = channel.credentials
-          .filter((c) => !c.optional)
-          .filter((c) => !(env[c.envVar] && env[c.envVar].trim().length > 0));
-        if (missing.length > 0) {
-          setTestResult("fail");
-          setTestError(`Missing in ~/.hermes/.env: ${missing.map((m) => m.envVar).join(", ")}`);
-        } else {
-          setTestResult("ok");
-        }
-      }
+      const env = await systemAPI.readEnvFile();
+      const missing = channel.credentials
+        .filter((c) => !c.optional)
+        .filter((c) => !(env[c.envVar] && env[c.envVar].trim().length > 0));
+      setTestResult("fail");
+      setTestError(
+        missing.length > 0
+          ? `${detail}\nMissing in ~/.hermes/.env: ${missing.map((m) => m.envVar).join(", ")}`
+          : detail,
+      );
     } catch (e) {
       setTestResult("fail");
       setTestError(e instanceof Error ? e.message : String(e));

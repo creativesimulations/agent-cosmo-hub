@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Radio, Sparkles } from "lucide-react";
+import { Radio, Sparkles, Loader2 } from "lucide-react";
 import ChannelCard, { ChannelStatus } from "@/components/channels/ChannelCard";
 import ChannelWizard from "@/components/channels/ChannelWizard";
 import UpgradeCard from "@/components/channels/UpgradeCard";
@@ -7,7 +7,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import ActionableError from "@/components/ui/ActionableError";
 import { CHANNELS, Channel } from "@/lib/channels";
-import { UPGRADES, isUpgradeUnlocked } from "@/lib/licenses";
+import { UPGRADES, getUpgrade, isUpgradeUnlocked } from "@/lib/licenses";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
 
@@ -19,6 +19,7 @@ const ChannelsPage = () => {
   const [unlocksLoading, setUnlocksLoading] = useState(true);
   const [activeWizard, setActiveWizard] = useState<Channel | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
+  const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
   const [toggleError, setToggleError] = useState<string>("");
   const [lastToggleChannelId, setLastToggleChannelId] = useState<string | null>(null);
 
@@ -114,6 +115,28 @@ const ChannelsPage = () => {
 
   const free = CHANNELS.filter((c) => c.tier === "free");
   const paid = CHANNELS.filter((c) => c.tier === "paid");
+  const googleWorkspaceUpgrade = getUpgrade("googleworkspace");
+  const googleWorkspaceUnlocked = !!unlocks.googleworkspace;
+  const showGoogleWorkspaceInUpgrades = !googleWorkspaceUnlocked;
+
+  const handleGoogleWorkspaceSetup = async () => {
+    if (!googleWorkspaceUnlocked) return;
+    setGoogleWorkspaceBusy(true);
+    try {
+      const r = await systemAPI.setupGoogleWorkspace();
+      if (r.success) {
+        toast.success("Google Workspace is connected", {
+          description: "Gmail, Calendar, Drive, Docs, and Sheets are ready.",
+        });
+      } else {
+        toast.error("Google Workspace setup failed", {
+          description: r.error || "Check logs and try again.",
+        });
+      }
+    } finally {
+      setGoogleWorkspaceBusy(false);
+    }
+  };
 
   return (
     <div className="p-6 space-y-6 max-w-5xl">
@@ -140,10 +163,10 @@ const ChannelsPage = () => {
         />
       )}
 
-      {/* Free channels */}
+      {/* Available channels */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground/70">
-          Free channels
+          Available Channels
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {free.map((c) => (
@@ -156,6 +179,39 @@ const ChannelsPage = () => {
               toggling={toggling === c.id}
             />
           ))}
+          {googleWorkspaceUnlocked && googleWorkspaceUpgrade && (
+            <GlassCard className="p-5 flex flex-col gap-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="w-10 h-10 rounded-lg bg-primary/15 text-primary flex items-center justify-center shrink-0">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <span className="inline-flex items-center gap-1 text-[11px] text-success">
+                  Unlocked
+                </span>
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-semibold text-foreground">{googleWorkspaceUpgrade.name}</h3>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Gmail, Calendar, Drive, Docs, and Sheets integration.
+                </p>
+                <p className="text-[11px] text-muted-foreground/70">Setup difficulty: Medium</p>
+              </div>
+              <div className="flex flex-col gap-2 mt-auto">
+                <Button
+                  size="sm"
+                  onClick={() => void handleGoogleWorkspaceSetup()}
+                  className="gradient-primary text-primary-foreground w-full"
+                  disabled={googleWorkspaceBusy}
+                >
+                  {googleWorkspaceBusy ? (
+                    <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Setting up…</>
+                  ) : (
+                    "Set up"
+                  )}
+                </Button>
+              </div>
+            </GlassCard>
+          )}
         </div>
       </section>
 
@@ -181,14 +237,16 @@ const ChannelsPage = () => {
         </section>
       )}
 
-      {UPGRADES.length > 0 && (
+      {UPGRADES.filter((u) => showGoogleWorkspaceInUpgrades || u.id !== "googleworkspace").length > 0 && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground/70 flex items-center gap-2">
             <Sparkles className="w-3.5 h-3.5 text-primary" />
             Optional upgrades
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {UPGRADES.map((u) => (
+            {UPGRADES
+              .filter((u) => showGoogleWorkspaceInUpgrades || u.id !== "googleworkspace")
+              .map((u) => (
               <UpgradeCard
                 key={u.id}
                 upgrade={u}
@@ -196,7 +254,7 @@ const ChannelsPage = () => {
                 loading={unlocksLoading}
                 onChange={refresh}
               />
-            ))}
+              ))}
           </div>
         </section>
       )}

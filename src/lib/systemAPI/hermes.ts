@@ -1400,14 +1400,17 @@ export const hermesAPI = {
     const missingGatewayUnit =
       combined.includes('hermes-gateway.service') &&
       (combined.includes('not found') || combined.includes('could not be found'));
+    const startedInBackgroundFallback = combined.includes('[gateway] service unit missing; started in background mode');
     const normalized = missingGatewayUnit
-      ? {
-          ...r,
-          success: false,
-          stderr:
-            (r.stderr?.trim() ? `${r.stderr.trim()}\n` : '') +
-            'Gateway service unit is missing. Run `hermes gateway install` in a terminal, then retry channel setup.',
-        }
+      ? startedInBackgroundFallback
+        ? { ...r, success: true }
+        : {
+            ...r,
+            success: false,
+            stderr:
+              (r.stderr?.trim() ? `${r.stderr.trim()}\n` : '') +
+              'Gateway service unit is missing. Run `hermes gateway install` in a terminal, then retry channel setup.',
+          }
       : r;
     agentLogs.push({
       source: 'gateway',
@@ -1438,9 +1441,46 @@ export const hermesAPI = {
   async testChannel(channelId: string): Promise<CommandResult> {
     const escaped = channelId.replace(/"/g, '\\"');
     return runHermesCli(
-      `hermes gateway test "${escaped}" 2>&1 || hermes gateway test 2>&1 || hermes gateway status 2>&1 || hermes status 2>&1`,
+      [
+        'set +e',
+        `hermes gateway test "${escaped}" 2>&1`,
+        'RC=$?',
+        'if [ "$RC" -ne 0 ]; then',
+        '  hermes gateway test 2>&1',
+        '  RC=$?',
+        'fi',
+        // Keep helpful status output for debugging, but do not mask a failed test.
+        'if [ "$RC" -ne 0 ]; then',
+        '  hermes gateway status 2>&1 || true',
+        '  hermes status 2>&1 || true',
+        'fi',
+        'exit "$RC"',
+      ].join('\n'),
       { timeout: 30000 },
     );
+  },
+
+  /** True when WhatsApp session data exists (i.e., QR pairing completed). */
+  async isWhatsAppPaired(): Promise<{ success: boolean; paired: boolean; error?: string }> {
+    const r = await runHermesShell(
+      [
+        'set +e',
+        'SESSION_DIR="$HOME/.hermes/platforms/whatsapp/session"',
+        '[ -d "$SESSION_DIR" ] || { echo "PAIRED=0"; exit 0; }',
+        'ls -A "$SESSION_DIR" >/dev/null 2>&1 || true',
+        'if [ "$(ls -A "$SESSION_DIR" 2>/dev/null | wc -l | tr -d \' \')" -gt 0 ]; then',
+        '  echo "PAIRED=1"',
+        'else',
+        '  echo "PAIRED=0"',
+        'fi',
+      ].join('\n'),
+      { timeout: 10000 },
+    );
+    if (!r.success) {
+      return { success: false, paired: false, error: r.stderr || r.stdout || 'Failed to check WhatsApp pairing' };
+    }
+    const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+    return { success: true, paired: /PAIRED=1/.test(out) };
   },
 
   /** Send a single chat prompt to the agent and return its reply.
