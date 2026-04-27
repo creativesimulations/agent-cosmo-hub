@@ -229,15 +229,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     // #endregion
     const parts = waLogBuffer.current.split("\n");
     waLogBuffer.current = parts.pop() ?? "";
-    if (parts.length === 0) return;
-    for (const line of parts) {
-      const trimmed = line.trim();
+    const handleYesNoPrompt = (candidate: string) => {
+      const trimmed = candidate.trim();
+      if (!trimmed) return;
       const hasYesNoPrompt = /\[[Yy]\/[Nn]\]/.test(trimmed) || /\(y\/N\)/.test(trimmed) || /\[y\/n\]/i.test(trimmed);
-      if (!hasYesNoPrompt) continue;
-      if (waAutoPromptSeenRef.current.has(trimmed)) continue;
+      if (!hasYesNoPrompt) return;
+      if (waAutoPromptSeenRef.current.has(trimmed)) return;
       waAutoPromptSeenRef.current.add(trimmed);
       const id = waStreamIdRef.current;
-      if (!id) continue;
+      if (!id) return;
       if (/repair\?/i.test(trimmed)) {
         // #region agent log
         emitWaDebugLog("H3", "ChannelWizard.tsx:appendWaPairingChunk:repair", "auto-answer repair prompt", {
@@ -257,15 +257,30 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           // #endregion
         })();
         setWaStatusHint("Repair confirmed automatically; continuing pairing.");
-        continue;
+        return;
       }
       if (/update allowed users\?/i.test(trimmed)) {
         void systemAPI.writeStreamStdin(id, "n\n");
         setWaStatusHint("Skipped optional allowed-users update; continuing pairing.");
-        continue;
+        return;
       }
       void systemAPI.writeStreamStdin(id, "n\n");
       setWaStatusHint("Answered a setup prompt automatically to keep pairing moving.");
+    };
+    for (const line of parts) {
+      handleYesNoPrompt(line);
+    }
+    // Handle prompts that are emitted without a trailing newline (common for interactive [y/n] prompts).
+    if (waLogBuffer.current) {
+      // #region agent log
+      emitWaDebugLog("H2", "ChannelWizard.tsx:appendWaPairingChunk:tail", "checking unterminated tail for prompt", {
+        streamId: waStreamIdRef.current,
+        tailLen: waLogBuffer.current.length,
+        tailHasYesNo: /\[[Yy]\/[Nn]\]|\(y\/N\)|\[y\/n\]/i.test(waLogBuffer.current),
+        tailHasRepair: /repair\?/i.test(waLogBuffer.current),
+      });
+      // #endregion
+      handleYesNoPrompt(waLogBuffer.current);
     }
     setWaPairingLines((prev) => [...prev, ...parts].slice(-400));
   }, [emitWaDebugLog, waPairingPhase]);
