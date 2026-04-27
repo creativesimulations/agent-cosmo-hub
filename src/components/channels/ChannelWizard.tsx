@@ -1416,7 +1416,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                       variant="outline"
                       onClick={() => void forceFreshWhatsAppPairing()}
                       disabled={waForceFreshBusy || waPairingActive || waAutoFixing}
-                      title="Wipe local Hermes session and Baileys bridge auth folders, then start a fresh QR pairing."
+                      title="Wipe local WhatsApp session and bridge auth folders, then start a fresh QR pairing."
                     >
                       {waForceFreshBusy ? (
                         <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Clearing…</>
@@ -1429,7 +1429,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 {waStaleSessionDetected && !waPairingActive && (
                   <p className="text-[11px] text-amber-500/90 leading-relaxed">
                     Looks like an old WhatsApp session is being resumed instead of pairing fresh. This often
-                    happens after reinstalling Ronbot — `~/.hermes` survives uninstall on Windows/WSL. Use
+                    happens after reinstalling Ronbot because local agent data survives uninstall on Windows/WSL. Use
                     "Force fresh QR pairing" to wipe the cached session and bridge auth files.
                   </p>
                 )}
@@ -1457,7 +1457,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                         ? [...waPairingLines, ...(waLogBuffer.current ? [waLogBuffer.current] : [])].join("\n")
                         : waPairingActive
                           ? "Starting…"
-                          : "Output from Hermes will appear here."}
+                          : "Output from Ronbot will appear here."}
                     </pre>
                     <div ref={waLogEndRef} />
                   </div>
