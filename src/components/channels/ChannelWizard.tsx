@@ -1377,7 +1377,29 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                       Cancel pairing
                     </Button>
                   )}
+                  {(waStaleSessionDetected || (waRetryReady && waPairingError)) && !waPairingActive && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void forceFreshWhatsAppPairing()}
+                      disabled={waForceFreshBusy || waPairingActive || waAutoFixing}
+                      title="Wipe local Hermes session and Baileys bridge auth folders, then start a fresh QR pairing."
+                    >
+                      {waForceFreshBusy ? (
+                        <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Clearing…</>
+                      ) : (
+                        <><Trash2 className="w-4 h-4 mr-1.5" /> Force fresh QR pairing</>
+                      )}
+                    </Button>
+                  )}
                 </div>
+                {waStaleSessionDetected && !waPairingActive && (
+                  <p className="text-[11px] text-amber-500/90 leading-relaxed">
+                    Looks like an old WhatsApp session is being resumed instead of pairing fresh. This often
+                    happens after reinstalling Ronbot — `~/.hermes` survives uninstall on Windows/WSL. Use
+                    "Force fresh QR pairing" to wipe the cached session and bridge auth files.
+                  </p>
+                )}
                 <p className="text-[11px] text-muted-foreground">
                   Tip: Hold your phone about 20-30 cm away, keep screen brightness high, and avoid glare while scanning.
                 </p>
