@@ -285,6 +285,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingPhase("idle");
       // If the timeout happened during pairing AND we never saw QR output, the
       // most likely cause is a stale session — invite the user to force-clear.
+      // Dependency-install timeouts are a separate (npm/network) failure mode
+      // and must NOT trigger the stale-session escape hatch.
       if (waPairingPhase === "pairing") {
         setWaStaleSessionDetected(true);
       }
