@@ -1555,6 +1555,59 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           )}
         </DialogFooter>
       </DialogContent>
+
+      {/* Reset confirmation — uniform across all 5 channels */}
+      <Dialog open={resetConfirmOpen} onOpenChange={(v) => !resetting && setResetConfirmOpen(v)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reset {channel.name}?</DialogTitle>
+            <DialogDescription>
+              This wipes Ronbot's saved credentials for {channel.name} so you can start setup from scratch.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="rounded-md border border-border/60 bg-background/30 p-3 text-xs text-muted-foreground space-y-1">
+              <p className="font-medium text-foreground">Ronbot will:</p>
+              <ul className="list-disc list-inside space-y-0.5">
+                <li>Stop the {channel.name} gateway if it's running</li>
+                <li>
+                  Remove these keys from <code className="font-mono">~/.hermes/.env</code>:
+                  {" "}
+                  <span className="font-mono">
+                    {(channel.resetEnvVars ?? channel.credentials.map((c) => c.envVar)).join(", ")}
+                  </span>
+                </li>
+                <li>Delete the matching entries from your OS keychain</li>
+                {channel.id === "whatsapp" && (
+                  <li>Wipe local WhatsApp session and Baileys bridge auth folders</li>
+                )}
+              </ul>
+            </div>
+            {channel.resetCaveat && (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-[11px] text-foreground/90 leading-relaxed">
+                <strong className="text-amber-600 dark:text-amber-400">Heads up:</strong>{" "}
+                {channel.resetCaveat}
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setResetConfirmOpen(false)} disabled={resetting}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void resetChannel()}
+              disabled={resetting}
+            >
+              {resetting ? (
+                <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Resetting…</>
+              ) : (
+                <><Trash2 className="w-4 h-4 mr-1.5" /> Reset {channel.name}</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 };
