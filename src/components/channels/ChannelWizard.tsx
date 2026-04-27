@@ -841,20 +841,43 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         void (async () => {
           const ok = await runTest();
           if (!ok) return;
+          setWaStatusHint("Starting messaging gateway…");
           const r = await systemAPI.startGateway();
-          if (r.success) {
+          if (!r.success) {
+            const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
+            setFormError(detail);
+            setWaStatusHint("");
+            toast.error("Failed to start gateway", { description: detail });
+            return;
+          }
+          // Verify the WhatsApp adapter is actually live before declaring success.
+          setWaStatusHint("Verifying WhatsApp bridge connection…");
+          const deadline = Date.now() + 30000;
+          let lastHealth: Awaited<ReturnType<typeof systemAPI.getWhatsAppGatewayHealth>> | null = null;
+          while (Date.now() < deadline) {
+            const h = await systemAPI.getWhatsAppGatewayHealth();
+            lastHealth = h;
+            if (h.running && h.whatsappActive) break;
+            await new Promise((res) => setTimeout(res, 2500));
+          }
+          setWaStatusHint("");
+          if (lastHealth?.running && lastHealth.whatsappActive) {
             setFormError("");
             toast.success(`${channel.name} channel enabled`, {
-              description: "Your agent is now reachable here.",
+              description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
             });
             onComplete();
             onClose();
             return;
           }
-          const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
+          // Gateway started but WhatsApp bridge isn't confirmed connected.
+          const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
+          const detail = tail
+            ? `Gateway is running but WhatsApp bridge didn't confirm a connection within 30s. Last bridge output:\n${tail.split("\n").slice(-6).join("\n")}`
+            : "Gateway is running but WhatsApp bridge didn't confirm a connection within 30s. Check Logs and try restarting the gateway.";
           setFormError(detail);
-          toast.error("Failed to start gateway", {
-            description: detail,
+          toast.error("WhatsApp bridge not connected", {
+            description: "Gateway started but WhatsApp didn't connect. See the wizard for details.",
           });
         })();
       })();
