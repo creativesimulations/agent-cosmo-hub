@@ -500,6 +500,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       runId: waDebugRunIdRef.current,
       prereqChecked: waPairPrereqChecked,
       prereqOk: waPairPrereqOk,
+      waPaired,
+      waRequiresSessionReset,
+      resetSessionFirst,
     });
     // #endregion
     setWaPairingError("");
@@ -579,11 +582,40 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         }
       }
       const sessionState = await systemAPI.getWhatsAppSessionFileCount();
+      // #region agent log
+      emitWaDebugLog("H9", "ChannelWizard.tsx:startWaPairing:sessionCount", "session count from primary path", {
+        success: sessionState.success,
+        count: sessionState.count,
+        error: sessionState.error || "",
+      });
+      // #endregion
       if (!sessionState.success) {
         setWaPairingError(sessionState.error || "Could not inspect WhatsApp session state.");
         setWaPairingPhase("idle");
         return;
       }
+      const pathProbe = await systemAPI.runCommand(
+        [
+          "set +e",
+          "for d in \"$HOME/.hermes/platforms/whatsapp\" \"$HOME/.hermes/platforms/whatsapp/session\" \"$HOME/.hermes/whatsapp\" \"$HOME/.hermes/.whatsapp\" \"$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge\" \"$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/auth_info_baileys\"; do",
+          "  if [ -d \"$d\" ]; then",
+          "    c=\"$(ls -A \"$d\" 2>/dev/null | wc -l | tr -d ' ')\"",
+          "    echo \"$d=$c\"",
+          "  else",
+          "    echo \"$d=NA\"",
+          "  fi",
+          "done",
+          "exit 0",
+        ].join('\n'),
+        { timeout: 10000 },
+      );
+      // #region agent log
+      emitWaDebugLog("H10", "ChannelWizard.tsx:startWaPairing:pathProbe", "whatsapp session path probe", {
+        success: pathProbe.success,
+        stdout: (pathProbe.stdout || "").slice(0, 1200),
+        stderr: (pathProbe.stderr || "").slice(0, 400),
+      });
+      // #endregion
       if (!resetSessionFirst && sessionState.count > 0) {
         setWaRelinkRequested(true);
         setWaAwaitingResetConfirm(true);
