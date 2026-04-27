@@ -216,7 +216,7 @@ export const CHANNELS: Channel[] = [
       },
       {
         title: 'Scan the QR code from your phone',
-        body: "When the QR appears in Ronbot's terminal-style viewer, open WhatsApp on your phone → Settings → Linked Devices → Link a Device, and scan it. Ronbot preserves terminal cell geometry so the QR stays aligned and scannable. Hermes saves the session under your Hermes folder and reuses it across restarts.",
+        body: "When the QR appears in Ronbot's terminal-style viewer, open WhatsApp on your phone → Settings → Linked Devices → Link a Device, and scan it. Ronbot preserves terminal cell geometry so the QR stays aligned and scannable, then continues automatically when linking completes. If you relink later, Ronbot warns first and replaces the current local session before generating a fresh QR.",
       },
       {
         title: 'Pick the allowed phone numbers',

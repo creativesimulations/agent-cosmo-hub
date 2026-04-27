@@ -1781,6 +1781,26 @@ export const hermesAPI = {
     return { success: true, paired: /PAIRED=1/.test(out) };
   },
 
+  async getWhatsAppSessionFileCount(): Promise<{ success: boolean; count: number; error?: string }> {
+    const r = await runHermesShell(
+      [
+        'set +e',
+        'SESSION_DIR="$HOME/.hermes/platforms/whatsapp/session"',
+        '[ -d "$SESSION_DIR" ] || { echo "SESSION_COUNT=0"; exit 0; }',
+        'COUNT="$(ls -A "$SESSION_DIR" 2>/dev/null | wc -l | tr -d \' \')"',
+        'echo "SESSION_COUNT=$COUNT"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 10000 },
+    );
+    if (!r.success) {
+      return { success: false, count: 0, error: r.stderr || r.stdout || 'Failed to check WhatsApp session files' };
+    }
+    const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+    const count = Number((out.match(/SESSION_COUNT=(\d+)/)?.[1] ?? '0'));
+    return { success: true, count };
+  },
+
   /** Force-clear WhatsApp local session files so pairing starts cleanly. */
   async clearWhatsAppSession(): Promise<{ success: boolean; removed: number; before: number; stderr?: string }> {
     const r = await runHermesShell(

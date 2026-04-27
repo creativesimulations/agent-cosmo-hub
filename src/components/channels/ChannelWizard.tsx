@@ -106,6 +106,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waBaseline, setWaBaseline] = useState<WaBaseline | null>(null);
   const [waRelinkRequested, setWaRelinkRequested] = useState(false);
   const [waAwaitingResetConfirm, setWaAwaitingResetConfirm] = useState(false);
+  const [waRetryReady, setWaRetryReady] = useState(false);
   const [waAutoFixing, setWaAutoFixing] = useState(false);
   const [waStatusHint, setWaStatusHint] = useState("");
   const waLastOutputAtRef = useRef(0);
@@ -142,6 +143,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaBaseline(null);
     setWaRelinkRequested(false);
     setWaAwaitingResetConfirm(false);
+    setWaRetryReady(false);
     setWaAutoFixing(false);
     setWaStatusHint("");
     waAutoPromptSeenRef.current = new Set();
@@ -248,6 +250,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             ? "WhatsApp bridge dependency installation timed out."
             : "WhatsApp pairing timed out before a session was saved.";
       setWaPairingError(`${phaseMessage} Try again; Ronbot will continue from any cached progress.`);
+      setWaRetryReady(true);
       setWaPairingPhase("idle");
     }
     waLogBuffer.current += cleanedData.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -500,6 +503,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     });
     // #endregion
     setWaPairingError("");
+    setWaRetryReady(false);
     waLogBuffer.current = "";
     setWaPairingLines([]);
     setWaTerminalRaw("");
@@ -515,6 +519,18 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         if (!fixed) return;
       }
       await systemAPI.materializeEnv().catch(() => undefined);
+      setWaPairingPhase("runtime");
+      setWaStatusHint("Refreshing gateway PATH automatically…");
+      const refresh = await systemAPI.refreshGatewayInstall();
+      if (!refresh.success) {
+        const detail = refresh.stderr?.split("\n")[0] || refresh.stdout?.split("\n")[0] || "Could not refresh gateway PATH.";
+        setWaPairingError(detail);
+        toast.error("Could not refresh gateway PATH", {
+          description: detail,
+        });
+        setWaPairingPhase("idle");
+        return;
+      }
       setWaPairingPhase("bridge-deps");
       const bridge = await systemAPI.ensureWhatsAppBridgeDeps(appendWaPairingChunk, {
         onStreamId: (id: string) => {
@@ -552,6 +568,28 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           setWaPairingPhase("idle");
           return;
         }
+        if (cleared.before > 0 && cleared.removed <= 0) {
+          const msg = "Ronbot could not remove the previous WhatsApp session files.";
+          setWaPairingError(msg);
+          toast.error("Could not prepare clean WhatsApp session", {
+            description: "Close any running Hermes WhatsApp session and try again.",
+          });
+          setWaPairingPhase("idle");
+          return;
+        }
+      }
+      const sessionState = await systemAPI.getWhatsAppSessionFileCount();
+      if (!sessionState.success) {
+        setWaPairingError(sessionState.error || "Could not inspect WhatsApp session state.");
+        setWaPairingPhase("idle");
+        return;
+      }
+      if (!resetSessionFirst && sessionState.count > 0) {
+        setWaRelinkRequested(true);
+        setWaAwaitingResetConfirm(true);
+        setWaPairingError("Ronbot detected an existing local WhatsApp session. Confirm relink to replace it and continue.");
+        setWaPairingPhase("idle");
+        return;
       }
       setWaPairingPhase("pairing");
       setWaStatusHint("Waiting for WhatsApp QR output from Hermes…");
@@ -571,6 +609,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       });
       // #endregion
       setWaPairingError(e instanceof Error ? e.message : String(e));
+      setWaRetryReady(true);
     } finally {
       // #region agent log
       emitWaDebugLog("H5", "ChannelWizard.tsx:startWaPairing:finally", "start pairing finalized", {
@@ -605,10 +644,12 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       void runTest();
     } else if (!paired.success) {
       setWaPairingError(paired.error || "Could not verify WhatsApp pairing.");
+      setWaRetryReady(true);
     } else {
       setWaPairingError(
         "Hermes closed before a session was saved. Check the log for errors, or try Start QR pairing again after scanning.",
       );
+      setWaRetryReady(true);
     }
   };
 
@@ -694,50 +735,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairingActive(false);
     setWaPairingPhase("idle");
     setWaStatusHint("");
+    setWaRetryReady(true);
     waStreamIdRef.current = null;
     if (id) {
       await systemAPI.killStream(id);
-    }
-  };
-
-  const recheckWaPaired = async () => {
-    const paired = await systemAPI.isWhatsAppPaired();
-    if (paired.success && paired.paired) {
-      const id = waStreamIdRef.current;
-      if (id) {
-        await systemAPI.killStream(id);
-      }
-      waStreamIdRef.current = null;
-      setWaPairingActive(false);
-      setWaPairingPhase("idle");
-      setWaStatusHint("");
-      setWaPaired(true);
-      setWaPairingError("");
-      toast.success("WhatsApp linked");
-      setTestResult("idle");
-      void (async () => {
-        const ok = await runTest();
-        if (!ok) return;
-        const r = await systemAPI.startGateway();
-        if (r.success) {
-          setFormError("");
-          toast.success(`${channel.name} channel enabled`, {
-            description: "Your agent is now reachable here.",
-          });
-          onComplete();
-          onClose();
-          return;
-        }
-        const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
-        setFormError(detail);
-        toast.error("Failed to start gateway", {
-          description: detail,
-        });
-      })();
-    } else {
-      toast.info("Not linked yet", {
-        description: "Finish scanning the QR code on your phone, then check again.",
-      });
     }
   };
 
@@ -791,7 +792,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const elapsed = Date.now() - (waLastOutputAtRef.current || 0);
       if (elapsed < 15000) return;
       if (waPairingPhase === "pairing") {
-        setWaStatusHint("Still waiting for QR output… this can take a bit on first repair. If it stays stuck, cancel and retry.");
+        setWaStatusHint("Still waiting for QR output… if this stalls, retry pairing.");
       } else if (waPairingPhase === "bridge-deps") {
         setWaStatusHint("Still preparing WhatsApp bridge dependencies…");
       }
@@ -1141,25 +1142,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 {waPairingError && (
                   <p className="text-xs text-destructive font-mono whitespace-pre-wrap">{waPairingError}</p>
                 )}
-                <p className="text-[11px] text-muted-foreground">
-                  After installing Node or changing PATH, use &quot;Refresh gateway PATH&quot; so Hermes re-saves the gateway service (recommended in Hermes docs for macOS/Linux).
-                </p>
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={gatewayRefreshBusy}
-                    onClick={() => void handleRefreshGatewayInstall()}
-                  >
-                    {gatewayRefreshBusy ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Refreshing…
-                      </>
-                    ) : (
-                      "Refresh gateway PATH"
-                    )}
-                  </Button>
                   <Button
                     type="button"
                     onClick={() => void requestWaPairingStart()}
@@ -1177,11 +1160,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Pairing…
                       </>
                     ) : (
-                      waRequiresSessionReset
-                        ? waAwaitingResetConfirm
-                          ? "Confirm and start fresh QR pairing"
-                          : "Start fresh QR pairing"
-                        : "Start QR pairing"
+                      waRetryReady
+                        ? "Retry QR pairing"
+                        : waRequiresSessionReset
+                          ? waAwaitingResetConfirm
+                            ? "Confirm and start fresh QR pairing"
+                            : "Start fresh QR pairing"
+                          : "Start QR pairing"
                     )}
                   </Button>
                   {waPairingActive && (
@@ -1189,14 +1174,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                       Cancel pairing
                     </Button>
                   )}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void recheckWaPaired()}
-                    disabled={testing}
-                  >
-                    I already scanned — check link
-                  </Button>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
                   Tip: Hold your phone about 20-30 cm away, keep screen brightness high, and avoid glare while scanning.
@@ -1229,7 +1206,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 )}
                 {waTerminalReady && (
                   <p className="text-[11px] text-muted-foreground">
-                    If scanning fails, press &quot;I already scanned — check link&quot; after scanning once to verify session state.
+                    Pairing completes automatically after WhatsApp is linked on your phone.
                   </p>
                 )}
                 {!waTerminalReady && (
