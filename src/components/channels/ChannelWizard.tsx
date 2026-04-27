@@ -621,7 +621,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           const msg = "Ronbot could not remove the previous WhatsApp session files.";
           setWaPairingError(msg);
           toast.error("Could not prepare clean WhatsApp session", {
-            description: "Close any running Hermes WhatsApp session and try again.",
+            description: "Close any running WhatsApp bridge session and try again.",
           });
           setWaPairingPhase("idle");
           return;
@@ -670,7 +670,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         return;
       }
       setWaPairingPhase("pairing");
-      setWaStatusHint("Waiting for WhatsApp QR output from Hermes…");
+      setWaStatusHint("Waiting for WhatsApp QR output from Ronbot…");
       await systemAPI.runWhatsAppPairing(appendWaPairingChunk, {
         onStreamId: (id) => {
           waStreamIdRef.current = id;
@@ -725,7 +725,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaRetryReady(true);
     } else {
       setWaPairingError(
-        "Hermes closed before a session was saved. Check the log for errors, or try Start QR pairing again after scanning.",
+        "Pairing closed before a session was saved. Check the log for errors, or try Start QR pairing again after scanning.",
       );
       setWaRetryReady(true);
     }
