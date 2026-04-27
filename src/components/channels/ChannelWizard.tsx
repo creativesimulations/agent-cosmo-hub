@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle, RotateCcw, Trash2 } from "lucide-react";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
 import type { Channel } from "@/lib/channels";
@@ -121,6 +121,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const waLogEndRef = useRef<HTMLDivElement | null>(null);
   const { requestSudoPassword } = useSudoPrompt();
 
+  /** Pre-existing channel state (from a prior install or earlier setup). */
+  const [hadExistingConfig, setHadExistingConfig] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  /** Stale-session escape hatch for WhatsApp: surface "Force fresh QR pairing". */
+  const [waStaleSessionDetected, setWaStaleSessionDetected] = useState(false);
+  const [waForceFreshBusy, setWaForceFreshBusy] = useState(false);
+
   // Pre-load any already-stored credentials so reconfiguring is friction-free.
   useEffect(() => {
     if (!open) return;
@@ -146,6 +154,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaRetryReady(false);
     setWaAutoFixing(false);
     setWaStatusHint("");
+    setHadExistingConfig(false);
+    setResetConfirmOpen(false);
+    setResetting(false);
+    setWaStaleSessionDetected(false);
+    setWaForceFreshBusy(false);
     waAutoPromptSeenRef.current = new Set();
     setSetupToolsChecked(false);
     setSetupToolsOk(false);
@@ -154,6 +167,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     waStreamIdRef.current = null;
     let cancelled = false;
     (async () => {
+      const env = await systemAPI.readEnvFile().catch(() => ({} as Record<string, string>));
+      const requiredKeys = channel.credentials.filter((c) => !c.optional).map((c) => c.envVar);
+      const wasConfigured = requiredKeys.length > 0 && requiredKeys.every(
+        (k) => !!env[k] && env[k].trim().length > 0,
+      );
       const next: Record<string, string> = {};
       for (const cred of channel.credentials) {
         const existing = await systemAPI.secrets.get(cred.envVar);
@@ -169,6 +187,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       }
       if (!cancelled) {
         setValues(next);
+        setHadExistingConfig(wasConfigured);
         if (channel.id === "whatsapp") {
           setWaBaseline({
             mode: (next.WHATSAPP_MODE || "").trim(),
@@ -236,6 +255,18 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       return next.length > 220000 ? next.slice(-220000) : next;
     });
     const cleanedData = stripAnsiLike(event.data).replace(/\u200b/g, "");
+    // Detect Baileys / Hermes signals that an old session is being resumed
+    // instead of generating a fresh QR. We surface a "Force fresh QR pairing"
+    // button so the user is not stuck waiting for a QR that will never appear.
+    if (
+      /found existing session/i.test(cleanedData) ||
+      /restoring session/i.test(cleanedData) ||
+      /resuming session/i.test(cleanedData) ||
+      /existing auth state/i.test(cleanedData) ||
+      /already linked/i.test(cleanedData)
+    ) {
+      setWaStaleSessionDetected(true);
+    }
     if (cleanedData.includes("[process] Command timed out")) {
       const sid = waStreamIdRef.current;
       if (sid) {
@@ -252,6 +283,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingError(`${phaseMessage} Try again; Ronbot will continue from any cached progress.`);
       setWaRetryReady(true);
       setWaPairingPhase("idle");
+      // If the timeout happened during pairing AND we never saw QR output, the
+      // most likely cause is a stale session — invite the user to force-clear.
+      if (waPairingPhase === "pairing") {
+        setWaStaleSessionDetected(true);
+      }
     }
     waLogBuffer.current += cleanedData.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     // #region agent log
@@ -875,6 +911,110 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   };
 
+  /**
+   * Wipe a channel's leftover state so the user can start clean.
+   * Stops the gateway, removes env keys (env file + secrets store), and for
+   * WhatsApp also clears Hermes session + Baileys bridge auth folders that
+   * survive uninstalling Ronbot when ~/.hermes lives in WSL.
+   */
+  const resetChannel = async () => {
+    setResetting(true);
+    try {
+      const keys = (channel.resetEnvVars && channel.resetEnvVars.length > 0)
+        ? channel.resetEnvVars
+        : channel.credentials.map((c) => c.envVar);
+
+      // Stop any running gateway so it doesn't recreate state mid-reset.
+      await systemAPI.stopGateway().catch(() => undefined);
+
+      // WhatsApp: nuke local session + bridge auth dirs first.
+      if (channel.id === "whatsapp") {
+        const cleared = await systemAPI.clearWhatsAppSession();
+        if (!cleared.success) {
+          toast.error("Could not clear WhatsApp session files", {
+            description: cleared.stderr?.split("\n")[0] || "Try again or close any running Hermes WhatsApp session.",
+          });
+        }
+      }
+
+      // Strip env keys from ~/.hermes/.env and from secure secrets storage.
+      const stripped = await systemAPI.removeChannelEnvKeys(keys);
+      if (!stripped.success) {
+        toast.error("Could not remove env keys", {
+          description: stripped.error || "Check ~/.hermes/.env permissions and try again.",
+        });
+        return;
+      }
+      for (const k of keys) {
+        await systemAPI.secrets.delete(k).catch(() => false);
+      }
+      // Re-materialize so anything still managed gets a clean .env back.
+      await systemAPI.materializeEnv().catch(() => undefined);
+
+      // Reset wizard local state.
+      setHadExistingConfig(false);
+      setValues((prev) => {
+        const next = { ...prev };
+        for (const k of keys) next[k] = "";
+        // Re-apply hidden defaults for WhatsApp etc.
+        for (const cred of channel.credentials) {
+          if (cred.kind === "hidden" && cred.defaultValue) next[cred.envVar] = cred.defaultValue;
+          if (cred.kind === "choice" && cred.defaultValue) next[cred.envVar] = cred.defaultValue;
+        }
+        return next;
+      });
+      setWaPaired(false);
+      setWaPairedChecked(false);
+      setWaRelinkRequested(false);
+      setWaAwaitingResetConfirm(false);
+      setWaStaleSessionDetected(false);
+      setWaPairingError("");
+      setTestResult("idle");
+      setTestError("");
+
+      toast.success(`${channel.name} reset`, {
+        description: "Stale credentials removed. Restart setup from step 1.",
+      });
+      // Send the user back to step 1 so they re-enter credentials cleanly.
+      setStep(1);
+      setResetConfirmOpen(false);
+      onComplete();
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  /**
+   * WhatsApp escape hatch: when pairing stalls because Baileys found a stale
+   * session, clear ALL local session/auth files and restart pairing without
+   * requiring the user to redo any earlier steps.
+   */
+  const forceFreshWhatsAppPairing = async () => {
+    setWaForceFreshBusy(true);
+    try {
+      const cleared = await systemAPI.clearWhatsAppSession();
+      if (!cleared.success) {
+        toast.error("Could not clear WhatsApp session files", {
+          description: cleared.stderr?.split("\n")[0] || "Try again or check WSL file permissions.",
+        });
+        return;
+      }
+      setWaPaired(false);
+      setWaPairedChecked(true);
+      setWaStaleSessionDetected(false);
+      setWaPairingError("");
+      setWaRelinkRequested(false);
+      setWaAwaitingResetConfirm(false);
+      setWaRetryReady(false);
+      toast.success("Cleared previous WhatsApp session", {
+        description: "Starting a fresh QR pairing now…",
+      });
+      await startWaPairing(false);
+    } finally {
+      setWaForceFreshBusy(false);
+    }
+  };
+
   const next = async () => {
     if (step === 2) {
       const ok = await saveCredentials();
@@ -977,6 +1117,37 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             <p className="text-xs text-muted-foreground">
               These are stored in your OS keychain — never in plain text.
             </p>
+            {hadExistingConfig && (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-foreground">
+                      Existing {channel.name} setup detected
+                    </p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Values from <code className="font-mono">~/.hermes/.env</code> are pre-filled. If you
+                      reinstalled Ronbot or want to start clean, click Reset to wipe stored credentials
+                      {channel.id === "whatsapp" ? " and the local WhatsApp session" : ""}.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-1 h-7 text-xs"
+                      disabled={resetting}
+                      onClick={() => setResetConfirmOpen(true)}
+                    >
+                      {resetting ? (
+                        <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> Resetting…</>
+                      ) : (
+                        <><RotateCcw className="w-3 h-3 mr-1.5" /> Reset {channel.name}</>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="space-y-3">
               {visibleCredentials.map((cred) => (
                 <div key={cred.envVar} className="space-y-1">
@@ -1050,6 +1221,29 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             <h3 className="text-sm font-semibold text-foreground">Test &amp; enable</h3>
             <p className="text-sm text-muted-foreground">{channel.testHint}</p>
 
+            {hadExistingConfig && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2">
+                <span className="min-w-[12rem] flex-1 text-[11px] text-muted-foreground leading-relaxed">
+                  Test failing with stale credentials? Reset {channel.name} to wipe what's saved
+                  {channel.id === "whatsapp" ? " and the local WhatsApp session" : ""} and rerun setup.
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  disabled={resetting}
+                  onClick={() => setResetConfirmOpen(true)}
+                >
+                  {resetting ? (
+                    <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> Resetting…</>
+                  ) : (
+                    <><RotateCcw className="w-3 h-3 mr-1.5" /> Reset {channel.name}</>
+                  )}
+                </Button>
+              </div>
+            )}
+
             {step === 3 &&
               setupToolsChecked &&
               setupToolsOk &&
@@ -1092,13 +1286,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                     : "Install curl and Python 3 in the same environment Hermes uses. On Windows with WSL, install them inside that Linux distro.")
                 }
                 fixLabel={channel.id === "signal" ? "cURL downloads" : "Python downloads"}
-                onFix={() =>
+                onFix={() => {
                   openExternal(
                     channel.id === "signal"
                       ? "https://curl.se/download.html"
                       : "https://www.python.org/downloads/",
-                  )
-                }
+                  );
+                }}
               />
             )}
 
@@ -1206,7 +1400,29 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                       Cancel pairing
                     </Button>
                   )}
+                  {(waStaleSessionDetected || (waRetryReady && waPairingError)) && !waPairingActive && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void forceFreshWhatsAppPairing()}
+                      disabled={waForceFreshBusy || waPairingActive || waAutoFixing}
+                      title="Wipe local Hermes session and Baileys bridge auth folders, then start a fresh QR pairing."
+                    >
+                      {waForceFreshBusy ? (
+                        <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Clearing…</>
+                      ) : (
+                        <><Trash2 className="w-4 h-4 mr-1.5" /> Force fresh QR pairing</>
+                      )}
+                    </Button>
+                  )}
                 </div>
+                {waStaleSessionDetected && !waPairingActive && (
+                  <p className="text-[11px] text-amber-500/90 leading-relaxed">
+                    Looks like an old WhatsApp session is being resumed instead of pairing fresh. This often
+                    happens after reinstalling Ronbot — `~/.hermes` survives uninstall on Windows/WSL. Use
+                    "Force fresh QR pairing" to wipe the cached session and bridge auth files.
+                  </p>
+                )}
                 <p className="text-[11px] text-muted-foreground">
                   Tip: Hold your phone about 20-30 cm away, keep screen brightness high, and avoid glare while scanning.
                 </p>
@@ -1362,6 +1578,59 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           )}
         </DialogFooter>
       </DialogContent>
+
+      {/* Reset confirmation — uniform across all 5 channels */}
+      <Dialog open={resetConfirmOpen} onOpenChange={(v) => !resetting && setResetConfirmOpen(v)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reset {channel.name}?</DialogTitle>
+            <DialogDescription>
+              This wipes Ronbot's saved credentials for {channel.name} so you can start setup from scratch.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="rounded-md border border-border/60 bg-background/30 p-3 text-xs text-muted-foreground space-y-1">
+              <p className="font-medium text-foreground">Ronbot will:</p>
+              <ul className="list-disc list-inside space-y-0.5">
+                <li>Stop the {channel.name} gateway if it's running</li>
+                <li>
+                  Remove these keys from <code className="font-mono">~/.hermes/.env</code>:
+                  {" "}
+                  <span className="font-mono">
+                    {(channel.resetEnvVars ?? channel.credentials.map((c) => c.envVar)).join(", ")}
+                  </span>
+                </li>
+                <li>Delete the matching entries from your OS keychain</li>
+                {channel.id === "whatsapp" && (
+                  <li>Wipe local WhatsApp session and Baileys bridge auth folders</li>
+                )}
+              </ul>
+            </div>
+            {channel.resetCaveat && (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-[11px] text-foreground/90 leading-relaxed">
+                <strong className="text-amber-600 dark:text-amber-400">Heads up:</strong>{" "}
+                {channel.resetCaveat}
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setResetConfirmOpen(false)} disabled={resetting}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void resetChannel()}
+              disabled={resetting}
+            >
+              {resetting ? (
+                <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Resetting…</>
+              ) : (
+                <><Trash2 className="w-4 h-4 mr-1.5" /> Reset {channel.name}</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 };

@@ -74,6 +74,18 @@ export interface Channel {
   credentials: ChannelCredential[];
   /** What "test" does in step 4 — short copy shown on the test screen. */
   testHint: string;
+  /**
+   * Env var names the "Reset channel" action should strip from
+   * `~/.hermes/.env` (and from the secrets store). Defaults to all
+   * `credentials[].envVar` when omitted, but can be overridden if a
+   * channel writes auxiliary keys not collected as credentials.
+   */
+  resetEnvVars?: string[];
+  /**
+   * Extra warning shown in the reset confirmation dialog. Use for
+   * channels with state Ronbot can't fully clean (e.g. signal-cli).
+   */
+  resetCaveat?: string;
 }
 
 export const CHANNELS: Channel[] = [
@@ -126,6 +138,7 @@ export const CHANNELS: Channel[] = [
     ],
     testHint:
       "We'll verify the token with Telegram's API and confirm only the listed users can message the bot.",
+    resetEnvVars: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALLOWED_USERS'],
   },
 
   // ─── Slack ────────────────────────────────────────────────────────
@@ -189,6 +202,7 @@ export const CHANNELS: Channel[] = [
       },
     ],
     testHint: "We'll verify both tokens are accepted by Slack and confirm the allowlist is set.",
+    resetEnvVars: ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_ALLOWED_USERS'],
   },
 
   // ─── WhatsApp (Baileys / WhatsApp Web) ────────────────────────────
@@ -259,6 +273,9 @@ export const CHANNELS: Channel[] = [
     ],
     testHint:
       "First link WhatsApp using the QR code in this window. After your phone shows the device as linked, we verify the saved session and run a quick gateway check.",
+    resetEnvVars: ['WHATSAPP_ENABLED', 'WHATSAPP_MODE', 'WHATSAPP_ALLOWED_USERS'],
+    resetCaveat:
+      "Reset also wipes the local WhatsApp session and bridge auth files so the next pairing starts with a fresh QR code. Your phone may keep the linked-device entry until you remove it from WhatsApp → Settings → Linked Devices.",
   },
 
   // ─── Discord ──────────────────────────────────────────────────────
@@ -316,6 +333,7 @@ export const CHANNELS: Channel[] = [
     ],
     testHint:
       "We'll verify Discord accepts the token by fetching the bot's profile, and confirm the allowlist is set.",
+    resetEnvVars: ['DISCORD_BOT_TOKEN', 'DISCORD_ALLOWED_USERS'],
   },
 
   // ─── Signal ───────────────────────────────────────────────────────
@@ -378,6 +396,9 @@ export const CHANNELS: Channel[] = [
     ],
     testHint:
       "We'll use curl to hit the signal-cli health endpoint Hermes documents. Install curl in the same environment as Hermes if this step fails.",
+    resetEnvVars: ['SIGNAL_HTTP_URL', 'SIGNAL_ACCOUNT', 'SIGNAL_ALLOWED_USERS'],
+    resetCaveat:
+      "Ronbot does not control signal-cli. Resetting here only clears the env keys Hermes reads — the linked-device state inside signal-cli stays until you remove it with `signal-cli -a <number> removeDevice` or by re-linking.",
   },
 ];
 
