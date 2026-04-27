@@ -109,6 +109,11 @@ export const CHANNELS: Channel[] = [
         body: "Open @userinfobot in Telegram and send any message — it replies with your numeric user ID. You'll paste this as the allowed user so the bot only listens to you.",
         link: { label: 'Open @userinfobot', url: 'https://t.me/userinfobot' },
       },
+      {
+        title: 'Using the bot in groups? Check privacy mode',
+        body: "Hermes bots in groups only see every message if Telegram privacy mode is off for your bot, or if the bot is a group admin. Otherwise it only sees slash commands and replies to itself. After changing privacy in BotFather, remove and re-add the bot to the group so Telegram picks up the change.",
+        link: { label: 'Hermes Telegram docs (groups)', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/telegram/' },
+      },
     ],
     credentials: [
       { envVar: 'TELEGRAM_BOT_TOKEN', label: 'Bot token', hint: 'Looks like 1234567890:ABCdef…' },
@@ -133,13 +138,19 @@ export const CHANNELS: Channel[] = [
     difficulty: 'Medium',
     setupSteps: [
       {
-        title: 'Create a new Slack app',
-        body: "On api.slack.com/apps click 'Create New App' → 'From scratch'. Name it after your agent and pick the workspace to install it in.",
+        title: 'Fastest path: Hermes-generated manifest (recommended if you use Hermes on the command line)',
+        body: "Hermes can write a complete Slack app manifest (scopes, events, slash commands, Socket Mode) to a JSON file under your Hermes config folder. In Slack: Create New App → From an app manifest → paste that JSON. If you only use Ronbot here, skip this and create the app from scratch in the next step.",
+        link: { label: 'Hermes Slack setup (manifest)', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/slack/' },
+      },
+      {
+        title: 'Create a new Slack app (from scratch)',
+        body: "On api.slack.com/apps click Create New App → From scratch. Name it after your agent and pick the workspace to install it in.",
         link: { label: 'Open api.slack.com/apps', url: 'https://api.slack.com/apps' },
       },
       {
         title: 'Add bot scopes',
-        body: "Under 'OAuth & Permissions' add bot scopes: app_mentions:read, chat:write, im:history, im:read, im:write, groups:history, mpim:history, channels:history, users:read, files:read, files:write.",
+        body: "Under OAuth & Permissions → Bot Token Scopes, add: chat:write, app_mentions:read, channels:history, channels:read, groups:history, im:history, im:read, im:write, users:read, files:read, files:write. Optional: groups:read for private channel metadata. Channel history scopes are required if you want the bot in channels, not only DMs.",
+        link: { label: 'Hermes scope checklist', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/slack/' },
       },
       {
         title: 'Enable Socket Mode',
@@ -160,6 +171,11 @@ export const CHANNELS: Channel[] = [
       {
         title: 'Copy your Slack Member ID',
         body: "Click your own avatar → View full profile → ⋮ → Copy member ID. It looks like U01ABC2DEF3. You'll paste this as the allowed user.",
+      },
+      {
+        title: 'Invite the bot to each channel',
+        body: "After the gateway is running, type /invite @YourAppName in every channel (public or private) where you want the bot to read and reply. Slack does not auto-join the bot to channels.",
+        link: { label: 'Hermes Slack docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/slack/' },
       },
     ],
     credentials: [
@@ -185,16 +201,22 @@ export const CHANNELS: Channel[] = [
     difficulty: 'Medium',
     setupSteps: [
       {
+        title: 'Install Node.js (includes npm) where Hermes runs',
+        body: "Hermes installs the WhatsApp bridge with npm when the messaging gateway runs. Install Node.js from the official site or your package manager so npm is on your PATH. On Windows, Ronbot uses the same Linux environment as Hermes (typically WSL): install Node inside that distro, not only on Windows, so the gateway and Ronbot’s QR pairing see the same tools.",
+        link: { label: 'Node.js download', url: 'https://nodejs.org/' },
+      },
+      {
         title: 'Pick a phone number',
         body: "Two options: dedicate a separate phone number to the bot (recommended — cleanest UX, lower ban risk), or use your personal WhatsApp and message yourself. A second SIM, Google Voice, or a prepaid number all work.",
       },
       {
         title: 'Link WhatsApp on the next screen',
-        body: "On the last step, Ronbot runs Hermes' WhatsApp pairing for you here in the app (no separate terminal). Hermes may install bridge dependencies the first time — Node.js v18+ is required on your system.",
+        body: "On the last step, Ronbot runs Hermes WhatsApp pairing here in the app. Hermes may install bridge dependencies the first time — Node.js v18+ is required in the same environment as the gateway (WSL on Windows). If you widen the Ronbot window, ASCII QR codes are easier to scan.",
+        link: { label: 'Hermes WhatsApp docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp/' },
       },
       {
         title: 'Scan the QR code from your phone',
-        body: "When the QR appears below, open WhatsApp on your phone → Settings → Linked Devices → Link a Device, and scan it. Hermes saves the session under ~/.hermes/platforms/whatsapp/session and reuses it across restarts.",
+        body: "When the QR appears below, open WhatsApp on your phone → Settings → Linked Devices → Link a Device, and scan it. Hermes saves the session under your Hermes folder and reuses it across restarts.",
       },
       {
         title: 'Pick the allowed phone numbers',
@@ -275,7 +297,8 @@ export const CHANNELS: Channel[] = [
       },
       {
         title: 'Invite the bot to your server',
-        body: "Under 'OAuth2' → 'URL Generator' tick `bot` and `applications.commands`, then under Bot Permissions tick: View Channels, Send Messages, Read Message History, Embed Links, Attach Files, Send Messages in Threads, Add Reactions. Open the generated URL and add the bot to a server you own.",
+        body: "Under OAuth2 → URL Generator tick bot and applications.commands, then under Bot Permissions tick: View Channels, Send Messages, Read Message History, Embed Links, Attach Files, Send Messages in Threads, Add Reactions. Open the generated URL and add the bot to a server you own. Hermes needs Message Content Intent (already enabled above) to read what people type.",
+        link: { label: 'Hermes Discord docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/discord/' },
       },
       {
         title: 'Find your Discord user ID',
@@ -305,29 +328,32 @@ export const CHANNELS: Channel[] = [
     difficulty: 'Advanced',
     setupSteps: [
       {
-        title: 'Open the official Hermes Signal guide',
-        body: "Keep Hermes' Signal guide open to verify daemon/account expectations while you configure signal-cli.",
+        title: 'Advanced: Ronbot does not set up Signal for you',
+        body: "Signal uses the separate signal-cli program plus Java 17+, account linking, and a long-running HTTP daemon. Ronbot only stores the URL, account, and allowlist Hermes expects once you have completed those steps outside this app. If you want a guided flow, use Hermes gateway setup or follow the Hermes Signal guide in a browser.",
         link: { label: 'Hermes Signal docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/signal/' },
       },
       {
-        title: 'Install signal-cli',
-        body: "Hermes talks to Signal through the signal-cli daemon (requires Java 17+). On macOS: `brew install signal-cli`. On Linux: download the latest release from GitHub.",
+        title: 'Install Java 17+ and signal-cli',
+        body: "Install a Java 17 or newer runtime, then install signal-cli using the method that matches your system (for example Homebrew on macOS, or the official release archive on Linux — Hermes documents both). Ronbot cannot install or update signal-cli automatically.",
         link: {
           label: 'signal-cli releases',
           url: 'https://github.com/AsamK/signal-cli/releases',
         },
       },
       {
-        title: 'Link your Signal account',
-        body: "Run `signal-cli link -n \"HermesAgent\"` in a terminal — it shows a QR code. On your phone open Signal → Settings → Linked Devices → Link New Device, then scan the QR.",
+        title: 'Link this device as a secondary Signal client',
+        body: "Linking shows a QR code on the machine where signal-cli runs. Use the Hermes guide to complete linking and to confirm your account phone number is in standard international format.",
+        link: { label: 'Hermes: link account', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/signal/' },
       },
       {
-        title: 'Start the signal-cli daemon',
-        body: "Run `signal-cli --account +YOURNUMBER daemon --http 127.0.0.1:8080` (replace +YOURNUMBER with your phone number in E.164 format). Keep it running — use systemd, tmux, or screen.",
+        title: 'Run the signal-cli HTTP daemon',
+        body: "Hermes talks to Signal over HTTP to the daemon. The process must stay running in the background (for example as a user service on Linux or macOS). Use the default URL here unless you changed the listen address in signal-cli.",
+        link: { label: 'Hermes Signal docs (daemon)', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/signal/' },
       },
       {
         title: 'Choose who can message the bot',
-        body: "Enter the phone numbers (E.164, with the leading `+`) that are allowed to talk to the agent. Without an allowlist, every Signal sender is denied for safety.",
+        body: "Enter the phone numbers (E.164, with the leading +) that are allowed to talk to the agent. Hermes recommends an allowlist or DM pairing for safety. Optional Hermes variables for groups or broad access are listed in the official docs.",
+        link: { label: 'Hermes: access control', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/signal/' },
       },
     ],
     credentials: [
@@ -351,7 +377,7 @@ export const CHANNELS: Channel[] = [
       },
     ],
     testHint:
-      "We'll ping the signal-cli daemon to make sure it's running and verify the account is linked.",
+      "We'll use curl to hit the signal-cli health endpoint Hermes documents. Install curl in the same environment as Hermes if this step fails.",
   },
 ];
 

@@ -42,6 +42,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waPairingActive, setWaPairingActive] = useState(false);
   const [waPairingLines, setWaPairingLines] = useState<string[]>([]);
   const [waPairingError, setWaPairingError] = useState("");
+  const [waPairPrereqChecked, setWaPairPrereqChecked] = useState(false);
+  const [waPairPrereqOk, setWaPairPrereqOk] = useState(false);
+  const [waPairPrereqDetail, setWaPairPrereqDetail] = useState("");
+  const [setupToolsChecked, setSetupToolsChecked] = useState(false);
+  const [setupToolsOk, setSetupToolsOk] = useState(false);
+  const [setupToolsDetail, setSetupToolsDetail] = useState("");
+  const [gatewayRefreshBusy, setGatewayRefreshBusy] = useState(false);
   const waLogBuffer = useRef("");
   const waStreamIdRef = useRef<string | null>(null);
   const waLogEndRef = useRef<HTMLDivElement | null>(null);
@@ -58,6 +65,12 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairingActive(false);
     setWaPairingLines([]);
     setWaPairingError("");
+    setWaPairPrereqChecked(false);
+    setWaPairPrereqOk(false);
+    setWaPairPrereqDetail("");
+    setSetupToolsChecked(false);
+    setSetupToolsOk(false);
+    setSetupToolsDetail("");
     waLogBuffer.current = "";
     waStreamIdRef.current = null;
     let cancelled = false;
@@ -173,16 +186,34 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   }, [channel]);
 
-  /** WhatsApp step 3: probe whether a session already exists */
+  /** Step 3: tools for credential tests + WhatsApp pairing prereqs (npm, script) + session */
   useEffect(() => {
-    if (!open || step !== 3 || channel.id !== "whatsapp") return;
+    if (!open || step !== 3) return;
     let cancelled = false;
-    setWaPairedChecked(false);
+    setSetupToolsChecked(false);
+    setSetupToolsOk(false);
+    setSetupToolsDetail("");
+    if (channel.id === "whatsapp") {
+      setWaPairedChecked(false);
+      setWaPairPrereqChecked(false);
+    }
     (async () => {
-      const r = await systemAPI.isWhatsAppPaired();
+      const tools = await systemAPI.checkChannelSetupTools(channel.id);
       if (cancelled) return;
-      setWaPaired(!!(r.success && r.paired));
-      setWaPairedChecked(true);
+      setSetupToolsDetail([tools.stderr, tools.stdout].filter(Boolean).join("\n").trim());
+      setSetupToolsChecked(true);
+      setSetupToolsOk(tools.success);
+
+      if (channel.id === "whatsapp") {
+        const pr = await systemAPI.checkWhatsAppPairingPrereqs();
+        const r = await systemAPI.isWhatsAppPaired();
+        if (cancelled) return;
+        setWaPairPrereqDetail([pr.stderr, pr.stdout].filter(Boolean).join("\n").trim());
+        setWaPairPrereqChecked(true);
+        setWaPairPrereqOk(pr.success);
+        setWaPaired(!!(r.success && r.paired));
+        setWaPairedChecked(true);
+      }
     })();
     return () => {
       cancelled = true;
@@ -205,15 +236,33 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
   useEffect(() => {
     if (!open || step !== 3 || testing) return;
+    if (!setupToolsChecked || !setupToolsOk) return;
     if (channel.id === "whatsapp") {
       if (!waPairedChecked) return;
       if (!waPaired) return;
     }
     if (testResult !== "idle") return;
     void runTest();
-  }, [open, step, channel.id, waPaired, waPairedChecked, testResult, testing, runTest]);
+  }, [
+    open,
+    step,
+    channel.id,
+    waPaired,
+    waPairedChecked,
+    setupToolsChecked,
+    setupToolsOk,
+    testResult,
+    testing,
+    runTest,
+  ]);
 
   const startWaPairing = async () => {
+    if (waPairPrereqChecked && !waPairPrereqOk) {
+      toast.error("Install missing tools first", {
+        description: "WhatsApp pairing needs npm and the script utility on your PATH.",
+      });
+      return;
+    }
     setWaPairingError("");
     waLogBuffer.current = "";
     setWaPairingLines([]);
@@ -270,6 +319,29 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       toast.info("Not linked yet", {
         description: "Finish scanning the QR code on your phone, then check again.",
       });
+    }
+  };
+
+  const handleRefreshGatewayInstall = async () => {
+    setGatewayRefreshBusy(true);
+    try {
+      const r = await systemAPI.refreshGatewayInstall();
+      if (r.success) {
+        toast.success("Gateway service refreshed", {
+          description: "Hermes re-saved your PATH for the messaging gateway. Start the gateway from Channels if needed.",
+        });
+        if (channel.id === "whatsapp") {
+          const pr = await systemAPI.checkWhatsAppPairingPrereqs();
+          setWaPairPrereqDetail([pr.stderr, pr.stdout].filter(Boolean).join("\n").trim());
+          setWaPairPrereqOk(pr.success);
+        }
+      } else {
+        toast.error("Could not refresh gateway", {
+          description: r.stderr?.split("\n")[0] || r.stdout?.split("\n")[0] || "Check logs and try again.",
+        });
+      }
+    } finally {
+      setGatewayRefreshBusy(false);
     }
   };
 
@@ -462,7 +534,72 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             <h3 className="text-sm font-semibold text-foreground">Test &amp; enable</h3>
             <p className="text-sm text-muted-foreground">{channel.testHint}</p>
 
-            {channel.id === "whatsapp" && waPairedChecked && !waPaired && (
+            {step === 3 &&
+              setupToolsChecked &&
+              setupToolsOk &&
+              channel.id !== "whatsapp" &&
+              ["telegram", "slack", "discord", "signal"].includes(channel.id) && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-background/30 px-3 py-2 text-[11px] text-muted-foreground">
+                  <span className="min-w-[12rem] flex-1">
+                    After installing curl, Python, or Node, or changing PATH, refresh the gateway service so Hermes snapshots PATH (recommended in Hermes docs for macOS/Linux).
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={gatewayRefreshBusy}
+                    onClick={() => void handleRefreshGatewayInstall()}
+                  >
+                    {gatewayRefreshBusy ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Refreshing…
+                      </>
+                    ) : (
+                      "Refresh gateway PATH"
+                    )}
+                  </Button>
+                </div>
+              )}
+
+            {step === 3 && setupToolsChecked && !setupToolsOk && (
+              <ActionableError
+                title="A system tool is missing for the connection test"
+                summary={
+                  channel.id === "signal"
+                    ? "Ronbot uses curl to ping the signal-cli health URL Hermes documents. Python is not required for this channel test."
+                    : "Ronbot uses curl and Python 3 to verify your bot tokens when Hermes does not provide a built-in gateway test command."
+                }
+                details={
+                  setupToolsDetail ||
+                  (channel.id === "signal"
+                    ? "Install curl in the same environment Hermes uses. On Windows with WSL, install curl inside that Linux distro."
+                    : "Install curl and Python 3 in the same environment Hermes uses. On Windows with WSL, install them inside that Linux distro.")
+                }
+                fixLabel={channel.id === "signal" ? "cURL downloads" : "Python downloads"}
+                onFix={() =>
+                  openExternal(
+                    channel.id === "signal"
+                      ? "https://curl.se/download.html"
+                      : "https://www.python.org/downloads/",
+                  )
+                }
+              />
+            )}
+
+            {channel.id === "whatsapp" && waPairPrereqChecked && !waPairPrereqOk && (
+              <ActionableError
+                title="WhatsApp pairing needs npm and script"
+                summary="Hermes uses npm to install the bridge and Ronbot uses the script utility to show the QR code in this window. Both must be on your PATH."
+                details={
+                  waPairPrereqDetail ||
+                  "Install Node.js (includes npm). On Linux, install the util-linux package for script. On macOS, script is built in. On Windows, use the same WSL distro as Ronbot for Node and Hermes."
+                }
+                fixLabel="Node.js downloads"
+                onFix={() => openExternal("https://nodejs.org/")}
+              />
+            )}
+
+            {channel.id === "whatsapp" && setupToolsOk && waPairPrereqOk && waPairedChecked && !waPaired && (
               <div className="rounded-lg border border-border/60 bg-background/30 p-4 space-y-3">
                 <h4 className="text-sm font-medium text-foreground">Link WhatsApp</h4>
                 <p className="text-xs text-muted-foreground leading-relaxed">
@@ -472,11 +609,34 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 {waPairingError && (
                   <p className="text-xs text-destructive font-mono whitespace-pre-wrap">{waPairingError}</p>
                 )}
+                <p className="text-[11px] text-muted-foreground">
+                  After installing Node or changing PATH, use &quot;Refresh gateway PATH&quot; so Hermes re-saves the gateway service (recommended in Hermes docs for macOS/Linux).
+                </p>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={gatewayRefreshBusy}
+                    onClick={() => void handleRefreshGatewayInstall()}
+                  >
+                    {gatewayRefreshBusy ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Refreshing…
+                      </>
+                    ) : (
+                      "Refresh gateway PATH"
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
                     onClick={() => void startWaPairing()}
-                    disabled={waPairingActive || testing}
+                    disabled={
+                      waPairingActive ||
+                      testing ||
+                      !waPairPrereqChecked ||
+                      (waPairPrereqChecked && !waPairPrereqOk)
+                    }
                     className="gradient-primary text-primary-foreground"
                   >
                     {waPairingActive ? (
@@ -514,7 +674,12 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             )}
 
             <div className="rounded-lg border border-border/60 bg-background/30 p-4">
-              {channel.id === "whatsapp" && (!waPairedChecked || !waPaired) ? (
+              {!setupToolsChecked ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+                  Checking tools for this step…
+                </div>
+              ) : channel.id === "whatsapp" && (!waPairedChecked || !waPaired) ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   {waPairedChecked ? (
                     <>
@@ -524,12 +689,18 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                   ) : (
                     <>
                       <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
-                      Checking WhatsApp link…
+                      Checking WhatsApp link and tools…
                     </>
                   )}
                 </div>
+              ) : !setupToolsOk ? (
+                <p className="text-sm text-muted-foreground">Fix the missing tools above, then run the test.</p>
               ) : testResult === "idle" ? (
-                <Button onClick={() => void runTest()} disabled={testing} className="w-full">
+                <Button
+                  onClick={() => void runTest()}
+                  disabled={testing || !setupToolsOk}
+                  className="w-full"
+                >
                   {testing ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Testing…
@@ -552,7 +723,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                   {testError && (
                     <p className="text-xs text-muted-foreground font-mono">{testError}</p>
                   )}
-                  <Button variant="outline" size="sm" onClick={() => void runTest()} disabled={testing}>
+                  <Button variant="outline" size="sm" onClick={() => void runTest()} disabled={testing || !setupToolsOk}>
                     Try again
                   </Button>
                 </div>

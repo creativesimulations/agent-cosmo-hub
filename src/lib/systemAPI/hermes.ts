@@ -157,6 +157,10 @@ const runHermesShell = async (
     : coreAPI.runCommand(cmd, options);
 };
 
+/** Prepended to Hermes CLI invocations so `npm`, Homebrew Node, etc. resolve (WhatsApp bridge). */
+const HERMES_PATH_EXPORT =
+  'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/snap/bin:$PATH"';
+
 const runHermesCli = async (
   command: string,
   options?: Record<string, unknown>,
@@ -165,7 +169,7 @@ const runHermesCli = async (
   return runHermesShell(
     [
       'set -e',
-      'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
+      HERMES_PATH_EXPORT,
       'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
       'echo "[hermes] using $(command -v hermes)"',
       command,
@@ -173,6 +177,109 @@ const runHermesCli = async (
     options,
     onOutput,
   );
+};
+
+/** Hermes versions without `hermes gateway test` — validate tokens / pairing with HTTP + filesystem. */
+const buildChannelCredentialTestScript = (channelId: string): string => {
+  const allowed = new Set(['telegram', 'slack', 'whatsapp', 'discord', 'signal']);
+  if (!allowed.has(channelId)) {
+    return 'echo "Unknown channel" >&2; exit 2';
+  }
+  const ch = channelId;
+  const slackBlock = [
+    '    BT=$(curl -sS --max-time 35 -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" "https://slack.com/api/auth.test")',
+    `    printf %s "\$BT" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is True' || { echo "Slack bot token check failed:" >&2; echo "\$BT" >&2; exit 1; }`,
+    '    case "${SLACK_APP_TOKEN:-}" in xapp-*) ;; *) echo "SLACK_APP_TOKEN must start with xapp-" >&2; exit 1;; esac',
+    '    [ -n "${SLACK_ALLOWED_USERS:-}" ] || { echo "SLACK_ALLOWED_USERS is required" >&2; exit 1; }',
+    '    echo "Slack bot token OK (api.auth.test). App token format OK. This Hermes build has no gateway test subcommand — credentials were checked directly."',
+  ].join('\n');
+  const telegramBlock = [
+    '    TG=$(curl -sS --max-time 35 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe")',
+    `    printf %s "\$TG" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is True' || { echo "Telegram token check failed:" >&2; echo "\$TG" >&2; exit 1; }`,
+    '    [ -n "${TELEGRAM_ALLOWED_USERS:-}" ] || { echo "TELEGRAM_ALLOWED_USERS is required" >&2; exit 1; }',
+    '    echo "Telegram token OK (getMe). This Hermes build has no gateway test subcommand — credentials were checked directly."',
+  ].join('\n');
+  const discordBlock = [
+    '    DC=$(curl -sS --max-time 35 -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" "https://discord.com/api/v10/users/@me")',
+    `    printf %s "\$DC" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "id" in d' || { echo "Discord bot token check failed:" >&2; echo "\$DC" >&2; exit 1; }`,
+    '    [ -n "${DISCORD_ALLOWED_USERS:-}" ] || { echo "DISCORD_ALLOWED_USERS is required" >&2; exit 1; }',
+    '    echo "Discord bot token OK. This Hermes build has no gateway test subcommand — credentials were checked directly."',
+  ].join('\n');
+  const whatsappBlock = [
+    '    [ -n "${WHATSAPP_ALLOWED_USERS:-}" ] || { echo "WHATSAPP_ALLOWED_USERS is required" >&2; exit 1; }',
+    '    SESSION_DIR="$HOME/.hermes/platforms/whatsapp/session"',
+    '    if [ ! -d "$SESSION_DIR" ] || [ -z "$(ls -A "$SESSION_DIR" 2>/dev/null)" ]; then',
+    '      echo "WhatsApp is not linked yet — finish QR pairing first." >&2',
+    '      exit 1',
+    '    fi',
+    '    echo "WhatsApp session on disk OK. This Hermes build has no gateway test subcommand — pairing was verified."',
+  ].join('\n');
+  const signalBlock = [
+    '    [ -n "${SIGNAL_HTTP_URL:-}" ] || { echo "SIGNAL_HTTP_URL is required" >&2; exit 1; }',
+    '    [ -n "${SIGNAL_ACCOUNT:-}" ] || { echo "SIGNAL_ACCOUNT is required" >&2; exit 1; }',
+    '    [ -n "${SIGNAL_ALLOWED_USERS:-}" ] || { echo "SIGNAL_ALLOWED_USERS is required" >&2; exit 1; }',
+    '    if ! command -v curl >/dev/null 2>&1; then echo "curl is required to test Signal but was not found on PATH." >&2; exit 1; fi',
+    '    BASE="${SIGNAL_HTTP_URL%/}"',
+    '    case "$BASE" in */api/v1/check) SIG_URL="$BASE" ;; *) SIG_URL="${BASE}/api/v1/check" ;; esac',
+    '    CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 "$SIG_URL" 2>/dev/null || echo 000)',
+    '    [ "$CODE" != "000" ] || { echo "Cannot reach signal-cli at $SIG_URL (daemon not running or wrong URL)." >&2; exit 1; }',
+    '    echo "signal-cli responded at api/v1/check (HTTP $CODE). This Hermes build has no gateway test subcommand — daemon was probed."',
+  ].join('\n');
+
+  return [
+    'set +e',
+    HERMES_PATH_EXPORT,
+    `CH="${ch}"`,
+    'ENVF="$HOME/.hermes/.env"',
+    'if [ ! -f "$ENVF" ]; then echo "Missing ~/.hermes/.env — save your channel secrets again." >&2; exit 2; fi',
+    'set -a',
+    '. "$ENVF"',
+    'set +a',
+    'GT=$(hermes gateway test "$CH" 2>&1)',
+    'RC=$?',
+    'if [ "$RC" -eq 0 ]; then',
+    '  echo "$GT"',
+    '  exit 0',
+    'fi',
+    'echo "$GT" >&2',
+    'if echo "$GT" | grep -q "invalid choice" && echo "$GT" | grep -q "test"; then',
+    '  case "$CH" in',
+    `    slack)`,
+    '    if ! command -v curl >/dev/null 2>&1; then echo "curl is required for Slack checks but was not found on PATH." >&2; exit 1; fi',
+    '    if ! command -v python3 >/dev/null 2>&1; then echo "python3 is required for Slack checks but was not found on PATH." >&2; exit 1; fi',
+    slackBlock,
+    '    exit 0',
+    '    ;;',
+    `    telegram)`,
+    '    if ! command -v curl >/dev/null 2>&1; then echo "curl is required for Telegram checks but was not found on PATH." >&2; exit 1; fi',
+    '    if ! command -v python3 >/dev/null 2>&1; then echo "python3 is required for Telegram checks but was not found on PATH." >&2; exit 1; fi',
+    telegramBlock,
+    '    exit 0',
+    '    ;;',
+    `    discord)`,
+    '    if ! command -v curl >/dev/null 2>&1; then echo "curl is required for Discord checks but was not found on PATH." >&2; exit 1; fi',
+    '    if ! command -v python3 >/dev/null 2>&1; then echo "python3 is required for Discord checks but was not found on PATH." >&2; exit 1; fi',
+    discordBlock,
+    '    exit 0',
+    '    ;;',
+    `    whatsapp)`,
+    whatsappBlock,
+    '    exit 0',
+    '    ;;',
+    `    signal)`,
+    signalBlock,
+    '    exit 0',
+    '    ;;',
+    '    *)',
+    '      echo "No credential fallback for channel: $CH" >&2',
+    '      exit "$RC"',
+    '    ;;',
+    '  esac',
+    'fi',
+    'hermes gateway status 2>&1 || true',
+    'hermes status 2>&1 || true',
+    'exit "$RC"',
+  ].join('\n');
 };
 
 const readHermesFile = async (targetPath: string): Promise<{ success: boolean; content?: string; error?: string }> => {
@@ -1371,6 +1478,10 @@ export const hermesAPI = {
     const r = await runHermesCli(
       [
         'set +e',
+        HERMES_PATH_EXPORT,
+        // User systemd units often lack Homebrew/snap/npm on PATH — push ours in
+        // so the gateway subprocess can install the WhatsApp bridge.
+        'systemctl --user set-environment PATH="$PATH" 2>/dev/null || true',
         'hermes gateway start 2>&1',
         'RC=$?',
         'if [ "$RC" -ne 0 ]; then',
@@ -1437,26 +1548,110 @@ export const hermesAPI = {
     return r;
   },
 
-  /** Run best-effort per-channel gateway test command */
+  /**
+   * Verify channel credentials. Uses `hermes gateway test` when available;
+   * falls back to direct HTTP / filesystem checks when the CLI has no `test`
+   * subcommand (common on current Hermes releases).
+   */
   async testChannel(channelId: string): Promise<CommandResult> {
-    const escaped = channelId.replace(/"/g, '\\"');
+    if (!/^(telegram|slack|whatsapp|discord|signal)$/.test(channelId)) {
+      return runHermesShell('echo "Invalid channel" >&2; exit 2', { timeout: 5000 });
+    }
+    return runHermesShell(buildChannelCredentialTestScript(channelId), { timeout: 60000 });
+  },
+
+  /** True when `npm` is on PATH (WhatsApp bridge install needs it for the gateway). */
+  async checkNpmForMessaging(): Promise<CommandResult> {
+    return runHermesShell(
+      [
+        'set +e',
+        HERMES_PATH_EXPORT,
+        'command -v npm >/dev/null 2>&1 || { echo "npm_not_found" >&2; echo "Install Node.js (includes npm), e.g. apt install npm, brew install node, or https://nodejs.org — then restart the gateway." >&2; exit 1; }',
+        'echo "npm_ok=$(npm --version)"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 15000 },
+    );
+  },
+
+  /**
+   * npm + `script(1)` for in-app WhatsApp QR pairing (PTY). Hermes bridge also
+   * needs npm when the gateway runs.
+   */
+  async checkWhatsAppPairingPrereqs(): Promise<CommandResult> {
+    return runHermesShell(
+      [
+        'set +e',
+        HERMES_PATH_EXPORT,
+        'MISS=""',
+        'command -v npm >/dev/null 2>&1 || MISS="$MISS npm"',
+        'command -v script >/dev/null 2>&1 || MISS="$MISS script"',
+        'if [ -n "$MISS" ]; then',
+        '  echo "Missing:$MISS" >&2',
+        '  echo "Install Node.js (npm) and util-linux script (Linux) or use macOS built-in script. On Windows, install Node inside the same WSL distro Ronbot uses." >&2',
+        '  exit 1',
+        'fi',
+        'echo "npm_ok=$(npm --version)"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 15000 },
+    );
+  },
+
+  /**
+   * Tools needed before Ronbot can run credential tests (HTTP/json fallback).
+   * WhatsApp session-only check does not need curl/python3 here.
+   */
+  async checkChannelSetupTools(channelId: string): Promise<CommandResult> {
+    if (!/^(telegram|slack|whatsapp|discord|signal)$/.test(channelId)) {
+      return { success: false, stdout: '', stderr: 'Invalid channel', code: 2 };
+    }
+    return runHermesShell(
+      [
+        'set +e',
+        HERMES_PATH_EXPORT,
+        `CH="${channelId}"`,
+        'MISS=""',
+        'case "$CH" in',
+        '  telegram|slack|discord)',
+        '    command -v curl >/dev/null 2>&1 || MISS="$MISS curl"',
+        '    command -v python3 >/dev/null 2>&1 || MISS="$MISS python3"',
+        '    ;;',
+        '  signal)',
+        '    command -v curl >/dev/null 2>&1 || MISS="$MISS curl"',
+        '    ;;',
+        '  whatsapp)',
+        '    :',
+        '    ;;',
+        'esac',
+        'if [ -n "$MISS" ]; then',
+        '  echo "Ronbot needs these tools for the channel test:$MISS" >&2',
+        '  echo "Install curl and Python 3 on this system (same environment as Hermes). On Windows, install them inside WSL if Ronbot uses WSL." >&2',
+        '  exit 1',
+        'fi',
+        'echo ok',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 10000 },
+    );
+  },
+
+  /**
+   * Re-register the gateway user service so PATH (npm, Homebrew, etc.) is
+   * snapshotted — Hermes documents this after installing Node or changing PATH on macOS/Linux.
+   */
+  async refreshGatewayInstall(): Promise<CommandResult> {
+    await materializeHermesEnv().catch(() => undefined);
     return runHermesCli(
       [
         'set +e',
-        `hermes gateway test "${escaped}" 2>&1`,
+        HERMES_PATH_EXPORT,
+        'systemctl --user set-environment PATH="$PATH" 2>/dev/null || true',
+        'hermes gateway install 2>&1',
         'RC=$?',
-        'if [ "$RC" -ne 0 ]; then',
-        '  hermes gateway test 2>&1',
-        '  RC=$?',
-        'fi',
-        // Keep helpful status output for debugging, but do not mask a failed test.
-        'if [ "$RC" -ne 0 ]; then',
-        '  hermes gateway status 2>&1 || true',
-        '  hermes status 2>&1 || true',
-        'fi',
         'exit "$RC"',
       ].join('\n'),
-      { timeout: 30000 },
+      { timeout: 120000 },
     );
   },
 
@@ -1508,12 +1703,23 @@ export const hermesAPI = {
       };
     }
     const streamOpts = { ...(options ?? {}), timeout: 0 };
+    // Hermes refuses a non-TTY. Export PATH in this shell, then run `hermes whatsapp`
+    // inside script(1) so it sees a pseudo-terminal (GNU + BSD/macOS).
     return runHermesShell(
       [
         'set +e',
-        'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
+        HERMES_PATH_EXPORT,
         'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
-        'hermes whatsapp 2>&1',
+        'if command -v script >/dev/null 2>&1; then',
+        '  if script --version 2>&1 | grep -qF util-linux; then',
+        "    script -q -e -c 'hermes whatsapp' /dev/null",
+        '  else',
+        "    script -q /dev/null bash -lc 'hermes whatsapp'",
+        '  fi',
+        'else',
+        '  echo "[ronbot] script(1) not found — cannot allocate a TTY for Hermes. Install util-linux (Linux) or use macOS /usr/bin/script, then retry." >&2',
+        '  hermes whatsapp 2>&1',
+        'fi',
       ].join('\n'),
       streamOpts,
       onOutput,

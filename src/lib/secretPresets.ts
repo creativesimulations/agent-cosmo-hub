@@ -88,6 +88,8 @@ export const SECRET_PRESETS: SecretPreset[] = [
   { envVar: 'SIGNAL_HTTP_URL',        label: 'signal-cli URL',       hint: 'Default http://127.0.0.1:8080',                                prefix: 'http',    docsUrl: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/signal', category: 'Messaging' },
   { envVar: 'SIGNAL_ACCOUNT',         label: 'Signal account',       hint: 'Bot phone number, E.164 format (e.g. +15551234567).',          prefix: '+',       category: 'Messaging' },
   { envVar: 'SIGNAL_ALLOWED_USERS',   label: 'Signal Allowed Users', hint: 'E.164 numbers, comma-separated.',                              prefix: '',        category: 'Messaging' },
+  { envVar: 'SIGNAL_GROUP_ALLOWED_USERS', label: 'Signal group allowlist', hint: 'Group IDs to monitor, or * for all groups. Omit to ignore groups.', prefix: '', docsUrl: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/signal', category: 'Messaging' },
+  { envVar: 'SIGNAL_ALLOW_ALL_USERS', label: 'Signal allow everyone', hint: 'true = skip DM allowlist (dangerous). Prefer allowlist or pairing.', prefix: '', docsUrl: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/signal', category: 'Messaging' },
 ];
 
 /** Map env var → preset, for quick lookup when rendering existing secrets. */
