@@ -211,7 +211,7 @@ export const CHANNELS: Channel[] = [
       },
       {
         title: 'Link WhatsApp on the next screen',
-        body: "On the last step, Ronbot runs Hermes WhatsApp pairing here in the app. It allocates a PTY so Hermes can render the QR code properly, then saves the linked session. The gateway remains the long-running service after pairing.",
+        body: "On the last step, Ronbot runs Hermes WhatsApp pairing here in the app. It allocates a PTY so Hermes can render the QR code properly, then saves the linked session. If you relink later, Ronbot warns you first and then replaces the current local session with a fresh one.",
         link: { label: 'Hermes WhatsApp docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp/' },
       },
       {

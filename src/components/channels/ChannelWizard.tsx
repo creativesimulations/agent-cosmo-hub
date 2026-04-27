@@ -20,6 +20,10 @@ import WhatsAppTerminal from "@/components/channels/WhatsAppTerminal";
 
 type Step = 0 | 1 | 2 | 3;
 type WaPairingPhase = "idle" | "runtime" | "bridge-deps" | "pairing";
+type WaBaseline = {
+  mode: string;
+  allowedUsers: string;
+};
 
 interface ChannelWizardProps {
   channel: Channel;
@@ -29,6 +33,14 @@ interface ChannelWizardProps {
 }
 
 const openExternal = (url: string) => window.open(url, "_blank", "noopener,noreferrer");
+const normalizeAllowedUsers = (value: string): string =>
+  value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .sort()
+    .join(",");
+
 const stripAnsiLike = (value: string): string => {
   const ESC = String.fromCharCode(27);
   const BEL = String.fromCharCode(7);
@@ -91,6 +103,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waPairPrereqChecked, setWaPairPrereqChecked] = useState(false);
   const [waPairPrereqOk, setWaPairPrereqOk] = useState(false);
   const [waPairPrereqDetail, setWaPairPrereqDetail] = useState("");
+  const [waBaseline, setWaBaseline] = useState<WaBaseline | null>(null);
+  const [waRelinkRequested, setWaRelinkRequested] = useState(false);
+  const [waAwaitingResetConfirm, setWaAwaitingResetConfirm] = useState(false);
   const [waAutoFixing, setWaAutoFixing] = useState(false);
   const [waStatusHint, setWaStatusHint] = useState("");
   const waLastOutputAtRef = useRef(0);
@@ -124,6 +139,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairPrereqChecked(false);
     setWaPairPrereqOk(false);
     setWaPairPrereqDetail("");
+    setWaBaseline(null);
+    setWaRelinkRequested(false);
+    setWaAwaitingResetConfirm(false);
     setWaAutoFixing(false);
     setWaStatusHint("");
     waAutoPromptSeenRef.current = new Set();
@@ -147,7 +165,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           next[cred.envVar] = existing || "";
         }
       }
-      if (!cancelled) setValues(next);
+      if (!cancelled) {
+        setValues(next);
+        if (channel.id === "whatsapp") {
+          setWaBaseline({
+            mode: (next.WHATSAPP_MODE || "").trim(),
+            allowedUsers: normalizeAllowedUsers(next.WHATSAPP_ALLOWED_USERS || ""),
+          });
+        }
+      }
     })();
     return () => {
       cancelled = true;
@@ -184,6 +210,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     () => channel.credentials.every((c) => c.optional || (values[c.envVar] || "").trim().length > 0),
     [channel.credentials, values],
   );
+  const waModeCurrent = (values.WHATSAPP_MODE || "").trim();
+  const waAllowedUsersCurrent = normalizeAllowedUsers(values.WHATSAPP_ALLOWED_USERS || "");
+  const waHasModeChange = !!waBaseline && waBaseline.mode !== waModeCurrent;
+  const waHasAllowlistChange = !!waBaseline && waBaseline.allowedUsers !== waAllowedUsersCurrent;
+  const waRequiresSessionReset = waPaired && (waRelinkRequested || waHasModeChange || waHasAllowlistChange);
 
   const appendWaPairingChunk = useCallback((event: { type: string; data?: string }) => {
     if ((event.type !== "stdout" && event.type !== "stderr") || !event.data) return;
@@ -439,6 +470,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     if (!setupToolsChecked || !setupToolsOk) return;
     if (channel.id === "whatsapp") {
       if (!waPairedChecked) return;
+      if (waRequiresSessionReset || waAwaitingResetConfirm) return;
       if (!waPaired) return;
     }
     if (testResult !== "idle") return;
@@ -449,6 +481,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     channel.id,
     waPaired,
     waPairedChecked,
+    waRequiresSessionReset,
+    waAwaitingResetConfirm,
     setupToolsChecked,
     setupToolsOk,
     testResult,
@@ -456,7 +490,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     runTest,
   ]);
 
-  const startWaPairing = async () => {
+  const startWaPairing = async (resetSessionFirst: boolean) => {
     waDebugRunIdRef.current = `wa-${Date.now()}`;
     // #region agent log
     emitWaDebugLog("H4", "ChannelWizard.tsx:startWaPairing:start", "start pairing requested", {
@@ -499,23 +533,25 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         setWaPairingPhase("idle");
         return;
       }
-      const cleared = await systemAPI.clearWhatsAppSession();
-      // #region agent log
-      emitWaDebugLog("H8", "ChannelWizard.tsx:startWaPairing:clearSession", "local WhatsApp session cleanup before pairing", {
-        success: cleared.success,
-        before: cleared.before,
-        removed: cleared.removed,
-        stderr: cleared.stderr || "",
-      });
-      // #endregion
-      if (!cleared.success) {
-        const msg = cleared.stderr || "Could not clear old WhatsApp session files.";
-        setWaPairingError(msg);
-        toast.error("Could not prepare clean WhatsApp session", {
-          description: msg.split("\n")[0] || "Try again and check file permissions.",
+      if (resetSessionFirst) {
+        const cleared = await systemAPI.clearWhatsAppSession();
+        // #region agent log
+        emitWaDebugLog("H8", "ChannelWizard.tsx:startWaPairing:clearSession", "local WhatsApp session cleanup before pairing", {
+          success: cleared.success,
+          before: cleared.before,
+          removed: cleared.removed,
+          stderr: cleared.stderr || "",
         });
-        setWaPairingPhase("idle");
-        return;
+        // #endregion
+        if (!cleared.success) {
+          const msg = cleared.stderr || "Could not clear old WhatsApp session files.";
+          setWaPairingError(msg);
+          toast.error("Could not prepare clean WhatsApp session", {
+            description: msg.split("\n")[0] || "Try again and check file permissions.",
+          });
+          setWaPairingPhase("idle");
+          return;
+        }
       }
       setWaPairingPhase("pairing");
       setWaStatusHint("Waiting for WhatsApp QR output from Hermes…");
@@ -559,6 +595,12 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     const paired = await systemAPI.isWhatsAppPaired();
     if (paired.success && paired.paired) {
       setWaPaired(true);
+      setWaRelinkRequested(false);
+      setWaAwaitingResetConfirm(false);
+      setWaBaseline({
+        mode: waModeCurrent,
+        allowedUsers: waAllowedUsersCurrent,
+      });
       toast.success("WhatsApp linked");
       void runTest();
     } else if (!paired.success) {
@@ -633,6 +675,19 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaAutoFixing(false);
     }
   }, [appendWaPairingChunk, requestSudoPassword]);
+
+  const requestWaPairingStart = async () => {
+    if (waRequiresSessionReset && !waAwaitingResetConfirm) {
+      setWaAwaitingResetConfirm(true);
+      return;
+    }
+    if (waRequiresSessionReset && waAwaitingResetConfirm) {
+      setWaAwaitingResetConfirm(false);
+      await startWaPairing(true);
+      return;
+    }
+    await startWaPairing(false);
+  };
 
   const cancelWaPairing = async () => {
     const id = waStreamIdRef.current;
@@ -1028,13 +1083,61 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               />
             )}
 
-            {channel.id === "whatsapp" && setupToolsOk && waPairPrereqOk && waPairedChecked && !waPaired && (
+            {channel.id === "whatsapp" && setupToolsOk && waPairPrereqOk && waPairedChecked && (!waPaired || waRequiresSessionReset || waAwaitingResetConfirm) && (
               <div className="rounded-lg border border-border/60 bg-background/30 p-4 space-y-3">
-                <h4 className="text-sm font-medium text-foreground">Link WhatsApp</h4>
+                <h4 className="text-sm font-medium text-foreground">
+                  {waPaired ? "Relink WhatsApp" : "Link WhatsApp"}
+                </h4>
                 <p className="text-xs text-muted-foreground leading-relaxed">
                   On your phone: WhatsApp → Settings → Linked devices → Link a device. Then start pairing here
                   and scan the QR code when it appears in the log below.
                 </p>
+                {waRequiresSessionReset && (
+                  <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 space-y-2">
+                    <p className="text-xs text-foreground">
+                      Re-linking will remove your current local WhatsApp session and create a new one.
+                    </p>
+                    {(waHasModeChange || waHasAllowlistChange) && (
+                      <p className="text-[11px] text-muted-foreground">
+                        {[
+                          waHasModeChange ? "mode changed" : "",
+                          waHasAllowlistChange ? "allowed numbers changed" : "",
+                        ].filter(Boolean).join(" + ")}
+                      </p>
+                    )}
+                    {waAwaitingResetConfirm ? (
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => void requestWaPairingStart()}
+                          disabled={waPairingActive || waAutoFixing || testing}
+                          className="gradient-primary text-primary-foreground"
+                        >
+                          Proceed and relink
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={waPairingActive}
+                          onClick={() => {
+                            setWaAwaitingResetConfirm(false);
+                            if (!waHasModeChange && !waHasAllowlistChange) {
+                              setWaRelinkRequested(false);
+                            }
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground">
+                        Start pairing to continue with a fresh WhatsApp session.
+                      </p>
+                    )}
+                  </div>
+                )}
                 {waPairingError && (
                   <p className="text-xs text-destructive font-mono whitespace-pre-wrap">{waPairingError}</p>
                 )}
@@ -1059,7 +1162,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                   </Button>
                   <Button
                     type="button"
-                    onClick={() => void startWaPairing()}
+                    onClick={() => void requestWaPairingStart()}
                     disabled={
                       waPairingActive ||
                       waAutoFixing ||
@@ -1074,7 +1177,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Pairing…
                       </>
                     ) : (
-                      "Start QR pairing"
+                      waRequiresSessionReset
+                        ? waAwaitingResetConfirm
+                          ? "Confirm and start fresh QR pairing"
+                          : "Start fresh QR pairing"
+                        : "Start QR pairing"
                     )}
                   </Button>
                   {waPairingActive && (
@@ -1133,18 +1240,42 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               </div>
             )}
 
+            {channel.id === "whatsapp" && setupToolsOk && waPairPrereqOk && waPairedChecked && waPaired && !waRequiresSessionReset && (
+              <div className="rounded-lg border border-border/60 bg-background/30 p-4 space-y-3">
+                <h4 className="text-sm font-medium text-foreground">WhatsApp already linked</h4>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Current session is active. If you want to link a different number, start a fresh relink flow.
+                </p>
+                <div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setWaRelinkRequested(true);
+                      setWaAwaitingResetConfirm(true);
+                    }}
+                  >
+                    Link a different WhatsApp account
+                  </Button>
+                </div>
+              </div>
+            )}
+
             <div className="rounded-lg border border-border/60 bg-background/30 p-4">
               {!setupToolsChecked ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
                   Checking tools for this step…
                 </div>
-              ) : channel.id === "whatsapp" && (!waPairedChecked || !waPaired) ? (
+              ) : channel.id === "whatsapp" && (!waPairedChecked || !waPaired || waRequiresSessionReset || waAwaitingResetConfirm) ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   {waPairedChecked ? (
                     <>
                       <AlertCircle className="w-4 h-4 shrink-0" />
-                      Link WhatsApp above, then the test runs automatically.
+                      {waRequiresSessionReset || waAwaitingResetConfirm
+                        ? "Confirm relink above to replace the current session, then test runs automatically."
+                        : "Link WhatsApp above, then the test runs automatically."}
                     </>
                   ) : (
                     <>
