@@ -234,11 +234,17 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       if (!trimmed) return;
       const hasYesNoPrompt = /\[[Yy]\/[Nn]\]/.test(trimmed) || /\(y\/N\)/.test(trimmed) || /\[y\/n\]/i.test(trimmed);
       if (!hasYesNoPrompt) return;
+      // #region agent log
+      emitWaDebugLog("H6", "ChannelWizard.tsx:appendWaPairingChunk:promptText", "yes/no prompt candidate", {
+        streamId: waStreamIdRef.current,
+        promptText: trimmed.slice(0, 220),
+      });
+      // #endregion
       if (waAutoPromptSeenRef.current.has(trimmed)) return;
       waAutoPromptSeenRef.current.add(trimmed);
       const id = waStreamIdRef.current;
       if (!id) return;
-      if (/repair\?/i.test(trimmed)) {
+      if (/repair\?/i.test(trimmed) || (/existing session/i.test(trimmed) && /clear/i.test(trimmed))) {
         // #region agent log
         emitWaDebugLog("H3", "ChannelWizard.tsx:appendWaPairingChunk:repair", "auto-answer repair prompt", {
           streamId: id,
@@ -260,10 +266,24 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         return;
       }
       if (/update allowed users\?/i.test(trimmed)) {
+        // #region agent log
+        emitWaDebugLog("H6", "ChannelWizard.tsx:appendWaPairingChunk:allowUsers", "auto-answer allow users prompt", {
+          streamId: id,
+          prompt: trimmed,
+          answer: "n",
+        });
+        // #endregion
         void systemAPI.writeStreamStdin(id, "n\n");
         setWaStatusHint("Skipped optional allowed-users update; continuing pairing.");
         return;
       }
+      // #region agent log
+      emitWaDebugLog("H6", "ChannelWizard.tsx:appendWaPairingChunk:defaultNo", "auto-answer default no prompt", {
+        streamId: id,
+        prompt: trimmed,
+        answer: "n",
+      });
+      // #endregion
       void systemAPI.writeStreamStdin(id, "n\n");
       setWaStatusHint("Answered a setup prompt automatically to keep pairing moving.");
     };
@@ -282,7 +302,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       // #endregion
       handleYesNoPrompt(waLogBuffer.current);
     }
-    setWaPairingLines((prev) => [...prev, ...parts].slice(-400));
+    const visibleParts = parts.filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return true;
+      const hasYesNoPrompt = /\[[Yy]\/[Nn]\]/.test(trimmed) || /\(y\/N\)/.test(trimmed) || /\[y\/n\]/i.test(trimmed);
+      return !hasYesNoPrompt;
+    });
+    setWaPairingLines((prev) => [...prev, ...visibleParts].slice(-400));
   }, [emitWaDebugLog, waPairingPhase]);
 
   const saveCredentials = async (): Promise<boolean> => {
@@ -504,7 +530,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       waStreamIdRef.current = null;
       const tail = waLogBuffer.current.trimEnd();
       if (tail) {
-        setWaPairingLines((prev) => [...prev, tail].slice(-400));
+        const hasYesNoPrompt = /\[[Yy]\/[Nn]\]/.test(tail) || /\(y\/N\)/.test(tail) || /\[y\/n\]/i.test(tail);
+        if (!hasYesNoPrompt) {
+          setWaPairingLines((prev) => [...prev, tail].slice(-400));
+        }
         waLogBuffer.current = "";
       }
     }
