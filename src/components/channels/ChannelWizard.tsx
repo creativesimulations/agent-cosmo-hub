@@ -1221,6 +1221,29 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             <h3 className="text-sm font-semibold text-foreground">Test &amp; enable</h3>
             <p className="text-sm text-muted-foreground">{channel.testHint}</p>
 
+            {hadExistingConfig && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2">
+                <span className="min-w-[12rem] flex-1 text-[11px] text-muted-foreground leading-relaxed">
+                  Test failing with stale credentials? Reset {channel.name} to wipe what's saved
+                  {channel.id === "whatsapp" ? " and the local WhatsApp session" : ""} and rerun setup.
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  disabled={resetting}
+                  onClick={() => setResetConfirmOpen(true)}
+                >
+                  {resetting ? (
+                    <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> Resetting…</>
+                  ) : (
+                    <><RotateCcw className="w-3 h-3 mr-1.5" /> Reset {channel.name}</>
+                  )}
+                </Button>
+              </div>
+            )}
+
             {step === 3 &&
               setupToolsChecked &&
               setupToolsOk &&
