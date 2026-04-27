@@ -285,6 +285,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingPhase("idle");
       // If the timeout happened during pairing AND we never saw QR output, the
       // most likely cause is a stale session — invite the user to force-clear.
+      // Dependency-install timeouts are a separate (npm/network) failure mode
+      // and must NOT trigger the stale-session escape hatch.
       if (waPairingPhase === "pairing") {
         setWaStaleSessionDetected(true);
       }
@@ -571,6 +573,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         return;
       }
       setWaPairingPhase("bridge-deps");
+      setWaStatusHint(
+        "Installing WhatsApp bridge dependencies. First-time install can take several minutes and needs internet access to the npm registry.",
+      );
       const bridge = await systemAPI.ensureWhatsAppBridgeDeps(appendWaPairingChunk, {
         onStreamId: (id: string) => {
           waStreamIdRef.current = id;
@@ -581,10 +586,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       });
       if (!bridge.success) {
         const detail = [bridge.stderr, bridge.stdout].filter(Boolean).join("\n").trim();
-        setWaPairingError(detail || "Could not repair WhatsApp bridge dependencies.");
+        setWaPairingError(
+          detail ||
+            "Could not repair WhatsApp bridge dependencies. This is usually a network or npm registry issue — check internet access and try again.",
+        );
         toast.error("WhatsApp dependency repair failed", {
-          description: detail.split("\n")[0] || "Review details and try again.",
+          description: detail.split("\n")[0] || "Check internet access and try again.",
         });
+        setWaRetryReady(true);
+        setWaPairingActive(false);
         setWaPairingPhase("idle");
         return;
       }

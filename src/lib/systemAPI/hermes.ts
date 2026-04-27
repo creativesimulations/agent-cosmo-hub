@@ -1667,6 +1667,15 @@ export const hermesAPI = {
    * Repair WhatsApp bridge deps inside ~/.hermes/hermes-agent/scripts/whatsapp-bridge.
    * This prevents the common ERR_MODULE_NOT_FOUND for @whiskeysockets/baileys
    * right before QR rendering.
+   *
+   * Hardened against silent npm hangs (a known npm 10.9.x + WSL issue):
+   *  - Uses the managed npm binary explicitly (full path, not PATH lookup).
+   *  - Emits a heartbeat every 15s while npm install is running so the UI
+   *    never appears frozen even if npm itself produces no output.
+   *  - First attempt uses sane network/retry caps; on failure, wipes
+   *    node_modules + package-lock.json and retries with `--force` which is
+   *    documented to bypass the cache revalidation hang.
+   *  - Long timeout (15 min) accommodates first-time installs on slow links.
    */
   async ensureWhatsAppBridgeDeps(
     onOutput?: CommandOutputHandler,
@@ -1683,20 +1692,63 @@ export const hermesAPI = {
         '[ -f package.json ] || { echo "WhatsApp bridge package.json is missing" >&2; exit 1; }',
         '[ -x "$NODE_RUNTIME_HOME/bin/npm" ] || { echo "Managed npm runtime missing at $NODE_RUNTIME_HOME/bin/npm" >&2; exit 1; }',
         '[ -x "$NODE_RUNTIME_HOME/bin/node" ] || { echo "Managed node runtime missing at $NODE_RUNTIME_HOME/bin/node" >&2; exit 1; }',
-        'echo "[ronbot] using managed Node runtime: $("$NODE_RUNTIME_HOME/bin/node" --version) ($NODE_RUNTIME_HOME)"',
+        'NPM_BIN="$NODE_RUNTIME_HOME/bin/npm"',
+        'NODE_BIN="$NODE_RUNTIME_HOME/bin/node"',
+        'echo "[ronbot] using managed Node runtime: $("$NODE_BIN" --version) ($NODE_RUNTIME_HOME)"',
+        'echo "[ronbot] using managed npm: $("$NPM_BIN" --version)"',
+        '',
+        '# Common npm flags to avoid silent hangs on WSL/Windows: hard caps on',
+        '# fetch retries and timeouts, no audit/fund chatter, and progress=false',
+        '# so npm flushes log lines instead of buffering for a TTY.',
+        'NPM_COMMON_FLAGS="--no-audit --no-fund --progress=false --fetch-retries=3 --fetch-retry-mintimeout=5000 --fetch-retry-maxtimeout=30000 --fetch-timeout=120000"',
+        '',
+        'run_npm_install() {',
+        '  local label="$1"; shift',
+        '  local extra_flags="$1"; shift',
+        '  echo "[ronbot] $label"',
+        '  # Heartbeat: print a line every 15s so the renderer knows we are',
+        '  # still alive even when npm is silently resolving the dep tree.',
+        '  ( while true; do sleep 15; echo "[ronbot] still installing dependencies… (this can take several minutes on first run)"; done ) &',
+        '  local HB_PID=$!',
+        '  "$NPM_BIN" install $NPM_COMMON_FLAGS $extra_flags 2>&1',
+        '  local rc=$?',
+        '  kill "$HB_PID" 2>/dev/null',
+        '  wait "$HB_PID" 2>/dev/null',
+        '  return $rc',
+        '}',
+        '',
+        'NEEDS_INSTALL=0',
         'if [ ! -d "node_modules/@whiskeysockets/baileys" ]; then',
-        '  echo "[ronbot] repairing WhatsApp bridge dependencies (npm install)…"',
-        '  npm install --no-audit --no-fund 2>&1 || exit 1',
+        '  NEEDS_INSTALL=1',
         'else',
-        '  npm ls @whiskeysockets/baileys --depth=0 >/dev/null 2>&1 || {',
-        '    echo "[ronbot] baileys missing from lock tree; reinstalling bridge deps…"',
-        '    npm install --no-audit --no-fund 2>&1 || exit 1',
-        '  }',
+        '  "$NPM_BIN" ls @whiskeysockets/baileys --depth=0 >/dev/null 2>&1 || NEEDS_INSTALL=1',
+        'fi',
+        '',
+        'if [ "$NEEDS_INSTALL" = "1" ]; then',
+        '  run_npm_install "repairing WhatsApp bridge dependencies (npm install)…" ""',
+        '  rc=$?',
+        '  if [ $rc -ne 0 ]; then',
+        '    echo "[ronbot] First npm install attempt failed (exit $rc). Cleaning node_modules and retrying with --force…" >&2',
+        '    rm -rf node_modules package-lock.json 2>/dev/null',
+        '    "$NPM_BIN" cache verify >/dev/null 2>&1 || true',
+        '    run_npm_install "retrying WhatsApp bridge dependency install with --force…" "--force"',
+        '    rc=$?',
+        '    if [ $rc -ne 0 ]; then',
+        '      echo "[ronbot] npm install failed twice. This is usually a network or npm registry issue." >&2',
+        '      echo "[ronbot] Check internet access and try again. On WSL, try: wsl --shutdown then reopen Ronbot." >&2',
+        '      exit $rc',
+        '    fi',
+        '  fi',
+        '  # Final sanity check: baileys must be present after install.',
+        '  if [ ! -d "node_modules/@whiskeysockets/baileys" ]; then',
+        '    echo "[ronbot] npm install completed but @whiskeysockets/baileys is still missing." >&2',
+        '    exit 1',
+        '  fi',
         'fi',
         'echo "[ronbot] WhatsApp bridge deps look healthy."',
         'exit 0',
       ].join('\n'),
-      { timeout: 240000, ...(options ?? {}) },
+      { timeout: 900000, ...(options ?? {}) },
       onOutput,
     );
   },
