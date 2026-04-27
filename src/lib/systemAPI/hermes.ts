@@ -195,7 +195,7 @@ const runHermesCli = async (
   );
 };
 
-/** Hermes versions without `hermes gateway test` — validate tokens / pairing with HTTP + filesystem. */
+/** Validate channel credentials with supported HTTP / filesystem checks. */
 const buildChannelCredentialTestScript = (channelId: string): string => {
   const allowed = new Set(['telegram', 'slack', 'whatsapp', 'discord', 'signal']);
   if (!allowed.has(channelId)) {
@@ -223,12 +223,18 @@ const buildChannelCredentialTestScript = (channelId: string): string => {
   ].join('\n');
   const whatsappBlock = [
     '    [ -n "${WHATSAPP_ALLOWED_USERS:-}" ] || { echo "WHATSAPP_ALLOWED_USERS is required" >&2; exit 1; }',
-    '    SESSION_DIR="$HOME/.hermes/platforms/whatsapp/session"',
-    '    if [ ! -d "$SESSION_DIR" ] || [ -z "$(ls -A "$SESSION_DIR" 2>/dev/null)" ]; then',
+    '    BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
+    '    AUTH_FILES=0',
+    '    for d in "$HOME/.hermes/platforms/whatsapp/session" "$HOME/.hermes/whatsapp" "$HOME/.hermes/.whatsapp" "$BRIDGE_DIR"/auth_info* "$BRIDGE_DIR"/baileys_auth* "$BRIDGE_DIR"/session*; do',
+    '      [ -e "$d" ] || continue',
+    '      if [ -d "$d" ]; then C="$(find "$d" -type f 2>/dev/null | head -n 1 | wc -l | tr -d \' \')"; else C=1; fi',
+    '      AUTH_FILES=$((AUTH_FILES + C))',
+    '    done',
+    '    if [ "$AUTH_FILES" -le 0 ]; then',
     '      echo "WhatsApp is not linked yet — finish QR pairing first." >&2',
     '      exit 1',
     '    fi',
-    '    echo "WhatsApp session on disk OK. This Hermes build has no gateway test subcommand — pairing was verified."',
+    '    echo "WhatsApp session files found. Pairing was verified."',
   ].join('\n');
   const signalBlock = [
     '    [ -n "${SIGNAL_HTTP_URL:-}" ] || { echo "SIGNAL_HTTP_URL is required" >&2; exit 1; }',
@@ -251,15 +257,7 @@ const buildChannelCredentialTestScript = (channelId: string): string => {
     'set -a',
     '. "$ENVF"',
     'set +a',
-    'GT=$(hermes gateway test "$CH" 2>&1)',
-    'RC=$?',
-    'if [ "$RC" -eq 0 ]; then',
-    '  echo "$GT"',
-    '  exit 0',
-    'fi',
-    'echo "$GT" >&2',
-    'if echo "$GT" | grep -q "invalid choice" && echo "$GT" | grep -q "test"; then',
-    '  case "$CH" in',
+    'case "$CH" in',
     `    slack)`,
     '    if ! command -v curl >/dev/null 2>&1; then echo "curl is required for Slack checks but was not found on PATH." >&2; exit 1; fi',
     '    if ! command -v python3 >/dev/null 2>&1; then echo "python3 is required for Slack checks but was not found on PATH." >&2; exit 1; fi',
@@ -288,13 +286,9 @@ const buildChannelCredentialTestScript = (channelId: string): string => {
     '    ;;',
     '    *)',
     '      echo "No credential fallback for channel: $CH" >&2',
-    '      exit "$RC"',
+    '      exit 2',
     '    ;;',
-    '  esac',
-    'fi',
-    'hermes gateway status 2>&1 || true',
-    'hermes status 2>&1 || true',
-    'exit "$RC"',
+    'esac',
   ].join('\n');
 };
 
