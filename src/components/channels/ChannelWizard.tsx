@@ -886,7 +886,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const r = await systemAPI.refreshGatewayInstall();
       if (r.success) {
         toast.success("Gateway service refreshed", {
-          description: "Hermes re-saved your PATH for the messaging gateway. Start the gateway from Channels if needed.",
+          description: "Ronbot re-saved your PATH for the messaging gateway. Start the gateway from Channels if needed.",
         });
         if (channel.id === "whatsapp") {
           const pr = await systemAPI.checkWhatsAppPairingPrereqs();
