@@ -202,7 +202,7 @@ export const CHANNELS: Channel[] = [
     setupSteps: [
       {
         title: 'Ronbot prepares WhatsApp runtime dependencies',
-        body: "Ronbot checks for npm and required runtime tools before pairing, and installs missing packages automatically when possible (it will ask for elevated permission if needed). On Windows, this runs in the same WSL/Linux environment Hermes uses.",
+        body: "Ronbot prepares a managed Node runtime for WhatsApp bridge dependencies before pairing, so you do not need to manually install npm for this flow. On Windows, it runs in the same WSL/Linux environment Hermes uses.",
         link: { label: 'Hermes WhatsApp docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp/' },
       },
       {

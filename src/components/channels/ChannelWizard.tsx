@@ -261,17 +261,17 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   ]);
 
   const startWaPairing = async () => {
-    if (waPairPrereqChecked && !waPairPrereqOk) {
-      const fixed = await autoFixWhatsAppPairingTools();
-      if (!fixed) return;
-    }
     setWaPairingError("");
     waLogBuffer.current = "";
     setWaPairingLines([]);
     setWaPairingActive(true);
     waStreamIdRef.current = null;
-    await systemAPI.materializeEnv().catch(() => undefined);
     try {
+      if (waPairPrereqChecked && !waPairPrereqOk) {
+        const fixed = await autoFixWhatsAppPairingTools();
+        if (!fixed) return;
+      }
+      await systemAPI.materializeEnv().catch(() => undefined);
       const bridge = await systemAPI.ensureWhatsAppBridgeDeps(appendWaPairingChunk, {
         onStreamId: (id: string) => {
           waStreamIdRef.current = id;
@@ -332,31 +332,18 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const missingScript = /\bscript\b/i.test(detail);
 
       if (missingNode) {
-        if (platform.isWindows || platform.isLinux || platform.isWSL) {
-          const pw = await requestSudoPassword("install Linux Node.js and npm for WhatsApp pairing");
-          if (pw === null) {
-            toast.error("Node.js install cancelled");
-            return false;
-          }
-          const nodeApt = await systemAPI.sudo.aptInstall(["nodejs", "npm"], pw);
-          if (!nodeApt.success) {
-            const msg = [nodeApt.stderr, nodeApt.stdout].filter(Boolean).join("\n").trim();
-            setWaPairPrereqDetail(msg || detail);
-            toast.error("Could not install Linux Node.js/npm", {
-              description: msg.split("\n")[0] || "Try again and allow elevated install permissions.",
-            });
-            return false;
-          }
-        } else if (platform.isMac) {
-          const r = await systemAPI.runCommand("brew install node", { timeout: 600000 });
-          if (!r.success) {
-            const msg = [r.stderr, r.stdout].filter(Boolean).join("\n").trim();
-            setWaPairPrereqDetail(msg || detail);
-            toast.error("Could not install Node.js via Homebrew", {
-              description: msg.split("\n")[0] || "Install Homebrew first, then retry.",
-            });
-            return false;
-          }
+        const runtime = await systemAPI.ensureHermesNodeRuntime(appendWaPairingChunk, {
+          onStreamId: (id: string) => {
+            waStreamIdRef.current = id;
+          },
+        });
+        if (!runtime.success) {
+          const msg = [runtime.stderr, runtime.stdout].filter(Boolean).join("\n").trim();
+          setWaPairPrereqDetail(msg || detail);
+          toast.error("Could not prepare managed Node runtime", {
+            description: msg.split("\n")[0] || "Try again after checking network access.",
+          });
+          return false;
         }
       }
 
@@ -390,7 +377,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     } finally {
       setWaAutoFixing(false);
     }
-  }, [requestSudoPassword]);
+  }, [appendWaPairingChunk, requestSudoPassword]);
 
   const cancelWaPairing = async () => {
     const id = waStreamIdRef.current;
@@ -681,10 +668,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             {channel.id === "whatsapp" && waPairPrereqChecked && !waPairPrereqOk && (
               <ActionableError
                 title="WhatsApp pairing needs npm and script"
-                summary="Ronbot can install missing WhatsApp dependencies automatically. Hermes needs npm for the bridge, and Ronbot uses script to show the QR in this window."
+                summary="Ronbot uses a managed Node runtime for WhatsApp bridge dependencies and uses script to show the QR in this window."
                 details={
                   waPairPrereqDetail ||
-                  "Use Auto-fix to install what is missing. On Windows, installs run in the same WSL/Linux environment Ronbot and Hermes use."
+                  "Use Auto-fix to prepare the managed runtime and missing tools. On Windows, this runs in the same WSL/Linux environment Hermes uses."
                 }
                 fixLabel="Auto-fix now"
                 fixing={waAutoFixing}

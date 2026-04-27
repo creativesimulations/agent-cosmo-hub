@@ -161,6 +161,22 @@ const runHermesShell = async (
 const HERMES_PATH_EXPORT =
   'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/snap/bin:$PATH"';
 
+const HERMES_NODE_VERSION = 'v20.19.2';
+const getHermesNodeEnvExport = (): string =>
+  [
+    `NODE_RUNTIME_VERSION="${HERMES_NODE_VERSION}"`,
+    'NODE_RUNTIME_DIR="$HOME/.hermes/runtime/node"',
+    'ARCH="$(uname -m)"',
+    'case "$ARCH" in',
+    '  x86_64|amd64) NODE_ARCH="x64" ;;',
+    '  aarch64|arm64) NODE_ARCH="arm64" ;;',
+    '  *) NODE_ARCH="" ;;',
+    'esac',
+    '[ -n "$NODE_ARCH" ] || { echo "[ronbot] Unsupported CPU architecture for managed Node runtime: $ARCH" >&2; exit 1; }',
+    'NODE_RUNTIME_HOME="$NODE_RUNTIME_DIR/node-${NODE_RUNTIME_VERSION}-linux-${NODE_ARCH}"',
+    'export PATH="$NODE_RUNTIME_HOME/bin:$PATH"',
+  ].join('\n');
+
 const runHermesCli = async (
   command: string,
   options?: Record<string, unknown>,
@@ -1575,6 +1591,53 @@ export const hermesAPI = {
   },
 
   /**
+   * Ensure a managed Linux Node runtime exists under ~/.hermes/runtime/node.
+   * This avoids distro npm conflicts and Windows/UNC path issues on WSL.
+   */
+  async ensureHermesNodeRuntime(
+    onOutput?: CommandOutputHandler,
+    options?: Record<string, unknown> & { onStreamId?: (id: string) => void },
+  ): Promise<CommandResult> {
+    return runHermesShell(
+      [
+        'set +e',
+        HERMES_PATH_EXPORT,
+        getHermesNodeEnvExport(),
+        'mkdir -p "$NODE_RUNTIME_DIR"',
+        'if [ -x "$NODE_RUNTIME_HOME/bin/node" ] && [ -x "$NODE_RUNTIME_HOME/bin/npm" ]; then',
+        '  NP="$("$NODE_RUNTIME_HOME/bin/node" -p "process.platform" 2>/dev/null || true)"',
+        '  if [ "$NP" = "linux" ]; then',
+        '    echo "[ronbot] Managed Node runtime ready: $("$NODE_RUNTIME_HOME/bin/node" --version) ($NODE_RUNTIME_HOME)"',
+        '    exit 0',
+        '  fi',
+        'fi',
+        'echo "[ronbot] Installing managed Node runtime ($NODE_RUNTIME_VERSION)..."',
+        'TARBALL="node-${NODE_RUNTIME_VERSION}-linux-${NODE_ARCH}.tar.xz"',
+        'URL="https://nodejs.org/dist/${NODE_RUNTIME_VERSION}/${TARBALL}"',
+        'TMP="/tmp/ronbot-node-${NODE_RUNTIME_VERSION}-${NODE_ARCH}.tar.xz"',
+        'if command -v curl >/dev/null 2>&1; then',
+        '  curl -fsSL --retry 3 --connect-timeout 15 "$URL" -o "$TMP" || { echo "[ronbot] Failed to download managed Node runtime from $URL" >&2; exit 1; }',
+        'elif command -v wget >/dev/null 2>&1; then',
+        '  wget -qO "$TMP" "$URL" || { echo "[ronbot] Failed to download managed Node runtime from $URL" >&2; exit 1; }',
+        'else',
+        '  echo "[ronbot] Need curl or wget to download managed Node runtime." >&2',
+        '  exit 1',
+        'fi',
+        'rm -rf "$NODE_RUNTIME_HOME"',
+        'tar -xJf "$TMP" -C "$NODE_RUNTIME_DIR" || { echo "[ronbot] Failed to extract Node runtime archive." >&2; exit 1; }',
+        'rm -f "$TMP"',
+        '[ -x "$NODE_RUNTIME_HOME/bin/node" ] || { echo "[ronbot] Managed Node install incomplete: node binary missing." >&2; exit 1; }',
+        '[ -x "$NODE_RUNTIME_HOME/bin/npm" ] || { echo "[ronbot] Managed Node install incomplete: npm binary missing." >&2; exit 1; }',
+        'echo "[ronbot] Managed Node runtime installed: $("$NODE_RUNTIME_HOME/bin/node" --version)"',
+        'echo "[ronbot] Managed npm runtime installed: $("$NODE_RUNTIME_HOME/bin/npm" --version)"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 240000, ...(options ?? {}) },
+      onOutput,
+    );
+  },
+
+  /**
    * npm + `script(1)` for in-app WhatsApp QR pairing (PTY). Hermes bridge also
    * needs npm when the gateway runs.
    */
@@ -1583,24 +1646,17 @@ export const hermesAPI = {
       [
         'set +e',
         HERMES_PATH_EXPORT,
+        getHermesNodeEnvExport(),
         'MISS=""',
-        'NPM_BIN="$(command -v npm 2>/dev/null || true)"',
-        'NODE_BIN="$(command -v node 2>/dev/null || true)"',
-        '[ -n "$NPM_BIN" ] || MISS="$MISS npm"',
-        '[ -n "$NODE_BIN" ] || MISS="$MISS node"',
-        'if [ -n "$NPM_BIN" ] && printf %s "$NPM_BIN" | grep -Eqi "(^/mnt/[a-z]/|\\.cmd$|\\.exe$)"; then MISS="$MISS npm-linux"; fi',
-        'if [ -n "$NODE_BIN" ] && printf %s "$NODE_BIN" | grep -Eqi "(^/mnt/[a-z]/|\\.cmd$|\\.exe$)"; then MISS="$MISS node-linux"; fi',
-        'if [ -n "$NODE_BIN" ]; then',
-        '  NP="$(node -p "process.platform" 2>/dev/null || true)"',
-        '  [ "$NP" = "linux" ] || MISS="$MISS node-linux"',
-        'fi',
+        '[ -x "$NODE_RUNTIME_HOME/bin/node" ] || MISS="$MISS managed-node"',
+        '[ -x "$NODE_RUNTIME_HOME/bin/npm" ] || MISS="$MISS managed-npm"',
         'command -v script >/dev/null 2>&1 || MISS="$MISS script"',
         'if [ -n "$MISS" ]; then',
         '  echo "Missing:$MISS" >&2',
-        '  echo "Ronbot needs Linux node/npm + script for WhatsApp pairing. On Windows, install them inside the same WSL distro Hermes uses (not Windows Node)." >&2',
+        '  echo "Ronbot needs managed Node runtime + script for WhatsApp pairing." >&2',
         '  exit 1',
         'fi',
-        'echo "npm_ok=$(npm --version) node_ok=$(node --version) npm_bin=$NPM_BIN"',
+        'echo "node_ok=$("$NODE_RUNTIME_HOME/bin/node" --version) npm_ok=$("$NODE_RUNTIME_HOME/bin/npm" --version) node_home=$NODE_RUNTIME_HOME"',
         'exit 0',
       ].join('\n'),
       { timeout: 15000 },
@@ -1620,26 +1676,14 @@ export const hermesAPI = {
       [
         'set +e',
         HERMES_PATH_EXPORT,
+        getHermesNodeEnvExport(),
         'BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
         '[ -d "$BRIDGE_DIR" ] || { echo "WhatsApp bridge folder not found: $BRIDGE_DIR" >&2; exit 1; }',
         'cd "$BRIDGE_DIR" || exit 1',
         '[ -f package.json ] || { echo "WhatsApp bridge package.json is missing" >&2; exit 1; }',
-        'NPM_BIN="$(command -v npm 2>/dev/null || true)"',
-        'NODE_BIN="$(command -v node 2>/dev/null || true)"',
-        '[ -n "$NPM_BIN" ] || { echo "npm is required before repairing WhatsApp bridge deps" >&2; exit 1; }',
-        '[ -n "$NODE_BIN" ] || { echo "node is required before repairing WhatsApp bridge deps" >&2; exit 1; }',
-        'if printf %s "$NPM_BIN" | grep -Eqi "(^/mnt/[a-z]/|\\.cmd$|\\.exe$)"; then',
-        '  echo "Detected Windows npm from Linux path: $NPM_BIN" >&2',
-        '  echo "Install Linux nodejs/npm in WSL so Hermes can run bridge installs without UNC path failures." >&2',
-        '  exit 1',
-        'fi',
-        'if printf %s "$NODE_BIN" | grep -Eqi "(^/mnt/[a-z]/|\\.cmd$|\\.exe$)"; then',
-        '  echo "Detected Windows node from Linux path: $NODE_BIN" >&2',
-        '  echo "Install Linux nodejs/npm in WSL so Hermes can run bridge installs without UNC path failures." >&2',
-        '  exit 1',
-        'fi',
-        'NP="$(node -p "process.platform" 2>/dev/null || true)"',
-        '[ "$NP" = "linux" ] || { echo "Node runtime must be Linux inside WSL for WhatsApp bridge installs (found: $NP)" >&2; exit 1; }',
+        '[ -x "$NODE_RUNTIME_HOME/bin/npm" ] || { echo "Managed npm runtime missing at $NODE_RUNTIME_HOME/bin/npm" >&2; exit 1; }',
+        '[ -x "$NODE_RUNTIME_HOME/bin/node" ] || { echo "Managed node runtime missing at $NODE_RUNTIME_HOME/bin/node" >&2; exit 1; }',
+        'echo "[ronbot] using managed Node runtime: $("$NODE_RUNTIME_HOME/bin/node" --version) ($NODE_RUNTIME_HOME)"',
         'if [ ! -d "node_modules/@whiskeysockets/baileys" ]; then',
         '  echo "[ronbot] repairing WhatsApp bridge dependencies (npm install)…"',
         '  npm install --no-audit --no-fund 2>&1 || exit 1',
@@ -1768,6 +1812,7 @@ export const hermesAPI = {
       [
         'set +e',
         HERMES_PATH_EXPORT,
+        getHermesNodeEnvExport(),
         'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
         'if command -v script >/dev/null 2>&1; then',
         '  if script --version 2>&1 | grep -qF util-linux; then',

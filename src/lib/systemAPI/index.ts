@@ -77,6 +77,7 @@ export const systemAPI = {
   isWhatsAppPaired: hermesAPI.isWhatsAppPaired.bind(hermesAPI),
   runWhatsAppPairing: hermesAPI.runWhatsAppPairing.bind(hermesAPI),
   checkNpmForMessaging: hermesAPI.checkNpmForMessaging.bind(hermesAPI),
+  ensureHermesNodeRuntime: hermesAPI.ensureHermesNodeRuntime.bind(hermesAPI),
   checkWhatsAppPairingPrereqs: hermesAPI.checkWhatsAppPairingPrereqs.bind(hermesAPI),
   ensureWhatsAppBridgeDeps: hermesAPI.ensureWhatsAppBridgeDeps.bind(hermesAPI),
   checkChannelSetupTools: hermesAPI.checkChannelSetupTools.bind(hermesAPI),
