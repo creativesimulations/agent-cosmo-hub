@@ -98,6 +98,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     text: "",
   });
   const [waPromptBusy, setWaPromptBusy] = useState(false);
+  const [waStatusHint, setWaStatusHint] = useState("");
+  const waLastOutputAtRef = useRef(0);
   const [setupToolsChecked, setSetupToolsChecked] = useState(false);
   const [setupToolsOk, setSetupToolsOk] = useState(false);
   const [setupToolsDetail, setSetupToolsDetail] = useState("");
@@ -129,6 +131,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaAutoFixing(false);
     setWaPendingPrompt({ kind: "none", text: "" });
     setWaPromptBusy(false);
+    setWaStatusHint("");
     setSetupToolsChecked(false);
     setSetupToolsOk(false);
     setSetupToolsDetail("");
@@ -168,6 +171,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
   const appendWaPairingChunk = useCallback((event: { type: string; data?: string }) => {
     if ((event.type !== "stdout" && event.type !== "stderr") || !event.data) return;
+    waLastOutputAtRef.current = Date.now();
     setWaTerminalRaw((prev) => {
       const next = prev + event.data!;
       return next.length > 220000 ? next.slice(-220000) : next;
@@ -195,8 +199,17 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     waLogBuffer.current = parts.pop() ?? "";
     if (parts.length === 0) return;
     for (const line of parts) {
+      if (/update allowed users\?/i.test(line) && (/\[[Yy]\/[Nn]\]/.test(line) || /\(y\/N\)/.test(line))) {
+        const id = waStreamIdRef.current;
+        if (id) {
+          void systemAPI.writeStreamStdin(id, "n\n");
+        }
+        setWaStatusHint("Skipped optional allowed-users update; continuing pairing.");
+        continue;
+      }
       if (/\[[Yy]\/[Nn]\]/.test(line) || /\(y\/N\)/.test(line)) {
         setWaPendingPrompt({ kind: "yesNo", text: line.trim() });
+        setWaStatusHint("Hermes is waiting for your prompt response.");
       }
     }
     setWaPairingLines((prev) => [...prev, ...parts].slice(-400));
@@ -352,6 +365,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairingLines([]);
     setWaTerminalRaw("");
     setWaTerminalResetTick((n) => n + 1);
+    setWaStatusHint("");
+    waLastOutputAtRef.current = Date.now();
     setWaPairingActive(true);
     setWaPairingPhase("runtime");
     waStreamIdRef.current = null;
@@ -377,6 +392,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         return;
       }
       setWaPairingPhase("pairing");
+      setWaStatusHint("Waiting for WhatsApp QR output from Hermes…");
       await systemAPI.runWhatsAppPairing(appendWaPairingChunk, {
         onStreamId: (id) => {
           waStreamIdRef.current = id;
@@ -388,6 +404,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingActive(false);
       setWaPairingPhase("idle");
       setWaPendingPrompt({ kind: "none", text: "" });
+      setWaStatusHint("");
       waStreamIdRef.current = null;
       const tail = waLogBuffer.current.trimEnd();
       if (tail) {
@@ -478,6 +495,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairingActive(false);
     setWaPairingPhase("idle");
     setWaPendingPrompt({ kind: "none", text: "" });
+    setWaStatusHint("");
     waStreamIdRef.current = null;
     if (id) {
       await systemAPI.killStream(id);
@@ -494,6 +512,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       waStreamIdRef.current = null;
       setWaPairingActive(false);
       setWaPairingPhase("idle");
+      setWaStatusHint("");
       setWaPaired(true);
       setWaPairingError("");
       toast.success("WhatsApp linked");
@@ -537,6 +556,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         waStreamIdRef.current = null;
         setWaPairingActive(false);
         setWaPairingPhase("idle");
+        setWaStatusHint("");
         setWaPaired(true);
         setWaPairingError("");
         toast.success("WhatsApp linked");
@@ -587,10 +607,31 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         return;
       }
       setWaPendingPrompt({ kind: "none", text: "" });
+      setWaStatusHint("Prompt answer sent. Waiting for Hermes output…");
     } finally {
       setWaPromptBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!waPairingActive) return;
+    const timer = window.setInterval(() => {
+      const elapsed = Date.now() - (waLastOutputAtRef.current || 0);
+      if (elapsed < 15000) return;
+      if (waPendingPrompt.kind !== "none") {
+        setWaStatusHint("Still waiting for Hermes after your prompt answer. You can retry prompt action or cancel and restart pairing.");
+        return;
+      }
+      if (waPairingPhase === "pairing") {
+        setWaStatusHint("Still waiting for QR output… this can take a bit on first repair. If it stays stuck, cancel and retry.");
+      } else if (waPairingPhase === "bridge-deps") {
+        setWaStatusHint("Still preparing WhatsApp bridge dependencies…");
+      }
+    }, 3000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [waPairingActive, waPendingPrompt.kind, waPairingPhase]);
 
   const handleRefreshGatewayInstall = async () => {
     setGatewayRefreshBusy(true);
@@ -940,6 +981,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 <p className="text-[11px] text-muted-foreground">
                   Tip: Hold your phone about 20-30 cm away, keep screen brightness high, and avoid glare while scanning.
                 </p>
+                {waStatusHint && (
+                  <p className="text-[11px] text-muted-foreground">{waStatusHint}</p>
+                )}
                 {waPendingPrompt.kind === "yesNo" && (
                   <div className="rounded-md border border-border/60 bg-background/40 p-3 space-y-2">
                     <p className="text-xs text-muted-foreground">

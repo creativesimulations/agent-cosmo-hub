@@ -320,8 +320,9 @@ ipcMain.handle('run-command', async (_event, cmd, options = {}) => {
     // exotic shell (fish/zsh/csh) which mangles single-quoted base64 payloads.
     // Windows keeps the default cmd.exe so existing `wsl …` and winget work.
     const shellOverride = process.platform === 'win32' ? true : '/bin/bash';
+    const timeoutMs = options.timeout ?? 60000;
     const opts = {
-      timeout: options.timeout || 60000,
+      timeout: timeoutMs,
       cwd: options.cwd || os.homedir(),
       shell: shellOverride,
       env,
@@ -347,7 +348,7 @@ const liveStreams = new Map();
 ipcMain.handle('run-command-stream', async (event, cmd, options = {}) => {
   return new Promise((resolve) => {
     const streamId = options.streamId;
-    const timeoutMs = options.timeout || 60000;
+    const timeoutMs = options.timeout ?? 60000;
     const shellOverride = process.platform === 'win32' ? true : '/bin/bash';
     const opts = {
       cwd: options.cwd || os.homedir(),
