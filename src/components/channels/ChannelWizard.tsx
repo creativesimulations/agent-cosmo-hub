@@ -121,6 +121,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const waLogEndRef = useRef<HTMLDivElement | null>(null);
   const { requestSudoPassword } = useSudoPrompt();
 
+  /** Pre-existing channel state (from a prior install or earlier setup). */
+  const [hadExistingConfig, setHadExistingConfig] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  /** Stale-session escape hatch for WhatsApp: surface "Force fresh QR pairing". */
+  const [waStaleSessionDetected, setWaStaleSessionDetected] = useState(false);
+  const [waForceFreshBusy, setWaForceFreshBusy] = useState(false);
+
   // Pre-load any already-stored credentials so reconfiguring is friction-free.
   useEffect(() => {
     if (!open) return;
