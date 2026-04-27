@@ -1584,14 +1584,23 @@ export const hermesAPI = {
         'set +e',
         HERMES_PATH_EXPORT,
         'MISS=""',
-        'command -v npm >/dev/null 2>&1 || MISS="$MISS npm"',
+        'NPM_BIN="$(command -v npm 2>/dev/null || true)"',
+        'NODE_BIN="$(command -v node 2>/dev/null || true)"',
+        '[ -n "$NPM_BIN" ] || MISS="$MISS npm"',
+        '[ -n "$NODE_BIN" ] || MISS="$MISS node"',
+        'if [ -n "$NPM_BIN" ] && printf %s "$NPM_BIN" | grep -Eqi "(^/mnt/[a-z]/|\\.cmd$|\\.exe$)"; then MISS="$MISS npm-linux"; fi',
+        'if [ -n "$NODE_BIN" ] && printf %s "$NODE_BIN" | grep -Eqi "(^/mnt/[a-z]/|\\.cmd$|\\.exe$)"; then MISS="$MISS node-linux"; fi',
+        'if [ -n "$NODE_BIN" ]; then',
+        '  NP="$(node -p "process.platform" 2>/dev/null || true)"',
+        '  [ "$NP" = "linux" ] || MISS="$MISS node-linux"',
+        'fi',
         'command -v script >/dev/null 2>&1 || MISS="$MISS script"',
         'if [ -n "$MISS" ]; then',
         '  echo "Missing:$MISS" >&2',
-        '  echo "Install Node.js (npm) and util-linux script (Linux) or use macOS built-in script. On Windows, install Node inside the same WSL distro Ronbot uses." >&2',
+        '  echo "Ronbot needs Linux node/npm + script for WhatsApp pairing. On Windows, install them inside the same WSL distro Hermes uses (not Windows Node)." >&2',
         '  exit 1',
         'fi',
-        'echo "npm_ok=$(npm --version)"',
+        'echo "npm_ok=$(npm --version) node_ok=$(node --version) npm_bin=$NPM_BIN"',
         'exit 0',
       ].join('\n'),
       { timeout: 15000 },
@@ -1603,7 +1612,10 @@ export const hermesAPI = {
    * This prevents the common ERR_MODULE_NOT_FOUND for @whiskeysockets/baileys
    * right before QR rendering.
    */
-  async ensureWhatsAppBridgeDeps(): Promise<CommandResult> {
+  async ensureWhatsAppBridgeDeps(
+    onOutput?: CommandOutputHandler,
+    options?: Record<string, unknown> & { onStreamId?: (id: string) => void },
+  ): Promise<CommandResult> {
     return runHermesShell(
       [
         'set +e',
@@ -1612,7 +1624,22 @@ export const hermesAPI = {
         '[ -d "$BRIDGE_DIR" ] || { echo "WhatsApp bridge folder not found: $BRIDGE_DIR" >&2; exit 1; }',
         'cd "$BRIDGE_DIR" || exit 1',
         '[ -f package.json ] || { echo "WhatsApp bridge package.json is missing" >&2; exit 1; }',
-        'command -v npm >/dev/null 2>&1 || { echo "npm is required before repairing WhatsApp bridge deps" >&2; exit 1; }',
+        'NPM_BIN="$(command -v npm 2>/dev/null || true)"',
+        'NODE_BIN="$(command -v node 2>/dev/null || true)"',
+        '[ -n "$NPM_BIN" ] || { echo "npm is required before repairing WhatsApp bridge deps" >&2; exit 1; }',
+        '[ -n "$NODE_BIN" ] || { echo "node is required before repairing WhatsApp bridge deps" >&2; exit 1; }',
+        'if printf %s "$NPM_BIN" | grep -Eqi "(^/mnt/[a-z]/|\\.cmd$|\\.exe$)"; then',
+        '  echo "Detected Windows npm from Linux path: $NPM_BIN" >&2',
+        '  echo "Install Linux nodejs/npm in WSL so Hermes can run bridge installs without UNC path failures." >&2',
+        '  exit 1',
+        'fi',
+        'if printf %s "$NODE_BIN" | grep -Eqi "(^/mnt/[a-z]/|\\.cmd$|\\.exe$)"; then',
+        '  echo "Detected Windows node from Linux path: $NODE_BIN" >&2',
+        '  echo "Install Linux nodejs/npm in WSL so Hermes can run bridge installs without UNC path failures." >&2',
+        '  exit 1',
+        'fi',
+        'NP="$(node -p "process.platform" 2>/dev/null || true)"',
+        '[ "$NP" = "linux" ] || { echo "Node runtime must be Linux inside WSL for WhatsApp bridge installs (found: $NP)" >&2; exit 1; }',
         'if [ ! -d "node_modules/@whiskeysockets/baileys" ]; then',
         '  echo "[ronbot] repairing WhatsApp bridge dependencies (npm install)…"',
         '  npm install --no-audit --no-fund 2>&1 || exit 1',
@@ -1625,7 +1652,8 @@ export const hermesAPI = {
         'echo "[ronbot] WhatsApp bridge deps look healthy."',
         'exit 0',
       ].join('\n'),
-      { timeout: 240000 },
+      { timeout: 240000, ...(options ?? {}) },
+      onOutput,
     );
   },
 

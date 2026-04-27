@@ -12,7 +12,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { systemAPI } from "@/lib/systemAPI";
-import * as browserSetup from "@/lib/systemAPI/browserSetup";
 import { toast } from "sonner";
 import type { Channel } from "@/lib/channels";
 import ActionableError from "@/components/ui/ActionableError";
@@ -273,7 +272,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     waStreamIdRef.current = null;
     await systemAPI.materializeEnv().catch(() => undefined);
     try {
-      const bridge = await systemAPI.ensureWhatsAppBridgeDeps();
+      const bridge = await systemAPI.ensureWhatsAppBridgeDeps(appendWaPairingChunk, {
+        onStreamId: (id: string) => {
+          waStreamIdRef.current = id;
+        },
+      });
       if (!bridge.success) {
         const detail = [bridge.stderr, bridge.stdout].filter(Boolean).join("\n").trim();
         setWaPairingError(detail || "Could not repair WhatsApp bridge dependencies.");
@@ -329,22 +332,31 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const missingScript = /\bscript\b/i.test(detail);
 
       if (missingNode) {
-        const needsSudo = platform.isLinux || platform.isWSL;
-        const pw = needsSudo
-          ? await requestSudoPassword("install Node.js and npm for WhatsApp pairing")
-          : null;
-        if (needsSudo && pw === null) {
-          toast.error("Node.js install cancelled");
-          return false;
-        }
-        const installNodeRes = await browserSetup.installNode(undefined, pw);
-        if (!installNodeRes.success) {
-          const msg = [installNodeRes.stderr, installNodeRes.stdout].filter(Boolean).join("\n").trim();
-          setWaPairPrereqDetail(msg || detail);
-          toast.error("Could not install Node.js", {
-            description: msg.split("\n")[0] || "Try again and allow elevated install permissions.",
-          });
-          return false;
+        if (platform.isWindows || platform.isLinux || platform.isWSL) {
+          const pw = await requestSudoPassword("install Linux Node.js and npm for WhatsApp pairing");
+          if (pw === null) {
+            toast.error("Node.js install cancelled");
+            return false;
+          }
+          const nodeApt = await systemAPI.sudo.aptInstall(["nodejs", "npm"], pw);
+          if (!nodeApt.success) {
+            const msg = [nodeApt.stderr, nodeApt.stdout].filter(Boolean).join("\n").trim();
+            setWaPairPrereqDetail(msg || detail);
+            toast.error("Could not install Linux Node.js/npm", {
+              description: msg.split("\n")[0] || "Try again and allow elevated install permissions.",
+            });
+            return false;
+          }
+        } else if (platform.isMac) {
+          const r = await systemAPI.runCommand("brew install node", { timeout: 600000 });
+          if (!r.success) {
+            const msg = [r.stderr, r.stdout].filter(Boolean).join("\n").trim();
+            setWaPairPrereqDetail(msg || detail);
+            toast.error("Could not install Node.js via Homebrew", {
+              description: msg.split("\n")[0] || "Install Homebrew first, then retry.",
+            });
+            return false;
+          }
         }
       }
 
