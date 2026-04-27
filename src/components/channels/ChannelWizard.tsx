@@ -1092,13 +1092,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                     : "Install curl and Python 3 in the same environment Hermes uses. On Windows with WSL, install them inside that Linux distro.")
                 }
                 fixLabel={channel.id === "signal" ? "cURL downloads" : "Python downloads"}
-                onFix={() =>
+                onFix={() => {
                   openExternal(
                     channel.id === "signal"
                       ? "https://curl.se/download.html"
                       : "https://www.python.org/downloads/",
-                  )
-                }
+                  );
+                }}
               />
             )}
 

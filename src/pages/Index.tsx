@@ -23,6 +23,7 @@ import {
   FolderOpen,
   HardDrive,
   Package,
+  ExternalLink,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import ActionableError from "@/components/ui/ActionableError";
