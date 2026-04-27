@@ -96,6 +96,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const waLastOutputAtRef = useRef(0);
   const waAutoPromptSeenRef = useRef<Set<string>>(new Set());
   const waDebugRunIdRef = useRef<string>("");
+  const waRepairRetryRef = useRef<{ streamId: string; attempts: number; lastAttemptAt: number } | null>(null);
   const [setupToolsChecked, setSetupToolsChecked] = useState(false);
   const [setupToolsOk, setSetupToolsOk] = useState(false);
   const [setupToolsDetail, setSetupToolsDetail] = useState("");
@@ -197,8 +198,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     });
     // #endregion
     waLastOutputAtRef.current = Date.now();
+    const displayData = event.data.replace(/(?:^|\r?\n)[^\r\n]*(?:\[[Yy]\/[Nn]\]|\(y\/N\)|\[y\/n\])[^\r\n]*/g, "");
     setWaTerminalRaw((prev) => {
-      const next = prev + event.data!;
+      const next = prev + displayData;
       return next.length > 220000 ? next.slice(-220000) : next;
     });
     const cleanedData = stripAnsiLike(event.data).replace(/\u200b/g, "");
@@ -240,20 +242,19 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         promptText: trimmed.slice(0, 220),
       });
       // #endregion
-      if (waAutoPromptSeenRef.current.has(trimmed)) return;
-      waAutoPromptSeenRef.current.add(trimmed);
       const id = waStreamIdRef.current;
       if (!id) return;
       if (/repair\?/i.test(trimmed) || (/existing session/i.test(trimmed) && /clear/i.test(trimmed))) {
+        waRepairRetryRef.current = { streamId: id, attempts: 1, lastAttemptAt: Date.now() };
         // #region agent log
         emitWaDebugLog("H3", "ChannelWizard.tsx:appendWaPairingChunk:repair", "auto-answer repair prompt", {
           streamId: id,
           prompt: trimmed,
-          answer: "y",
+          answer: "y\\r",
         });
         // #endregion
         void (async () => {
-          const writeResult = await systemAPI.writeStreamStdin(id, "y\n");
+          const writeResult = await systemAPI.writeStreamStdin(id, "y\r");
           // #region agent log
           emitWaDebugLog("H3", "ChannelWizard.tsx:appendWaPairingChunk:repair:result", "repair prompt write result", {
             streamId: id,
@@ -265,6 +266,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         setWaStatusHint("Repair confirmed automatically; continuing pairing.");
         return;
       }
+      if (waAutoPromptSeenRef.current.has(trimmed)) return;
+      waAutoPromptSeenRef.current.add(trimmed);
       if (/update allowed users\?/i.test(trimmed)) {
         // #region agent log
         emitWaDebugLog("H6", "ChannelWizard.tsx:appendWaPairingChunk:allowUsers", "auto-answer allow users prompt", {
@@ -528,6 +531,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingPhase("idle");
       setWaStatusHint("");
       waStreamIdRef.current = null;
+      waRepairRetryRef.current = null;
       const tail = waLogBuffer.current.trimEnd();
       if (tail) {
         const hasYesNoPrompt = /\[[Yy]\/[Nn]\]/.test(tail) || /\(y\/N\)/.test(tail) || /\[y\/n\]/i.test(tail);
@@ -621,6 +625,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairingPhase("idle");
     setWaStatusHint("");
     waStreamIdRef.current = null;
+    waRepairRetryRef.current = null;
     if (id) {
       await systemAPI.killStream(id);
     }
@@ -715,6 +720,27 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     if (!waPairingActive) return;
     const timer = window.setInterval(() => {
       const elapsed = Date.now() - (waLastOutputAtRef.current || 0);
+      const repairRetry = waRepairRetryRef.current;
+      if (
+        repairRetry &&
+        repairRetry.streamId === waStreamIdRef.current &&
+        elapsed >= 4000 &&
+        Date.now() - repairRetry.lastAttemptAt >= 3000 &&
+        repairRetry.attempts < 3
+      ) {
+        repairRetry.attempts += 1;
+        repairRetry.lastAttemptAt = Date.now();
+        waRepairRetryRef.current = repairRetry;
+        // #region agent log
+        emitWaDebugLog("H7", "ChannelWizard.tsx:repairRetry", "retrying repair input after no output", {
+          streamId: repairRetry.streamId,
+          attempts: repairRetry.attempts,
+          elapsedSinceOutputMs: elapsed,
+          answer: "y\\r",
+        });
+        // #endregion
+        void systemAPI.writeStreamStdin(repairRetry.streamId, "y\r");
+      }
       if (elapsed < 15000) return;
       if (waPairingPhase === "pairing") {
         setWaStatusHint("Still waiting for QR output… this can take a bit on first repair. If it stays stuck, cancel and retry.");
@@ -725,7 +751,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     return () => {
       window.clearInterval(timer);
     };
-  }, [waPairingActive, waPairingPhase]);
+  }, [emitWaDebugLog, waPairingActive, waPairingPhase]);
 
   const handleRefreshGatewayInstall = async () => {
     setGatewayRefreshBusy(true);
