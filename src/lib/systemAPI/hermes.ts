@@ -1599,6 +1599,37 @@ export const hermesAPI = {
   },
 
   /**
+   * Repair WhatsApp bridge deps inside ~/.hermes/hermes-agent/scripts/whatsapp-bridge.
+   * This prevents the common ERR_MODULE_NOT_FOUND for @whiskeysockets/baileys
+   * right before QR rendering.
+   */
+  async ensureWhatsAppBridgeDeps(): Promise<CommandResult> {
+    return runHermesShell(
+      [
+        'set +e',
+        HERMES_PATH_EXPORT,
+        'BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
+        '[ -d "$BRIDGE_DIR" ] || { echo "WhatsApp bridge folder not found: $BRIDGE_DIR" >&2; exit 1; }',
+        'cd "$BRIDGE_DIR" || exit 1',
+        '[ -f package.json ] || { echo "WhatsApp bridge package.json is missing" >&2; exit 1; }',
+        'command -v npm >/dev/null 2>&1 || { echo "npm is required before repairing WhatsApp bridge deps" >&2; exit 1; }',
+        'if [ ! -d "node_modules/@whiskeysockets/baileys" ]; then',
+        '  echo "[ronbot] repairing WhatsApp bridge dependencies (npm install)…"',
+        '  npm install --no-audit --no-fund 2>&1 || exit 1',
+        'else',
+        '  npm ls @whiskeysockets/baileys --depth=0 >/dev/null 2>&1 || {',
+        '    echo "[ronbot] baileys missing from lock tree; reinstalling bridge deps…"',
+        '    npm install --no-audit --no-fund 2>&1 || exit 1',
+        '  }',
+        'fi',
+        'echo "[ronbot] WhatsApp bridge deps look healthy."',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 240000 },
+    );
+  },
+
+  /**
    * Tools needed before Ronbot can run credential tests (HTTP/json fallback).
    * WhatsApp session-only check does not need curl/python3 here.
    */

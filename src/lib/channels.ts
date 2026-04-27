@@ -201,9 +201,9 @@ export const CHANNELS: Channel[] = [
     difficulty: 'Medium',
     setupSteps: [
       {
-        title: 'Install Node.js (includes npm) where Hermes runs',
-        body: "Hermes installs the WhatsApp bridge with npm when the messaging gateway runs. Install Node.js from the official site or your package manager so npm is on your PATH. On Windows, Ronbot uses the same Linux environment as Hermes (typically WSL): install Node inside that distro, not only on Windows, so the gateway and Ronbot’s QR pairing see the same tools.",
-        link: { label: 'Node.js download', url: 'https://nodejs.org/' },
+        title: 'Ronbot prepares WhatsApp runtime dependencies',
+        body: "Ronbot checks for npm and required runtime tools before pairing, and installs missing packages automatically when possible (it will ask for elevated permission if needed). On Windows, this runs in the same WSL/Linux environment Hermes uses.",
+        link: { label: 'Hermes WhatsApp docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp/' },
       },
       {
         title: 'Pick a phone number',

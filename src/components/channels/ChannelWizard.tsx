@@ -12,9 +12,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { systemAPI } from "@/lib/systemAPI";
+import * as browserSetup from "@/lib/systemAPI/browserSetup";
 import { toast } from "sonner";
 import type { Channel } from "@/lib/channels";
 import ActionableError from "@/components/ui/ActionableError";
+import { useSudoPrompt } from "@/contexts/SudoPromptContext";
 
 type Step = 0 | 1 | 2 | 3;
 
@@ -45,6 +47,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waPairPrereqChecked, setWaPairPrereqChecked] = useState(false);
   const [waPairPrereqOk, setWaPairPrereqOk] = useState(false);
   const [waPairPrereqDetail, setWaPairPrereqDetail] = useState("");
+  const [waAutoFixing, setWaAutoFixing] = useState(false);
   const [setupToolsChecked, setSetupToolsChecked] = useState(false);
   const [setupToolsOk, setSetupToolsOk] = useState(false);
   const [setupToolsDetail, setSetupToolsDetail] = useState("");
@@ -52,6 +55,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const waLogBuffer = useRef("");
   const waStreamIdRef = useRef<string | null>(null);
   const waLogEndRef = useRef<HTMLDivElement | null>(null);
+  const { requestSudoPassword } = useSudoPrompt();
 
   // Pre-load any already-stored credentials so reconfiguring is friction-free.
   useEffect(() => {
@@ -68,6 +72,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairPrereqChecked(false);
     setWaPairPrereqOk(false);
     setWaPairPrereqDetail("");
+    setWaAutoFixing(false);
     setSetupToolsChecked(false);
     setSetupToolsOk(false);
     setSetupToolsDetail("");
@@ -258,10 +263,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
   const startWaPairing = async () => {
     if (waPairPrereqChecked && !waPairPrereqOk) {
-      toast.error("Install missing tools first", {
-        description: "WhatsApp pairing needs npm and the script utility on your PATH.",
-      });
-      return;
+      const fixed = await autoFixWhatsAppPairingTools();
+      if (!fixed) return;
     }
     setWaPairingError("");
     waLogBuffer.current = "";
@@ -270,6 +273,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     waStreamIdRef.current = null;
     await systemAPI.materializeEnv().catch(() => undefined);
     try {
+      const bridge = await systemAPI.ensureWhatsAppBridgeDeps();
+      if (!bridge.success) {
+        const detail = [bridge.stderr, bridge.stdout].filter(Boolean).join("\n").trim();
+        setWaPairingError(detail || "Could not repair WhatsApp bridge dependencies.");
+        toast.error("WhatsApp dependency repair failed", {
+          description: detail.split("\n")[0] || "Review details and try again.",
+        });
+        return;
+      }
       await systemAPI.runWhatsAppPairing(appendWaPairingChunk, {
         onStreamId: (id) => {
           waStreamIdRef.current = id;
@@ -299,6 +311,88 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       );
     }
   };
+
+  const autoFixWhatsAppPairingTools = useCallback(async (): Promise<boolean> => {
+    setWaAutoFixing(true);
+    try {
+      const platform = await systemAPI.getPlatform();
+      const current = await systemAPI.checkWhatsAppPairingPrereqs();
+      if (current.success) {
+        setWaPairPrereqDetail([current.stderr, current.stdout].filter(Boolean).join("\n").trim());
+        setWaPairPrereqOk(true);
+        setWaPairPrereqChecked(true);
+        return true;
+      }
+
+      const detail = [current.stderr, current.stdout].filter(Boolean).join("\n").trim();
+      const missingNode = /\bnpm\b/i.test(detail) || /node/i.test(detail);
+      const missingScript = /\bscript\b/i.test(detail);
+
+      if (missingNode) {
+        const needsSudo = platform.isLinux || platform.isWSL;
+        const pw = needsSudo
+          ? await requestSudoPassword("install Node.js and npm for WhatsApp pairing")
+          : null;
+        if (needsSudo && pw === null) {
+          toast.error("Node.js install cancelled");
+          return false;
+        }
+        const installNodeRes = await browserSetup.installNode(undefined, pw);
+        if (!installNodeRes.success) {
+          const msg = [installNodeRes.stderr, installNodeRes.stdout].filter(Boolean).join("\n").trim();
+          setWaPairPrereqDetail(msg || detail);
+          toast.error("Could not install Node.js", {
+            description: msg.split("\n")[0] || "Try again and allow elevated install permissions.",
+          });
+          return false;
+        }
+      }
+
+      if (missingScript && (platform.isLinux || platform.isWSL)) {
+        const pw = await requestSudoPassword("install util-linux (provides script) for WhatsApp pairing");
+        if (pw === null) {
+          toast.error("util-linux install cancelled");
+          return false;
+        }
+        const util = await systemAPI.sudo.aptInstall(["util-linux"], pw);
+        if (!util.success) {
+          const msg = [util.stderr, util.stdout].filter(Boolean).join("\n").trim();
+          setWaPairPrereqDetail(msg || detail);
+          toast.error("Could not install script utility", {
+            description: msg.split("\n")[0] || "Try again and allow elevated install permissions.",
+          });
+          return false;
+        }
+      }
+
+      const recheck = await systemAPI.checkWhatsAppPairingPrereqs();
+      setWaPairPrereqDetail([recheck.stderr, recheck.stdout].filter(Boolean).join("\n").trim());
+      setWaPairPrereqChecked(true);
+      setWaPairPrereqOk(recheck.success);
+      if (!recheck.success) {
+        toast.error("Still missing WhatsApp tools", {
+          description: "Ronbot could not fully prepare dependencies automatically yet.",
+        });
+      }
+      return recheck.success;
+    } finally {
+      setWaAutoFixing(false);
+    }
+  }, [requestSudoPassword]);
+
+  useEffect(() => {
+    if (!open || step !== 3 || channel.id !== "whatsapp") return;
+    if (!waPairPrereqChecked || waPairPrereqOk || waAutoFixing) return;
+    void autoFixWhatsAppPairingTools();
+  }, [
+    open,
+    step,
+    channel.id,
+    waPairPrereqChecked,
+    waPairPrereqOk,
+    waAutoFixing,
+    autoFixWhatsAppPairingTools,
+  ]);
 
   const cancelWaPairing = async () => {
     const id = waStreamIdRef.current;
@@ -589,13 +683,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             {channel.id === "whatsapp" && waPairPrereqChecked && !waPairPrereqOk && (
               <ActionableError
                 title="WhatsApp pairing needs npm and script"
-                summary="Hermes uses npm to install the bridge and Ronbot uses the script utility to show the QR code in this window. Both must be on your PATH."
+                summary="Ronbot can install missing WhatsApp dependencies automatically. Hermes needs npm for the bridge, and Ronbot uses script to show the QR in this window."
                 details={
                   waPairPrereqDetail ||
-                  "Install Node.js (includes npm). On Linux, install the util-linux package for script. On macOS, script is built in. On Windows, use the same WSL distro as Ronbot for Node and Hermes."
+                  "Use Auto-fix to install what is missing. On Windows, installs run in the same WSL/Linux environment Ronbot and Hermes use."
                 }
-                fixLabel="Node.js downloads"
-                onFix={() => openExternal("https://nodejs.org/")}
+                fixLabel="Auto-fix now"
+                fixing={waAutoFixing}
+                onFix={() => void autoFixWhatsAppPairingTools()}
               />
             )}
 
