@@ -806,10 +806,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                   </Button>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  Tip: ASCII QR codes need a monospace font — if the square looks cramped, widen the window or scroll horizontally.
+                  Tip: ASCII QR codes need a monospace font and equal line height. If it still looks cramped, widen the window and zoom your display to 100%.
                 </p>
-                <div className="rounded-md border border-border/50 bg-background/50 max-h-64 overflow-x-auto overflow-y-auto p-2">
-                  <pre className="text-[9px] leading-none font-mono text-foreground/90 whitespace-pre min-w-max">
+                <div className="rounded-md border border-border/50 bg-background/50 h-[52vh] min-h-[22rem] overflow-x-auto overflow-y-auto p-2">
+                  <pre className="text-[10px] leading-[10px] font-mono text-foreground/90 whitespace-pre min-w-max">
                     {(waPairingLines.length > 0 || waLogBuffer.current)
                       ? [...waPairingLines, ...(waLogBuffer.current ? [waLogBuffer.current] : [])].join("\n")
                       : waPairingActive
