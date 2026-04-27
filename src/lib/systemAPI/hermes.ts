@@ -1763,10 +1763,27 @@ export const hermesAPI = {
     const r = await runHermesShell(
       [
         'set +e',
-        'SESSION_DIR="$HOME/.hermes/platforms/whatsapp/session"',
-        '[ -d "$SESSION_DIR" ] || { echo "PAIRED=0"; exit 0; }',
-        'ls -A "$SESSION_DIR" >/dev/null 2>&1 || true',
-        'if [ "$(ls -A "$SESSION_DIR" 2>/dev/null | wc -l | tr -d \' \')" -gt 0 ]; then',
+        // Primary Hermes-managed session dir + Baileys bridge auth dirs.
+        // We must inspect ALL of them: a stale install can leave files in
+        // any one of these and Baileys will try to resume instead of pairing.
+        'BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
+        'TOTAL=0',
+        'for d in \\',
+        '  "$HOME/.hermes/platforms/whatsapp/session" \\',
+        '  "$HOME/.hermes/platforms/whatsapp" \\',
+        '  "$HOME/.hermes/whatsapp" \\',
+        '  "$HOME/.hermes/.whatsapp"; do',
+        '  if [ -d "$d" ]; then',
+        '    C="$(ls -A "$d" 2>/dev/null | wc -l | tr -d \' \')"',
+        '    TOTAL=$((TOTAL + C))',
+        '  fi',
+        'done',
+        'if [ -d "$BRIDGE_DIR" ]; then',
+        // Count any auth_info*, baileys_auth*, session* dirs/files inside the bridge.
+        '  C="$(ls -A "$BRIDGE_DIR" 2>/dev/null | grep -E "^(auth_info|baileys_auth|session)" | wc -l | tr -d \' \')"',
+        '  TOTAL=$((TOTAL + C))',
+        'fi',
+        'if [ "$TOTAL" -gt 0 ]; then',
         '  echo "PAIRED=1"',
         'else',
         '  echo "PAIRED=0"',
@@ -1785,10 +1802,23 @@ export const hermesAPI = {
     const r = await runHermesShell(
       [
         'set +e',
-        'SESSION_DIR="$HOME/.hermes/platforms/whatsapp/session"',
-        '[ -d "$SESSION_DIR" ] || { echo "SESSION_COUNT=0"; exit 0; }',
-        'COUNT="$(ls -A "$SESSION_DIR" 2>/dev/null | wc -l | tr -d \' \')"',
-        'echo "SESSION_COUNT=$COUNT"',
+        'BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
+        'TOTAL=0',
+        'for d in \\',
+        '  "$HOME/.hermes/platforms/whatsapp/session" \\',
+        '  "$HOME/.hermes/platforms/whatsapp" \\',
+        '  "$HOME/.hermes/whatsapp" \\',
+        '  "$HOME/.hermes/.whatsapp"; do',
+        '  if [ -d "$d" ]; then',
+        '    C="$(ls -A "$d" 2>/dev/null | wc -l | tr -d \' \')"',
+        '    TOTAL=$((TOTAL + C))',
+        '  fi',
+        'done',
+        'if [ -d "$BRIDGE_DIR" ]; then',
+        '  C="$(ls -A "$BRIDGE_DIR" 2>/dev/null | grep -E "^(auth_info|baileys_auth|session)" | wc -l | tr -d \' \')"',
+        '  TOTAL=$((TOTAL + C))',
+        'fi',
+        'echo "SESSION_COUNT=$TOTAL"',
         'exit 0',
       ].join('\n'),
       { timeout: 10000 },
@@ -1801,40 +1831,112 @@ export const hermesAPI = {
     return { success: true, count };
   },
 
-  /** Force-clear WhatsApp local session files so pairing starts cleanly. */
+  /**
+   * Force-clear ALL WhatsApp local session/auth files so pairing starts cleanly.
+   * Covers Hermes' primary session dir AND Baileys bridge auth folders, which
+   * survive uninstalling the desktop app on Windows because `~/.hermes/` lives
+   * in WSL home. Without this, Baileys finds an old auth folder and tries to
+   * resume instead of generating a fresh QR code.
+   */
   async clearWhatsAppSession(): Promise<{ success: boolean; removed: number; before: number; stderr?: string }> {
     const r = await runHermesShell(
       [
-        "set +e",
-        "SESSION_DIR=\"$HOME/.hermes/platforms/whatsapp/session\"",
-        "if [ ! -d \"$SESSION_DIR\" ]; then",
-        "  echo \"SESSION_BEFORE=0\"",
-        "  echo \"SESSION_REMOVED=0\"",
-        "  exit 0",
-        "fi",
-        "SESSION_BEFORE=\"$(ls -A \"$SESSION_DIR\" 2>/dev/null | wc -l | tr -d ' ')\"",
-        "rm -rf \"$SESSION_DIR\"/* \"$SESSION_DIR\"/.[!.]* \"$SESSION_DIR\"/..?* 2>/dev/null || true",
-        "SESSION_AFTER=\"$(ls -A \"$SESSION_DIR\" 2>/dev/null | wc -l | tr -d ' ')\"",
-        "SESSION_REMOVED=$((SESSION_BEFORE - SESSION_AFTER))",
-        "echo \"SESSION_BEFORE=$SESSION_BEFORE\"",
-        "echo \"SESSION_REMOVED=$SESSION_REMOVED\"",
-        "if [ \"$SESSION_AFTER\" -gt 0 ]; then",
-        "  echo \"[ronbot] Some WhatsApp session files could not be removed\" >&2",
-        "  exit 1",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { timeout: 15000 },
+        'set +e',
+        'BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
+        'BEFORE=0',
+        'count_dir() {',
+        '  if [ -d "$1" ]; then',
+        '    ls -A "$1" 2>/dev/null | wc -l | tr -d \' \'',
+        '  else',
+        '    echo 0',
+        '  fi',
+        '}',
+        'for d in \\',
+        '  "$HOME/.hermes/platforms/whatsapp/session" \\',
+        '  "$HOME/.hermes/platforms/whatsapp" \\',
+        '  "$HOME/.hermes/whatsapp" \\',
+        '  "$HOME/.hermes/.whatsapp"; do',
+        '  C="$(count_dir "$d")"',
+        '  BEFORE=$((BEFORE + C))',
+        'done',
+        'if [ -d "$BRIDGE_DIR" ]; then',
+        '  C="$(ls -A "$BRIDGE_DIR" 2>/dev/null | grep -E "^(auth_info|baileys_auth|session)" | wc -l | tr -d \' \')"',
+        '  BEFORE=$((BEFORE + C))',
+        'fi',
+        // Remove primary session dir contents.
+        'for d in \\',
+        '  "$HOME/.hermes/platforms/whatsapp/session" \\',
+        '  "$HOME/.hermes/whatsapp" \\',
+        '  "$HOME/.hermes/.whatsapp"; do',
+        '  if [ -d "$d" ]; then',
+        '    rm -rf "$d"/* "$d"/.[!.]* "$d"/..?* 2>/dev/null || true',
+        '  fi',
+        'done',
+        // Remove Baileys-style auth/session folders inside the bridge dir.
+        'if [ -d "$BRIDGE_DIR" ]; then',
+        '  rm -rf "$BRIDGE_DIR"/auth_info* "$BRIDGE_DIR"/baileys_auth* "$BRIDGE_DIR"/session* 2>/dev/null || true',
+        'fi',
+        'AFTER=0',
+        'for d in \\',
+        '  "$HOME/.hermes/platforms/whatsapp/session" \\',
+        '  "$HOME/.hermes/platforms/whatsapp" \\',
+        '  "$HOME/.hermes/whatsapp" \\',
+        '  "$HOME/.hermes/.whatsapp"; do',
+        '  C="$(count_dir "$d")"',
+        '  AFTER=$((AFTER + C))',
+        'done',
+        'if [ -d "$BRIDGE_DIR" ]; then',
+        '  C="$(ls -A "$BRIDGE_DIR" 2>/dev/null | grep -E "^(auth_info|baileys_auth|session)" | wc -l | tr -d \' \')"',
+        '  AFTER=$((AFTER + C))',
+        'fi',
+        'REMOVED=$((BEFORE - AFTER))',
+        'echo "SESSION_BEFORE=$BEFORE"',
+        'echo "SESSION_REMOVED=$REMOVED"',
+        'if [ "$AFTER" -gt 0 ]; then',
+        '  echo "[ronbot] Some WhatsApp session/auth files could not be removed" >&2',
+        '  exit 1',
+        'fi',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 20000 },
     );
-    const out = `${r.stdout || ""}\n${r.stderr || ""}`;
-    const before = Number((out.match(/SESSION_BEFORE=(\d+)/)?.[1] ?? "0"));
-    const removed = Number((out.match(/SESSION_REMOVED=(\d+)/)?.[1] ?? "0"));
+    const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+    const before = Number((out.match(/SESSION_BEFORE=(\d+)/)?.[1] ?? '0'));
+    const removed = Number((out.match(/SESSION_REMOVED=(\d+)/)?.[1] ?? '0'));
     return {
       success: r.success,
       before,
       removed,
       stderr: r.stderr || undefined,
     };
+  },
+
+  /**
+   * Strip a list of env keys from `~/.hermes/.env` (and from secure storage so
+   * `materializeEnv` doesn't put them back). Used by the per-channel "Reset"
+   * action so a stale install can be wiped without manual shell commands.
+   */
+  async removeChannelEnvKeys(keys: string[]): Promise<{ success: boolean; removed: string[]; error?: string }> {
+    const safe = (keys || []).filter((k) => /^[A-Z_][A-Z0-9_]*$/.test(k));
+    if (safe.length === 0) return { success: true, removed: [] };
+    const result = await readHermesFile(HERMES_ENV);
+    if (!result.success) {
+      return { success: false, removed: [], error: 'Could not read ~/.hermes/.env' };
+    }
+    const lines = result.content ? result.content.split('\n') : [];
+    const keep: string[] = [];
+    const removed: string[] = [];
+    for (const line of lines) {
+      const t = line.trim();
+      const matchKey = safe.find((k) => t.startsWith(`${k}=`));
+      if (matchKey) {
+        if (!removed.includes(matchKey)) removed.push(matchKey);
+        continue;
+      }
+      keep.push(line);
+    }
+    const write = await writeHermesFile(HERMES_ENV, keep.join('\n'), '600');
+    return { success: write.success, removed, error: write.success ? undefined : 'Failed to write ~/.hermes/.env' };
   },
 
   /**
