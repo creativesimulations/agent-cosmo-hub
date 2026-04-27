@@ -392,20 +392,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   }, [requestSudoPassword]);
 
-  useEffect(() => {
-    if (!open || step !== 3 || channel.id !== "whatsapp") return;
-    if (!waPairPrereqChecked || waPairPrereqOk || waAutoFixing) return;
-    void autoFixWhatsAppPairingTools();
-  }, [
-    open,
-    step,
-    channel.id,
-    waPairPrereqChecked,
-    waPairPrereqOk,
-    waAutoFixing,
-    autoFixWhatsAppPairingTools,
-  ]);
-
   const cancelWaPairing = async () => {
     const id = waStreamIdRef.current;
     if (id) {
@@ -740,6 +726,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                     onClick={() => void startWaPairing()}
                     disabled={
                       waPairingActive ||
+                      waAutoFixing ||
                       testing ||
                       !waPairPrereqChecked ||
                       (waPairPrereqChecked && !waPairPrereqOk)
