@@ -1117,6 +1117,37 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             <p className="text-xs text-muted-foreground">
               These are stored in your OS keychain — never in plain text.
             </p>
+            {hadExistingConfig && (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-foreground">
+                      Existing {channel.name} setup detected
+                    </p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Values from <code className="font-mono">~/.hermes/.env</code> are pre-filled. If you
+                      reinstalled Ronbot or want to start clean, click Reset to wipe stored credentials
+                      {channel.id === "whatsapp" ? " and the local WhatsApp session" : ""}.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-1 h-7 text-xs"
+                      disabled={resetting}
+                      onClick={() => setResetConfirmOpen(true)}
+                    >
+                      {resetting ? (
+                        <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> Resetting…</>
+                      ) : (
+                        <><RotateCcw className="w-3 h-3 mr-1.5" /> Reset {channel.name}</>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="space-y-3">
               {visibleCredentials.map((cred) => (
                 <div key={cred.envVar} className="space-y-1">
