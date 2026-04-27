@@ -207,19 +207,19 @@ const buildChannelCredentialTestScript = (channelId: string): string => {
     `    printf %s "\$BT" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is True' || { echo "Slack bot token check failed:" >&2; echo "\$BT" >&2; exit 1; }`,
     '    case "${SLACK_APP_TOKEN:-}" in xapp-*) ;; *) echo "SLACK_APP_TOKEN must start with xapp-" >&2; exit 1;; esac',
     '    [ -n "${SLACK_ALLOWED_USERS:-}" ] || { echo "SLACK_ALLOWED_USERS is required" >&2; exit 1; }',
-    '    echo "Slack bot token OK (api.auth.test). App token format OK. This Hermes build has no gateway test subcommand — credentials were checked directly."',
+    '    echo "Slack bot token OK (api.auth.test). App token format OK. Credentials were checked directly."',
   ].join('\n');
   const telegramBlock = [
     '    TG=$(curl -sS --max-time 35 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe")',
     `    printf %s "\$TG" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is True' || { echo "Telegram token check failed:" >&2; echo "\$TG" >&2; exit 1; }`,
     '    [ -n "${TELEGRAM_ALLOWED_USERS:-}" ] || { echo "TELEGRAM_ALLOWED_USERS is required" >&2; exit 1; }',
-    '    echo "Telegram token OK (getMe). This Hermes build has no gateway test subcommand — credentials were checked directly."',
+    '    echo "Telegram token OK (getMe). Credentials were checked directly."',
   ].join('\n');
   const discordBlock = [
     '    DC=$(curl -sS --max-time 35 -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" "https://discord.com/api/v10/users/@me")',
     `    printf %s "\$DC" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "id" in d' || { echo "Discord bot token check failed:" >&2; echo "\$DC" >&2; exit 1; }`,
     '    [ -n "${DISCORD_ALLOWED_USERS:-}" ] || { echo "DISCORD_ALLOWED_USERS is required" >&2; exit 1; }',
-    '    echo "Discord bot token OK. This Hermes build has no gateway test subcommand — credentials were checked directly."',
+    '    echo "Discord bot token OK. Credentials were checked directly."',
   ].join('\n');
   const whatsappBlock = [
     '    [ -n "${WHATSAPP_ALLOWED_USERS:-}" ] || { echo "WHATSAPP_ALLOWED_USERS is required" >&2; exit 1; }',
@@ -245,7 +245,7 @@ const buildChannelCredentialTestScript = (channelId: string): string => {
     '    case "$BASE" in */api/v1/check) SIG_URL="$BASE" ;; *) SIG_URL="${BASE}/api/v1/check" ;; esac',
     '    CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 "$SIG_URL" 2>/dev/null || echo 000)',
     '    [ "$CODE" != "000" ] || { echo "Cannot reach signal-cli at $SIG_URL (daemon not running or wrong URL)." >&2; exit 1; }',
-    '    echo "signal-cli responded at api/v1/check (HTTP $CODE). This Hermes build has no gateway test subcommand — daemon was probed."',
+    '    echo "signal-cli responded at api/v1/check (HTTP $CODE). Daemon was probed directly."',
   ].join('\n');
 
   return [
