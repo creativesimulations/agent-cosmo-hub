@@ -1632,7 +1632,7 @@ export const hermesAPI = {
         'echo "[ronbot] Managed npm runtime installed: $("$NODE_RUNTIME_HOME/bin/npm" --version)"',
         'exit 0',
       ].join('\n'),
-      { timeout: 240000, ...(options ?? {}) },
+      { timeout: 900000, ...(options ?? {}) },
       onOutput,
     );
   },
@@ -1822,7 +1822,7 @@ export const hermesAPI = {
         '  fi',
         'else',
         '  echo "[ronbot] script(1) not found — cannot allocate a TTY for Hermes. Install util-linux (Linux) or use macOS /usr/bin/script, then retry." >&2',
-        '  hermes whatsapp 2>&1',
+        '  exit 1',
         'fi',
       ].join('\n'),
       streamOpts,

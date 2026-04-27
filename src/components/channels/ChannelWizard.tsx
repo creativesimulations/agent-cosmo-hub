@@ -18,6 +18,7 @@ import ActionableError from "@/components/ui/ActionableError";
 import { useSudoPrompt } from "@/contexts/SudoPromptContext";
 
 type Step = 0 | 1 | 2 | 3;
+type WaPairingPhase = "idle" | "runtime" | "bridge-deps" | "pairing";
 
 interface ChannelWizardProps {
   channel: Channel;
@@ -41,6 +42,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waPairedChecked, setWaPairedChecked] = useState(false);
   const [waPaired, setWaPaired] = useState(false);
   const [waPairingActive, setWaPairingActive] = useState(false);
+  const [waPairingPhase, setWaPairingPhase] = useState<WaPairingPhase>("idle");
   const [waPairingLines, setWaPairingLines] = useState<string[]>([]);
   const [waPairingError, setWaPairingError] = useState("");
   const [waPairPrereqChecked, setWaPairPrereqChecked] = useState(false);
@@ -66,6 +68,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairedChecked(false);
     setWaPaired(false);
     setWaPairingActive(false);
+    setWaPairingPhase("idle");
     setWaPairingLines([]);
     setWaPairingError("");
     setWaPairPrereqChecked(false);
@@ -111,12 +114,28 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
   const appendWaPairingChunk = useCallback((event: { type: string; data?: string }) => {
     if ((event.type !== "stdout" && event.type !== "stderr") || !event.data) return;
+    if (event.data.includes("[process] Command timed out")) {
+      const sid = waStreamIdRef.current;
+      if (sid) {
+        void systemAPI.killStream(sid);
+        waStreamIdRef.current = null;
+      }
+      setWaPairingActive(false);
+      const phaseMessage =
+        waPairingPhase === "runtime"
+          ? "Managed runtime preparation timed out."
+          : waPairingPhase === "bridge-deps"
+            ? "WhatsApp bridge dependency installation timed out."
+            : "WhatsApp pairing timed out before a session was saved.";
+      setWaPairingError(`${phaseMessage} Try again; Ronbot will continue from any cached progress.`);
+      setWaPairingPhase("idle");
+    }
     waLogBuffer.current += event.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     const parts = waLogBuffer.current.split("\n");
     waLogBuffer.current = parts.pop() ?? "";
     if (parts.length === 0) return;
     setWaPairingLines((prev) => [...prev, ...parts].slice(-400));
-  }, []);
+  }, [waPairingPhase]);
 
   const saveCredentials = async (): Promise<boolean> => {
     setSaving(true);
@@ -265,6 +284,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     waLogBuffer.current = "";
     setWaPairingLines([]);
     setWaPairingActive(true);
+    setWaPairingPhase("runtime");
     waStreamIdRef.current = null;
     try {
       if (waPairPrereqChecked && !waPairPrereqOk) {
@@ -272,6 +292,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         if (!fixed) return;
       }
       await systemAPI.materializeEnv().catch(() => undefined);
+      setWaPairingPhase("bridge-deps");
       const bridge = await systemAPI.ensureWhatsAppBridgeDeps(appendWaPairingChunk, {
         onStreamId: (id: string) => {
           waStreamIdRef.current = id;
@@ -283,8 +304,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         toast.error("WhatsApp dependency repair failed", {
           description: detail.split("\n")[0] || "Review details and try again.",
         });
+        setWaPairingPhase("idle");
         return;
       }
+      setWaPairingPhase("pairing");
       await systemAPI.runWhatsAppPairing(appendWaPairingChunk, {
         onStreamId: (id) => {
           waStreamIdRef.current = id;
@@ -294,6 +317,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingError(e instanceof Error ? e.message : String(e));
     } finally {
       setWaPairingActive(false);
+      setWaPairingPhase("idle");
       waStreamIdRef.current = null;
       const tail = waLogBuffer.current.trimEnd();
       if (tail) {
@@ -381,6 +405,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
   const cancelWaPairing = async () => {
     const id = waStreamIdRef.current;
+    setWaPairingActive(false);
+    setWaPairingPhase("idle");
+    waStreamIdRef.current = null;
     if (id) {
       await systemAPI.killStream(id);
     }
@@ -389,6 +416,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const recheckWaPaired = async () => {
     const paired = await systemAPI.isWhatsAppPaired();
     if (paired.success && paired.paired) {
+      const id = waStreamIdRef.current;
+      if (id) {
+        await systemAPI.killStream(id);
+      }
+      waStreamIdRef.current = null;
+      setWaPairingActive(false);
+      setWaPairingPhase("idle");
       setWaPaired(true);
       setWaPairingError("");
       toast.success("WhatsApp linked");
@@ -400,6 +434,31 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       });
     }
   };
+
+  useEffect(() => {
+    if (!open || step !== 3 || channel.id !== "whatsapp" || !waPairingActive) return;
+    const timer = window.setInterval(() => {
+      void (async () => {
+        const paired = await systemAPI.isWhatsAppPaired();
+        if (!(paired.success && paired.paired)) return;
+        const id = waStreamIdRef.current;
+        if (id) {
+          await systemAPI.killStream(id);
+        }
+        waStreamIdRef.current = null;
+        setWaPairingActive(false);
+        setWaPairingPhase("idle");
+        setWaPaired(true);
+        setWaPairingError("");
+        toast.success("WhatsApp linked");
+        setTestResult("idle");
+        void runTest();
+      })();
+    }, 2000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [open, step, channel.id, waPairingActive, runTest]);
 
   const handleRefreshGatewayInstall = async () => {
     setGatewayRefreshBusy(true);
@@ -453,7 +512,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+      <DialogContent
+        className={
+          channel.id === "whatsapp" ? "w-[94vw] max-w-5xl max-h-[88vh] overflow-y-auto" : "max-w-xl max-h-[85vh] overflow-y-auto"
+        }
+      >
         <DialogHeader>
           <DialogTitle>Set up {channel.name}</DialogTitle>
           <DialogDescription>
@@ -668,10 +731,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             {channel.id === "whatsapp" && waPairPrereqChecked && !waPairPrereqOk && (
               <ActionableError
                 title="WhatsApp pairing needs npm and script"
-                summary="Ronbot uses a managed Node runtime for WhatsApp bridge dependencies and uses script to show the QR in this window."
+                summary="Ronbot uses a managed Node runtime for WhatsApp bridge dependencies and needs script(1) to allocate a PTY so Hermes can render the QR in this window."
                 details={
                   waPairPrereqDetail ||
-                  "Use Auto-fix to prepare the managed runtime and missing tools. On Windows, this runs in the same WSL/Linux environment Hermes uses."
+                  "Use Auto-fix to prepare the managed runtime and missing tools. WhatsApp pairing follows Hermes docs: gateway is the long-running service, and this step only links/saves the session."
                 }
                 fixLabel="Auto-fix now"
                 fixing={waAutoFixing}
@@ -737,7 +800,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                     type="button"
                     variant="outline"
                     onClick={() => void recheckWaPaired()}
-                    disabled={waPairingActive || testing}
+                    disabled={testing}
                   >
                     I already scanned — check link
                   </Button>
@@ -745,9 +808,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 <p className="text-[11px] text-muted-foreground">
                   Tip: ASCII QR codes need a monospace font — if the square looks cramped, widen the window or scroll horizontally.
                 </p>
-                <div className="rounded-md border border-border/50 bg-background/50 max-h-56 overflow-x-auto overflow-y-auto p-2">
-                  <pre className="text-[10px] leading-tight font-mono text-foreground/90 whitespace-pre min-w-max">
-                    {waPairingLines.length > 0 ? waPairingLines.join("\n") : waPairingActive ? "Starting…" : "Output from Hermes will appear here."}
+                <div className="rounded-md border border-border/50 bg-background/50 max-h-64 overflow-x-auto overflow-y-auto p-2">
+                  <pre className="text-[9px] leading-none font-mono text-foreground/90 whitespace-pre min-w-max">
+                    {(waPairingLines.length > 0 || waLogBuffer.current)
+                      ? [...waPairingLines, ...(waLogBuffer.current ? [waLogBuffer.current] : [])].join("\n")
+                      : waPairingActive
+                        ? "Starting…"
+                        : "Output from Hermes will appear here."}
                   </pre>
                   <div ref={waLogEndRef} />
                 </div>

@@ -211,7 +211,7 @@ export const CHANNELS: Channel[] = [
       },
       {
         title: 'Link WhatsApp on the next screen',
-        body: "On the last step, Ronbot runs Hermes WhatsApp pairing here in the app. Hermes may install bridge dependencies the first time — Node.js v18+ is required in the same environment as the gateway (WSL on Windows). If you widen the Ronbot window, ASCII QR codes are easier to scan.",
+        body: "On the last step, Ronbot runs Hermes WhatsApp pairing here in the app. It allocates a PTY so Hermes can render the QR code properly, then saves the linked session. The gateway remains the long-running service after pairing.",
         link: { label: 'Hermes WhatsApp docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp/' },
       },
       {
