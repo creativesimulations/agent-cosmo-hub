@@ -20,7 +20,6 @@ import WhatsAppTerminal from "@/components/channels/WhatsAppTerminal";
 
 type Step = 0 | 1 | 2 | 3;
 type WaPairingPhase = "idle" | "runtime" | "bridge-deps" | "pairing";
-type WaPromptChoice = "yesNo" | "none";
 
 interface ChannelWizardProps {
   channel: Channel;
@@ -93,13 +92,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waPairPrereqOk, setWaPairPrereqOk] = useState(false);
   const [waPairPrereqDetail, setWaPairPrereqDetail] = useState("");
   const [waAutoFixing, setWaAutoFixing] = useState(false);
-  const [waPendingPrompt, setWaPendingPrompt] = useState<{ kind: WaPromptChoice; text: string }>({
-    kind: "none",
-    text: "",
-  });
-  const [waPromptBusy, setWaPromptBusy] = useState(false);
   const [waStatusHint, setWaStatusHint] = useState("");
   const waLastOutputAtRef = useRef(0);
+  const waAutoPromptSeenRef = useRef<Set<string>>(new Set());
   const [setupToolsChecked, setSetupToolsChecked] = useState(false);
   const [setupToolsOk, setSetupToolsOk] = useState(false);
   const [setupToolsDetail, setSetupToolsDetail] = useState("");
@@ -129,9 +124,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairPrereqOk(false);
     setWaPairPrereqDetail("");
     setWaAutoFixing(false);
-    setWaPendingPrompt({ kind: "none", text: "" });
-    setWaPromptBusy(false);
     setWaStatusHint("");
+    waAutoPromptSeenRef.current = new Set();
     setSetupToolsChecked(false);
     setSetupToolsOk(false);
     setSetupToolsDetail("");
@@ -184,7 +178,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         waStreamIdRef.current = null;
       }
       setWaPairingActive(false);
-      setWaPendingPrompt({ kind: "none", text: "" });
       const phaseMessage =
         waPairingPhase === "runtime"
           ? "Managed runtime preparation timed out."
@@ -199,18 +192,25 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     waLogBuffer.current = parts.pop() ?? "";
     if (parts.length === 0) return;
     for (const line of parts) {
-      if (/update allowed users\?/i.test(line) && (/\[[Yy]\/[Nn]\]/.test(line) || /\(y\/N\)/.test(line))) {
-        const id = waStreamIdRef.current;
-        if (id) {
-          void systemAPI.writeStreamStdin(id, "n\n");
-        }
+      const trimmed = line.trim();
+      const hasYesNoPrompt = /\[[Yy]\/[Nn]\]/.test(trimmed) || /\(y\/N\)/.test(trimmed) || /\[y\/n\]/i.test(trimmed);
+      if (!hasYesNoPrompt) continue;
+      if (waAutoPromptSeenRef.current.has(trimmed)) continue;
+      waAutoPromptSeenRef.current.add(trimmed);
+      const id = waStreamIdRef.current;
+      if (!id) continue;
+      if (/repair\?/i.test(trimmed)) {
+        void systemAPI.writeStreamStdin(id, "y\n");
+        setWaStatusHint("Repair confirmed automatically; continuing pairing.");
+        continue;
+      }
+      if (/update allowed users\?/i.test(trimmed)) {
+        void systemAPI.writeStreamStdin(id, "n\n");
         setWaStatusHint("Skipped optional allowed-users update; continuing pairing.");
         continue;
       }
-      if (/\[[Yy]\/[Nn]\]/.test(line) || /\(y\/N\)/.test(line)) {
-        setWaPendingPrompt({ kind: "yesNo", text: line.trim() });
-        setWaStatusHint("Hermes is waiting for your prompt response.");
-      }
+      void systemAPI.writeStreamStdin(id, "n\n");
+      setWaStatusHint("Answered a setup prompt automatically to keep pairing moving.");
     }
     setWaPairingLines((prev) => [...prev, ...parts].slice(-400));
   }, [waPairingPhase]);
@@ -403,7 +403,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     } finally {
       setWaPairingActive(false);
       setWaPairingPhase("idle");
-      setWaPendingPrompt({ kind: "none", text: "" });
       setWaStatusHint("");
       waStreamIdRef.current = null;
       const tail = waLogBuffer.current.trimEnd();
@@ -494,7 +493,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     const id = waStreamIdRef.current;
     setWaPairingActive(false);
     setWaPairingPhase("idle");
-    setWaPendingPrompt({ kind: "none", text: "" });
     setWaStatusHint("");
     waStreamIdRef.current = null;
     if (id) {
@@ -587,41 +585,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     };
   }, [open, step, channel.id, channel.name, waPairingActive, runTest, onClose, onComplete]);
 
-  const answerWaPrompt = async (answer: "yes" | "no") => {
-    const id = waStreamIdRef.current;
-    if (!id) {
-      setWaPendingPrompt({ kind: "none", text: "" });
-      toast.error("Pairing session is no longer active", {
-        description: "Start QR pairing again and answer the prompt when it appears.",
-      });
-      return;
-    }
-    setWaPromptBusy(true);
-    try {
-      const data = answer === "yes" ? "y\n" : "n\n";
-      const r = await systemAPI.writeStreamStdin(id, data);
-      if (!r.success) {
-        toast.error("Could not send prompt answer", {
-          description: r.error || "The pairing process may have exited. Start pairing again.",
-        });
-        return;
-      }
-      setWaPendingPrompt({ kind: "none", text: "" });
-      setWaStatusHint("Prompt answer sent. Waiting for Hermes output…");
-    } finally {
-      setWaPromptBusy(false);
-    }
-  };
-
   useEffect(() => {
     if (!waPairingActive) return;
     const timer = window.setInterval(() => {
       const elapsed = Date.now() - (waLastOutputAtRef.current || 0);
       if (elapsed < 15000) return;
-      if (waPendingPrompt.kind !== "none") {
-        setWaStatusHint("Still waiting for Hermes after your prompt answer. You can retry prompt action or cancel and restart pairing.");
-        return;
-      }
       if (waPairingPhase === "pairing") {
         setWaStatusHint("Still waiting for QR output… this can take a bit on first repair. If it stays stuck, cancel and retry.");
       } else if (waPairingPhase === "bridge-deps") {
@@ -631,7 +599,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     return () => {
       window.clearInterval(timer);
     };
-  }, [waPairingActive, waPendingPrompt.kind, waPairingPhase]);
+  }, [waPairingActive, waPairingPhase]);
 
   const handleRefreshGatewayInstall = async () => {
     setGatewayRefreshBusy(true);
@@ -983,34 +951,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 </p>
                 {waStatusHint && (
                   <p className="text-[11px] text-muted-foreground">{waStatusHint}</p>
-                )}
-                {waPendingPrompt.kind === "yesNo" && (
-                  <div className="rounded-md border border-border/60 bg-background/40 p-3 space-y-2">
-                    <p className="text-xs text-muted-foreground">
-                      Hermes is waiting for your choice:
-                    </p>
-                    <p className="text-[11px] font-mono text-foreground/90 whitespace-pre-wrap">{waPendingPrompt.text}</p>
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={waPromptBusy}
-                        onClick={() => void answerWaPrompt("yes")}
-                      >
-                        Yes
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={waPromptBusy}
-                        onClick={() => void answerWaPrompt("no")}
-                      >
-                        No
-                      </Button>
-                    </div>
-                  </div>
                 )}
                 <div className="rounded-md border border-border/50 bg-background/50 h-[62vh] min-h-[26rem] overflow-hidden p-2">
                   <WhatsAppTerminal
