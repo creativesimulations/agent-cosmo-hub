@@ -1261,7 +1261,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               ["telegram", "slack", "discord", "signal"].includes(channel.id) && (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-background/30 px-3 py-2 text-[11px] text-muted-foreground">
                   <span className="min-w-[12rem] flex-1">
-                    After installing curl, Python, or Node, or changing PATH, refresh the gateway service so Hermes snapshots PATH (recommended in Hermes docs for macOS/Linux).
+                    After installing curl, Python, or Node, or changing PATH, refresh the gateway service so Ronbot snapshots PATH.
                   </span>
                   <Button
                     type="button"
@@ -1309,10 +1309,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             {channel.id === "whatsapp" && waPairPrereqChecked && !waPairPrereqOk && (
               <ActionableError
                 title="WhatsApp pairing needs npm and script"
-                summary="Ronbot uses a managed Node runtime for WhatsApp bridge dependencies and needs script(1) to allocate a PTY so Hermes can render the QR in this window."
+                summary="Ronbot uses a managed Node runtime for WhatsApp bridge dependencies and needs script(1) to allocate a PTY so the QR can render in this window."
                 details={
                   waPairPrereqDetail ||
-                  "Use Auto-fix to prepare the managed runtime and missing tools. WhatsApp pairing follows Hermes docs: gateway is the long-running service, and this step only links/saves the session."
+                  "Use Auto-fix to prepare the managed runtime and missing tools. The gateway is the long-running service; this step only links and saves the session."
                 }
                 fixLabel="Auto-fix now"
                 fixing={waAutoFixing}
