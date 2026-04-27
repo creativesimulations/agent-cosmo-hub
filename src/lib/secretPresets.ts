@@ -72,7 +72,7 @@ export const SECRET_PRESETS: SecretPreset[] = [
   { envVar: 'SLACK_BOT_TOKEN',        label: 'Slack Bot',            hint: 'xoxb-… token from a Slack app.',                               prefix: 'xoxb-',   docsUrl: 'https://api.slack.com/apps',                  category: 'Messaging' },
   { envVar: 'SLACK_APP_TOKEN',        label: 'Slack App-Level',      hint: 'xapp-… token (Socket Mode).',                                  prefix: 'xapp-',   docsUrl: 'https://api.slack.com/apps',                  category: 'Messaging' },
   { envVar: 'SLACK_ALLOWED_USERS',    label: 'Slack Allowed Users',  hint: 'Comma-separated Slack member IDs (e.g. U01ABC2DEF3).',         prefix: '',        docsUrl: 'https://api.slack.com/apps',                  category: 'Messaging' },
-  // WhatsApp via Baileys — paired through `hermes whatsapp` (QR scan).
+  // WhatsApp via Baileys — QR pairing runs in-app (Channels → WhatsApp → Start QR pairing).
   { envVar: 'WHATSAPP_ENABLED',       label: 'WhatsApp Enabled',     hint: 'Set to "true" to turn the WhatsApp adapter on.',               prefix: '',        docsUrl: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp', category: 'Messaging' },
   { envVar: 'WHATSAPP_MODE',          label: 'WhatsApp Mode',        hint: '"bot" for a dedicated number, or "self-chat" for your own.',   prefix: '',        docsUrl: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp', category: 'Messaging' },
   { envVar: 'WHATSAPP_ALLOWED_USERS', label: 'WhatsApp Allowed Users', hint: 'Phone numbers (country code, no +). Comma-separated, or *.',  prefix: '',       docsUrl: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp', category: 'Messaging' },

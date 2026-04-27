@@ -189,12 +189,12 @@ export const CHANNELS: Channel[] = [
         body: "Two options: dedicate a separate phone number to the bot (recommended — cleanest UX, lower ban risk), or use your personal WhatsApp and message yourself. A second SIM, Google Voice, or a prepaid number all work.",
       },
       {
-        title: 'Run the WhatsApp pairing wizard',
-        body: "After enabling WhatsApp here, open a terminal and run `hermes whatsapp`. It installs the bridge dependencies (Node.js v18+ required) and shows a QR code.",
+        title: 'Link WhatsApp on the next screen',
+        body: "On the last step, Ronbot runs Hermes' WhatsApp pairing for you here in the app (no separate terminal). Hermes may install bridge dependencies the first time — Node.js v18+ is required on your system.",
       },
       {
         title: 'Scan the QR code from your phone',
-        body: "On your phone open WhatsApp → Settings → Linked Devices → Link a Device, then scan the QR code in the terminal. Hermes saves the session under ~/.hermes/platforms/whatsapp/session and reuses it across restarts.",
+        body: "When the QR appears below, open WhatsApp on your phone → Settings → Linked Devices → Link a Device, and scan it. Hermes saves the session under ~/.hermes/platforms/whatsapp/session and reuses it across restarts.",
       },
       {
         title: 'Pick the allowed phone numbers',
@@ -236,7 +236,7 @@ export const CHANNELS: Channel[] = [
       },
     ],
     testHint:
-      "Pairing happens via QR code in the terminal — after you've run `hermes whatsapp` and scanned, we confirm the saved session exists.",
+      "First link WhatsApp using the QR code in this window. After your phone shows the device as linked, we verify the saved session and run a quick gateway check.",
   },
 
   // ─── Discord ──────────────────────────────────────────────────────

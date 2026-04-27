@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +36,16 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [testError, setTestError] = useState<string>("");
   const [formError, setFormError] = useState<string>("");
 
+  /** WhatsApp: session folder probe + in-app QR stream */
+  const [waPairedChecked, setWaPairedChecked] = useState(false);
+  const [waPaired, setWaPaired] = useState(false);
+  const [waPairingActive, setWaPairingActive] = useState(false);
+  const [waPairingLines, setWaPairingLines] = useState<string[]>([]);
+  const [waPairingError, setWaPairingError] = useState("");
+  const waLogBuffer = useRef("");
+  const waStreamIdRef = useRef<string | null>(null);
+  const waLogEndRef = useRef<HTMLDivElement | null>(null);
+
   // Pre-load any already-stored credentials so reconfiguring is friction-free.
   useEffect(() => {
     if (!open) return;
@@ -43,6 +53,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setTestResult("idle");
     setTestError("");
     setFormError("");
+    setWaPairedChecked(false);
+    setWaPaired(false);
+    setWaPairingActive(false);
+    setWaPairingLines([]);
+    setWaPairingError("");
+    waLogBuffer.current = "";
+    waStreamIdRef.current = null;
     let cancelled = false;
     (async () => {
       const next: Record<string, string> = {};
@@ -75,6 +92,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     [channel.credentials, values],
   );
 
+  const appendWaPairingChunk = useCallback((event: { type: string; data?: string }) => {
+    if ((event.type !== "stdout" && event.type !== "stderr") || !event.data) return;
+    waLogBuffer.current += event.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const parts = waLogBuffer.current.split("\n");
+    waLogBuffer.current = parts.pop() ?? "";
+    if (parts.length === 0) return;
+    setWaPairingLines((prev) => [...prev, ...parts].slice(-400));
+  }, []);
+
   const saveCredentials = async (): Promise<boolean> => {
     setSaving(true);
     try {
@@ -102,7 +128,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   };
 
-  const runTest = async () => {
+  const runTest = useCallback(async () => {
     setTesting(true);
     setTestResult("idle");
     setTestError("");
@@ -118,7 +144,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         if (!paired.paired) {
           setTestResult("fail");
           setTestError(
-            "WhatsApp isn't paired yet. Run `hermes whatsapp` in a terminal and scan the QR code, then click Try again.",
+            "WhatsApp is not linked yet. Use “Start QR pairing” above, scan with your phone, then try the test again.",
           );
           return;
         }
@@ -145,13 +171,107 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     } finally {
       setTesting(false);
     }
-  };
+  }, [channel]);
+
+  /** WhatsApp step 3: probe whether a session already exists */
+  useEffect(() => {
+    if (!open || step !== 3 || channel.id !== "whatsapp") return;
+    let cancelled = false;
+    setWaPairedChecked(false);
+    (async () => {
+      const r = await systemAPI.isWhatsAppPaired();
+      if (cancelled) return;
+      setWaPaired(!!(r.success && r.paired));
+      setWaPairedChecked(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, step, channel.id]);
 
   useEffect(() => {
-    if (open && step === 3 && testResult === "idle" && !testing) {
-      void runTest();
+    waLogEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [waPairingLines]);
+
+  /** Stop Hermes pairing if the user closes the wizard mid-stream */
+  useEffect(() => {
+    if (open) return;
+    const id = waStreamIdRef.current;
+    if (id) {
+      void systemAPI.killStream(id);
+      waStreamIdRef.current = null;
     }
-  }, [open, step, testResult, testing]);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || step !== 3 || testing) return;
+    if (channel.id === "whatsapp") {
+      if (!waPairedChecked) return;
+      if (!waPaired) return;
+    }
+    if (testResult !== "idle") return;
+    void runTest();
+  }, [open, step, channel.id, waPaired, waPairedChecked, testResult, testing, runTest]);
+
+  const startWaPairing = async () => {
+    setWaPairingError("");
+    waLogBuffer.current = "";
+    setWaPairingLines([]);
+    setWaPairingActive(true);
+    waStreamIdRef.current = null;
+    await systemAPI.materializeEnv().catch(() => undefined);
+    try {
+      await systemAPI.runWhatsAppPairing(appendWaPairingChunk, {
+        onStreamId: (id) => {
+          waStreamIdRef.current = id;
+        },
+      });
+    } catch (e) {
+      setWaPairingError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWaPairingActive(false);
+      waStreamIdRef.current = null;
+      const tail = waLogBuffer.current.trimEnd();
+      if (tail) {
+        setWaPairingLines((prev) => [...prev, tail].slice(-400));
+        waLogBuffer.current = "";
+      }
+    }
+    const paired = await systemAPI.isWhatsAppPaired();
+    if (paired.success && paired.paired) {
+      setWaPaired(true);
+      toast.success("WhatsApp linked");
+      void runTest();
+    } else if (!paired.success) {
+      setWaPairingError(paired.error || "Could not verify WhatsApp pairing.");
+    } else {
+      setWaPairingError(
+        "Hermes closed before a session was saved. Check the log for errors, or try Start QR pairing again after scanning.",
+      );
+    }
+  };
+
+  const cancelWaPairing = async () => {
+    const id = waStreamIdRef.current;
+    if (id) {
+      await systemAPI.killStream(id);
+    }
+  };
+
+  const recheckWaPaired = async () => {
+    const paired = await systemAPI.isWhatsAppPaired();
+    if (paired.success && paired.paired) {
+      setWaPaired(true);
+      setWaPairingError("");
+      toast.success("WhatsApp linked");
+      setTestResult("idle");
+      void runTest();
+    } else {
+      toast.info("Not linked yet", {
+        description: "Finish scanning the QR code on your phone, then check again.",
+      });
+    }
+  };
 
   const enableGateway = async () => {
     const r = await systemAPI.startGateway();
@@ -342,16 +462,83 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             <h3 className="text-sm font-semibold text-foreground">Test &amp; enable</h3>
             <p className="text-sm text-muted-foreground">{channel.testHint}</p>
 
+            {channel.id === "whatsapp" && waPairedChecked && !waPaired && (
+              <div className="rounded-lg border border-border/60 bg-background/30 p-4 space-y-3">
+                <h4 className="text-sm font-medium text-foreground">Link WhatsApp</h4>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  On your phone: WhatsApp → Settings → Linked devices → Link a device. Then start pairing here
+                  and scan the QR code when it appears in the log below.
+                </p>
+                {waPairingError && (
+                  <p className="text-xs text-destructive font-mono whitespace-pre-wrap">{waPairingError}</p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    onClick={() => void startWaPairing()}
+                    disabled={waPairingActive || testing}
+                    className="gradient-primary text-primary-foreground"
+                  >
+                    {waPairingActive ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Pairing…
+                      </>
+                    ) : (
+                      "Start QR pairing"
+                    )}
+                  </Button>
+                  {waPairingActive && (
+                    <Button type="button" variant="outline" onClick={() => void cancelWaPairing()}>
+                      Cancel pairing
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void recheckWaPaired()}
+                    disabled={waPairingActive || testing}
+                  >
+                    I already scanned — check link
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Tip: ASCII QR codes need a monospace font — if the square looks cramped, widen the window or scroll horizontally.
+                </p>
+                <div className="rounded-md border border-border/50 bg-background/50 max-h-56 overflow-x-auto overflow-y-auto p-2">
+                  <pre className="text-[10px] leading-tight font-mono text-foreground/90 whitespace-pre min-w-max">
+                    {waPairingLines.length > 0 ? waPairingLines.join("\n") : waPairingActive ? "Starting…" : "Output from Hermes will appear here."}
+                  </pre>
+                  <div ref={waLogEndRef} />
+                </div>
+              </div>
+            )}
+
             <div className="rounded-lg border border-border/60 bg-background/30 p-4">
-              {testResult === "idle" && (
-                <Button onClick={runTest} disabled={testing} className="w-full">
+              {channel.id === "whatsapp" && (!waPairedChecked || !waPaired) ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  {waPairedChecked ? (
+                    <>
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      Link WhatsApp above, then the test runs automatically.
+                    </>
+                  ) : (
+                    <>
+                      <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+                      Checking WhatsApp link…
+                    </>
+                  )}
+                </div>
+              ) : testResult === "idle" ? (
+                <Button onClick={() => void runTest()} disabled={testing} className="w-full">
                   {testing ? (
-                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Testing…</>
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Testing…
+                    </>
                   ) : (
                     "Run test"
                   )}
                 </Button>
-              )}
+              ) : null}
               {testResult === "ok" && (
                 <div className="flex items-center gap-2 text-sm text-success">
                   <CheckCircle2 className="w-4 h-4" /> Credentials look good. Ready to enable.
@@ -365,7 +552,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                   {testError && (
                     <p className="text-xs text-muted-foreground font-mono">{testError}</p>
                   )}
-                  <Button variant="outline" size="sm" onClick={runTest} disabled={testing}>
+                  <Button variant="outline" size="sm" onClick={() => void runTest()} disabled={testing}>
                     Try again
                   </Button>
                 </div>
@@ -376,7 +563,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
         <DialogFooter className="gap-2 sm:gap-2">
           {step > 0 && (
-            <Button variant="ghost" onClick={back} disabled={saving}>
+            <Button variant="ghost" onClick={back} disabled={saving || (channel.id === "whatsapp" && step === 3 && waPairingActive)}>
               <ArrowLeft className="w-4 h-4 mr-1" /> Back
             </Button>
           )}

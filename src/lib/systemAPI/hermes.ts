@@ -1483,6 +1483,43 @@ export const hermesAPI = {
     return { success: true, paired: /PAIRED=1/.test(out) };
   },
 
+  /**
+   * Stream `hermes whatsapp` (QR + logs) for in-app pairing. Uses `timeout: 0`
+   * so the child is not killed while the user scans. Call `killStream` from
+   * the UI if the user cancels.
+   */
+  async runWhatsAppPairing(
+    onOutput?: CommandOutputHandler,
+    options?: Record<string, unknown> & { onStreamId?: (id: string) => void },
+  ): Promise<CommandResult> {
+    await materializeHermesEnv().catch(() => undefined);
+    if (!isElectron()) {
+      onOutput?.({
+        type: 'stdout',
+        data:
+          '[preview] WhatsApp QR pairing runs in the Ronbot desktop app after Hermes is installed.\n',
+      });
+      onOutput?.({ type: 'exit', code: 0 });
+      return {
+        success: true,
+        stdout: '[preview] WhatsApp pairing is only available in the desktop app.\n',
+        stderr: '',
+        code: 0,
+      };
+    }
+    const streamOpts = { ...(options ?? {}), timeout: 0 };
+    return runHermesShell(
+      [
+        'set +e',
+        'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
+        'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
+        'hermes whatsapp 2>&1',
+      ].join('\n'),
+      streamOpts,
+      onOutput,
+    );
+  },
+
   /** Send a single chat prompt to the agent and return its reply.
    *
    *  Hermes ships a non-interactive single-query mode: `hermes chat -q "..."`
