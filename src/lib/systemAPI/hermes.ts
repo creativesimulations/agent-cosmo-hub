@@ -1542,6 +1542,87 @@ export const hermesAPI = {
     return normalized;
   },
 
+  /**
+   * Inspect the running gateway and report whether the WhatsApp adapter
+   * is actually live (process running + bridge log shows a successful
+   * Baileys connection). Used after pairing/startGateway so the wizard
+   * can confirm messages will actually reach the agent on WhatsApp,
+   * instead of declaring success on a no-op exit code.
+   *
+   * Returns:
+   *   - running: gateway process detected (systemd unit OR background pgrep)
+   *   - whatsappActive: bridge log indicates an open Baileys connection
+   *   - statusOutput: trimmed text from `hermes gateway status` for logs
+   *   - bridgeLogTail: last meaningful lines from the bridge log
+   */
+  async getWhatsAppGatewayHealth(): Promise<{
+    success: boolean;
+    running: boolean;
+    whatsappActive: boolean;
+    statusOutput: string;
+    bridgeLogTail: string;
+    error?: string;
+  }> {
+    const r = await runHermesCli(
+      [
+        'set +e',
+        HERMES_PATH_EXPORT,
+        // 1) gateway alive?
+        'STATUS_OUT="$(hermes gateway status 2>&1 || true)"',
+        'PROC_OK=0',
+        'pgrep -f "hermes gateway" >/dev/null 2>&1 && PROC_OK=1',
+        'echo "STATUS_OUT_BEGIN"',
+        'printf "%s\\n" "$STATUS_OUT"',
+        'echo "STATUS_OUT_END"',
+        'echo "PROC_OK=$PROC_OK"',
+        // 2) bridge log markers — Baileys writes "open" / "Connected" once linked
+        'BRIDGE_LOG=""',
+        'for f in "$HOME/.hermes/logs/bridge.log" "$HOME/.hermes/logs/whatsapp-bridge.log" "$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log" "$HOME/.hermes/platforms/whatsapp/bridge.log"; do',
+        '  [ -f "$f" ] || continue',
+        '  BRIDGE_LOG="$f"',
+        '  break',
+        'done',
+        'BRIDGE_TAIL=""',
+        'WA_OK=0',
+        'if [ -n "$BRIDGE_LOG" ]; then',
+        '  BRIDGE_TAIL="$(tail -n 50 "$BRIDGE_LOG" 2>/dev/null || true)"',
+        '  if printf "%s" "$BRIDGE_TAIL" | grep -E -i "(connection.*open|connected to whatsapp|ws connection open|baileys.*ready|whatsapp.*ready)" >/dev/null 2>&1; then',
+        '    WA_OK=1',
+        '  fi',
+        'fi',
+        // 3) fallback: if status text mentions whatsapp + connected/active, accept it
+        'if [ "$WA_OK" -eq 0 ] && printf "%s" "$STATUS_OUT" | grep -E -i "whatsapp.*(connected|active|running|ok)" >/dev/null 2>&1; then',
+        '  WA_OK=1',
+        'fi',
+        'echo "WA_OK=$WA_OK"',
+        'echo "BRIDGE_TAIL_BEGIN"',
+        'printf "%s\\n" "$BRIDGE_TAIL"',
+        'echo "BRIDGE_TAIL_END"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 20000 },
+    );
+    const out = `${r.stdout || ''}`;
+    const between = (begin: string, end: string): string => {
+      const i = out.indexOf(begin);
+      const j = out.indexOf(end);
+      if (i < 0 || j < 0 || j <= i) return '';
+      return out.slice(i + begin.length, j).trim();
+    };
+    const statusOutput = between('STATUS_OUT_BEGIN', 'STATUS_OUT_END');
+    const bridgeLogTail = between('BRIDGE_TAIL_BEGIN', 'BRIDGE_TAIL_END');
+    const procOk = /PROC_OK=1/.test(out);
+    const waOk = /WA_OK=1/.test(out);
+    return {
+      success: r.success,
+      running: procOk,
+      whatsappActive: waOk,
+      statusOutput,
+      bridgeLogTail,
+      error: r.success ? undefined : (r.stderr || '').split('\n')[0] || undefined,
+    };
+  },
+
   /** Stop the messaging gateway */
   async stopGateway(): Promise<CommandResult> {
     agentLogs.push({ source: 'gateway', level: 'info', summary: 'Stopping messaging gateway…' });
