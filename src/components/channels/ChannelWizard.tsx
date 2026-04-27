@@ -180,6 +180,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         waStreamIdRef.current = null;
       }
       setWaPairingActive(false);
+      setWaPendingPrompt({ kind: "none", text: "" });
       const phaseMessage =
         waPairingPhase === "runtime"
           ? "Managed runtime preparation timed out."
@@ -386,6 +387,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     } finally {
       setWaPairingActive(false);
       setWaPairingPhase("idle");
+      setWaPendingPrompt({ kind: "none", text: "" });
       waStreamIdRef.current = null;
       const tail = waLogBuffer.current.trimEnd();
       if (tail) {
@@ -475,6 +477,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     const id = waStreamIdRef.current;
     setWaPairingActive(false);
     setWaPairingPhase("idle");
+    setWaPendingPrompt({ kind: "none", text: "" });
     waStreamIdRef.current = null;
     if (id) {
       await systemAPI.killStream(id);
@@ -566,11 +569,23 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
   const answerWaPrompt = async (answer: "yes" | "no") => {
     const id = waStreamIdRef.current;
-    if (!id) return;
+    if (!id) {
+      setWaPendingPrompt({ kind: "none", text: "" });
+      toast.error("Pairing session is no longer active", {
+        description: "Start QR pairing again and answer the prompt when it appears.",
+      });
+      return;
+    }
     setWaPromptBusy(true);
     try {
-      const data = answer === "yes" ? "y\n" : "\n";
-      await systemAPI.writeStreamStdin(id, data);
+      const data = answer === "yes" ? "y\n" : "n\n";
+      const r = await systemAPI.writeStreamStdin(id, data);
+      if (!r.success) {
+        toast.error("Could not send prompt answer", {
+          description: r.error || "The pairing process may have exited. Start pairing again.",
+        });
+        return;
+      }
       setWaPendingPrompt({ kind: "none", text: "" });
     } finally {
       setWaPromptBusy(false);
