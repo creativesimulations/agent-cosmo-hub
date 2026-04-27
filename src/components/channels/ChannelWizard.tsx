@@ -28,6 +28,45 @@ interface ChannelWizardProps {
 }
 
 const openExternal = (url: string) => window.open(url, "_blank", "noopener,noreferrer");
+const stripAnsiLike = (value: string): string => {
+  const ESC = String.fromCharCode(27);
+  const BEL = String.fromCharCode(7);
+  let out = "";
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i];
+    if (ch !== ESC) {
+      out += ch;
+      continue;
+    }
+    const next = value[i + 1] || "";
+    // CSI
+    if (next === "[") {
+      i += 2;
+      while (i < value.length) {
+        const code = value.charCodeAt(i);
+        if (code >= 0x40 && code <= 0x7e) break;
+        i += 1;
+      }
+      continue;
+    }
+    // OSC
+    if (next === "]") {
+      i += 2;
+      while (i < value.length) {
+        if (value[i] === BEL) break;
+        if (value[i] === ESC && value[i + 1] === "\\") {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      continue;
+    }
+    // Other one-char escape sequences.
+    i += 1;
+  }
+  return out;
+};
 
 const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProps) => {
   const [step, setStep] = useState<Step>(0);
@@ -114,7 +153,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
   const appendWaPairingChunk = useCallback((event: { type: string; data?: string }) => {
     if ((event.type !== "stdout" && event.type !== "stderr") || !event.data) return;
-    if (event.data.includes("[process] Command timed out")) {
+    const cleanedData = stripAnsiLike(event.data).replace(/\u200b/g, "");
+    if (cleanedData.includes("[process] Command timed out")) {
       const sid = waStreamIdRef.current;
       if (sid) {
         void systemAPI.killStream(sid);
@@ -130,7 +170,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingError(`${phaseMessage} Try again; Ronbot will continue from any cached progress.`);
       setWaPairingPhase("idle");
     }
-    waLogBuffer.current += event.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    waLogBuffer.current += cleanedData.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     const parts = waLogBuffer.current.split("\n");
     waLogBuffer.current = parts.pop() ?? "";
     if (parts.length === 0) return;
@@ -809,7 +849,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                   Tip: ASCII QR codes need a monospace font and equal line height. If it still looks cramped, widen the window and zoom your display to 100%.
                 </p>
                 <div className="rounded-md border border-border/50 bg-background/50 h-[52vh] min-h-[22rem] overflow-x-auto overflow-y-auto p-2">
-                  <pre className="text-[10px] leading-[10px] font-mono text-foreground/90 whitespace-pre min-w-max">
+                  <pre
+                    className="text-[10px] leading-[10px] font-mono text-foreground/90 whitespace-pre min-w-max"
+                    style={{ letterSpacing: "0", fontVariantLigatures: "none", fontFeatureSettings: '"liga" 0, "calt" 0' }}
+                  >
                     {(waPairingLines.length > 0 || waLogBuffer.current)
                       ? [...waPairingLines, ...(waLogBuffer.current ? [waLogBuffer.current] : [])].join("\n")
                       : waPairingActive
