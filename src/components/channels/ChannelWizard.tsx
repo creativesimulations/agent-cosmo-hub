@@ -255,6 +255,18 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       return next.length > 220000 ? next.slice(-220000) : next;
     });
     const cleanedData = stripAnsiLike(event.data).replace(/\u200b/g, "");
+    // Detect Baileys / Hermes signals that an old session is being resumed
+    // instead of generating a fresh QR. We surface a "Force fresh QR pairing"
+    // button so the user is not stuck waiting for a QR that will never appear.
+    if (
+      /found existing session/i.test(cleanedData) ||
+      /restoring session/i.test(cleanedData) ||
+      /resuming session/i.test(cleanedData) ||
+      /existing auth state/i.test(cleanedData) ||
+      /already linked/i.test(cleanedData)
+    ) {
+      setWaStaleSessionDetected(true);
+    }
     if (cleanedData.includes("[process] Command timed out")) {
       const sid = waStreamIdRef.current;
       if (sid) {
@@ -271,6 +283,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingError(`${phaseMessage} Try again; Ronbot will continue from any cached progress.`);
       setWaRetryReady(true);
       setWaPairingPhase("idle");
+      // If the timeout happened during pairing AND we never saw QR output, the
+      // most likely cause is a stale session — invite the user to force-clear.
+      if (waPairingPhase === "pairing") {
+        setWaStaleSessionDetected(true);
+      }
     }
     waLogBuffer.current += cleanedData.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     // #region agent log
