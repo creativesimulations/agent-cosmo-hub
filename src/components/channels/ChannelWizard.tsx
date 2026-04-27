@@ -154,6 +154,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaRetryReady(false);
     setWaAutoFixing(false);
     setWaStatusHint("");
+    setHadExistingConfig(false);
+    setResetConfirmOpen(false);
+    setResetting(false);
+    setWaStaleSessionDetected(false);
+    setWaForceFreshBusy(false);
     waAutoPromptSeenRef.current = new Set();
     setSetupToolsChecked(false);
     setSetupToolsOk(false);
@@ -162,6 +167,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     waStreamIdRef.current = null;
     let cancelled = false;
     (async () => {
+      const env = await systemAPI.readEnvFile().catch(() => ({} as Record<string, string>));
+      const requiredKeys = channel.credentials.filter((c) => !c.optional).map((c) => c.envVar);
+      const wasConfigured = requiredKeys.length > 0 && requiredKeys.every(
+        (k) => !!env[k] && env[k].trim().length > 0,
+      );
       const next: Record<string, string> = {};
       for (const cred of channel.credentials) {
         const existing = await systemAPI.secrets.get(cred.envVar);
@@ -177,6 +187,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       }
       if (!cancelled) {
         setValues(next);
+        setHadExistingConfig(wasConfigured);
         if (channel.id === "whatsapp") {
           setWaBaseline({
             mode: (next.WHATSAPP_MODE || "").trim(),
