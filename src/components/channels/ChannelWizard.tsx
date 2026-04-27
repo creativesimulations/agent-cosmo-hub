@@ -20,6 +20,7 @@ import WhatsAppTerminal from "@/components/channels/WhatsAppTerminal";
 
 type Step = 0 | 1 | 2 | 3;
 type WaPairingPhase = "idle" | "runtime" | "bridge-deps" | "pairing";
+type WaPromptChoice = "yesNo" | "none";
 
 interface ChannelWizardProps {
   channel: Channel;
@@ -92,6 +93,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waPairPrereqOk, setWaPairPrereqOk] = useState(false);
   const [waPairPrereqDetail, setWaPairPrereqDetail] = useState("");
   const [waAutoFixing, setWaAutoFixing] = useState(false);
+  const [waPendingPrompt, setWaPendingPrompt] = useState<{ kind: WaPromptChoice; text: string }>({
+    kind: "none",
+    text: "",
+  });
+  const [waPromptBusy, setWaPromptBusy] = useState(false);
   const [setupToolsChecked, setSetupToolsChecked] = useState(false);
   const [setupToolsOk, setSetupToolsOk] = useState(false);
   const [setupToolsDetail, setSetupToolsDetail] = useState("");
@@ -121,6 +127,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairPrereqOk(false);
     setWaPairPrereqDetail("");
     setWaAutoFixing(false);
+    setWaPendingPrompt({ kind: "none", text: "" });
+    setWaPromptBusy(false);
     setSetupToolsChecked(false);
     setSetupToolsOk(false);
     setSetupToolsDetail("");
@@ -185,6 +193,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     const parts = waLogBuffer.current.split("\n");
     waLogBuffer.current = parts.pop() ?? "";
     if (parts.length === 0) return;
+    for (const line of parts) {
+      if (/\[[Yy]\/[Nn]\]/.test(line) || /\(y\/N\)/.test(line)) {
+        setWaPendingPrompt({ kind: "yesNo", text: line.trim() });
+      }
+    }
     setWaPairingLines((prev) => [...prev, ...parts].slice(-400));
   }, [waPairingPhase]);
 
@@ -239,7 +252,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const r = await systemAPI.testChannel(channel.id);
       if (r.success) {
         setTestResult("ok");
-        return;
+        return true;
       }
       const detail = r.stderr?.trim() || r.stdout?.trim() || "Channel test command failed.";
       const env = await systemAPI.readEnvFile();
@@ -252,9 +265,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           ? `${detail}\nMissing in ~/.hermes/.env: ${missing.map((m) => m.envVar).join(", ")}`
           : detail,
       );
+      return false;
     } catch (e) {
       setTestResult("fail");
       setTestError(e instanceof Error ? e.message : String(e));
+      return false;
     } finally {
       setTesting(false);
     }
@@ -480,7 +495,25 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingError("");
       toast.success("WhatsApp linked");
       setTestResult("idle");
-      void runTest();
+      void (async () => {
+        const ok = await runTest();
+        if (!ok) return;
+        const r = await systemAPI.startGateway();
+        if (r.success) {
+          setFormError("");
+          toast.success(`${channel.name} channel enabled`, {
+            description: "Your agent is now reachable here.",
+          });
+          onComplete();
+          onClose();
+          return;
+        }
+        const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
+        setFormError(detail);
+        toast.error("Failed to start gateway", {
+          description: detail,
+        });
+      })();
     } else {
       toast.info("Not linked yet", {
         description: "Finish scanning the QR code on your phone, then check again.",
@@ -505,13 +538,44 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         setWaPairingError("");
         toast.success("WhatsApp linked");
         setTestResult("idle");
-        void runTest();
+        void (async () => {
+          const ok = await runTest();
+          if (!ok) return;
+          const r = await systemAPI.startGateway();
+          if (r.success) {
+            setFormError("");
+            toast.success(`${channel.name} channel enabled`, {
+              description: "Your agent is now reachable here.",
+            });
+            onComplete();
+            onClose();
+            return;
+          }
+          const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
+          setFormError(detail);
+          toast.error("Failed to start gateway", {
+            description: detail,
+          });
+        })();
       })();
     }, 2000);
     return () => {
       window.clearInterval(timer);
     };
-  }, [open, step, channel.id, waPairingActive, runTest]);
+  }, [open, step, channel.id, channel.name, waPairingActive, runTest, onClose, onComplete]);
+
+  const answerWaPrompt = async (answer: "yes" | "no") => {
+    const id = waStreamIdRef.current;
+    if (!id) return;
+    setWaPromptBusy(true);
+    try {
+      const data = answer === "yes" ? "y\n" : "\n";
+      await systemAPI.writeStreamStdin(id, data);
+      setWaPendingPrompt({ kind: "none", text: "" });
+    } finally {
+      setWaPromptBusy(false);
+    }
+  };
 
   const handleRefreshGatewayInstall = async () => {
     setGatewayRefreshBusy(true);
@@ -861,6 +925,34 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 <p className="text-[11px] text-muted-foreground">
                   Tip: Hold your phone about 20-30 cm away, keep screen brightness high, and avoid glare while scanning.
                 </p>
+                {waPendingPrompt.kind === "yesNo" && (
+                  <div className="rounded-md border border-border/60 bg-background/40 p-3 space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      Hermes is waiting for your choice:
+                    </p>
+                    <p className="text-[11px] font-mono text-foreground/90 whitespace-pre-wrap">{waPendingPrompt.text}</p>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={waPromptBusy}
+                        onClick={() => void answerWaPrompt("yes")}
+                      >
+                        Yes
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={waPromptBusy}
+                        onClick={() => void answerWaPrompt("no")}
+                      >
+                        No
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <div className="rounded-md border border-border/50 bg-background/50 h-[62vh] min-h-[26rem] overflow-hidden p-2">
                   <WhatsAppTerminal
                     content={waTerminalRaw}
