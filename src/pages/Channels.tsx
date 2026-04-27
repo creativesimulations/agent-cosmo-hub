@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Radio, Sparkles, Loader2 } from "lucide-react";
 import ChannelCard, { ChannelStatus } from "@/components/channels/ChannelCard";
 import ChannelWizard from "@/components/channels/ChannelWizard";
@@ -18,12 +18,42 @@ const ChannelsPage = () => {
   const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
   const [unlocksLoading, setUnlocksLoading] = useState(true);
   const [activeWizard, setActiveWizard] = useState<Channel | null>(null);
-  const [toggling, setToggling] = useState<string | null>(null);
   const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
-  const [toggleError, setToggleError] = useState<string>("");
-  const [lastToggleChannelId, setLastToggleChannelId] = useState<string | null>(null);
+  const channelsDebugRunRef = useRef("");
+
+  const emitChannelsDebugLog = useCallback((hypothesisId: string, location: string, message: string, data: Record<string, unknown>) => {
+    // #region agent log
+    fetch("http://127.0.0.1:7544/ingest/13d5d95c-e042-47dd-9c7b-02723faafae2", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "8f17d1",
+      },
+      body: JSON.stringify({
+        sessionId: "8f17d1",
+        runId: channelsDebugRunRef.current || "channels-unset",
+        hypothesisId,
+        location,
+        message,
+        data,
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+  }, [channelsDebugRunRef]);
+
+  const getRunningChannels = async (): Promise<string[]> => {
+    try {
+      const status = await systemAPI.hermesStatus();
+      const out = `${status.stdout || ""}\n${status.stderr || ""}`.toLowerCase();
+      return CHANNELS.filter((c) => out.includes(`${c.id}`) && out.includes("running")).map((c) => c.id);
+    } catch {
+      return [];
+    }
+  };
 
   const refresh = useCallback(async () => {
+    channelsDebugRunRef.current = `channels-${Date.now()}`;
     // 1. Resolve unlocks for paid channels.
     const unlockMap: Record<string, boolean> = {};
     for (const u of UPGRADES) {
@@ -36,16 +66,44 @@ const ChannelsPage = () => {
     //    ~/.hermes/.env (configured) and `hermes status` (running).
     //    readEnvFile() returns a parsed Record<string, string>.
     const env = await systemAPI.readEnvFile();
+    // #region agent log
+    emitChannelsDebugLog("C1", "Channels.tsx:refresh:env", "env-derived channel config keys", {
+      hasWhatsappEnabled: !!(env.WHATSAPP_ENABLED && env.WHATSAPP_ENABLED.trim().length > 0),
+      hasWhatsappAllowedUsers: !!(env.WHATSAPP_ALLOWED_USERS && env.WHATSAPP_ALLOWED_USERS.trim().length > 0),
+      whatsappMode: (env.WHATSAPP_MODE || "").trim(),
+      envKeyCount: Object.keys(env).length,
+    });
+    // #endregion
 
-    let runningChannels: string[] = [];
-    try {
-      const status = await systemAPI.hermesStatus();
-      const out = `${status.stdout || ""}\n${status.stderr || ""}`.toLowerCase();
-      runningChannels = CHANNELS.filter((c) => out.includes(`${c.id}`) && out.includes("running")).map(
-        (c) => c.id,
-      );
-    } catch {
-      runningChannels = [];
+    let runningChannels = await getRunningChannels();
+
+    const configuredChannels = CHANNELS.filter((channel) => {
+      if (channel.tier === "paid" && !unlockMap[channel.upgradeId!]) return false;
+      const required = channel.credentials.filter((c) => !c.optional);
+      return required.every((c) => !!env[c.envVar] && env[c.envVar].trim().length > 0);
+    }).map((c) => c.id);
+    // #region agent log
+    emitChannelsDebugLog("C2", "Channels.tsx:refresh:configuredChannels", "configured channels derived from env", {
+      configuredChannels,
+      unlockMap,
+    });
+    // #endregion
+
+    // Configured channels should be always-on: ensure gateway is started automatically.
+    if (configuredChannels.length > 0) {
+      const startResult = await systemAPI.startGateway();
+      // #region agent log
+      emitChannelsDebugLog("C3", "Channels.tsx:refresh:autoStartGateway", "auto start gateway result", {
+        success: startResult.success,
+        stderrFirstLine: startResult.stderr?.split("\n")[0] || "",
+        stdoutFirstLine: startResult.stdout?.split("\n")[0] || "",
+      });
+      // #endregion
+      if (!startResult.success) {
+        const detail = startResult.stderr?.split("\n")[0] || startResult.stdout?.split("\n")[0] || "Check Logs for details.";
+        toast.error("Could not start configured channels automatically", { description: detail });
+      }
+      runningChannels = await getRunningChannels();
     }
 
     const next: Record<string, ChannelStatus> = {};
@@ -64,8 +122,14 @@ const ChannelsPage = () => {
         next[channel.id] = { state: "configured", running: runningChannels.includes(channel.id) };
       }
     }
+    // #region agent log
+    emitChannelsDebugLog("C4", "Channels.tsx:refresh:statuses", "final statuses computed", {
+      statuses: next,
+      runningChannels,
+    });
+    // #endregion
     setStatuses(next);
-  }, []);
+  }, [emitChannelsDebugLog]);
 
   useEffect(() => {
     void refresh();
@@ -79,38 +143,6 @@ const ChannelsPage = () => {
       return;
     }
     setActiveWizard(channel);
-  };
-
-  const handleToggle = async (channel: Channel) => {
-    setToggling(channel.id);
-    setToggleError("");
-    setLastToggleChannelId(channel.id);
-    const status = statuses[channel.id];
-    try {
-      if (status.state === "configured" && status.running) {
-        const r = await systemAPI.stopGateway();
-        if (r.success) {
-          toast.success(`${channel.name} stopped`);
-          await refresh();
-        } else {
-          const detail = r.stderr?.split("\n")[0] || r.stdout?.split("\n")[0] || "Check Logs for details.";
-          setToggleError(detail);
-          toast.error(`Failed to stop ${channel.name}`, { description: detail });
-        }
-      } else {
-        const r = await systemAPI.startGateway();
-        if (r.success) {
-          toast.success(`${channel.name} started`);
-          await refresh();
-        } else {
-          const detail = r.stderr?.split("\n")[0] || r.stdout?.split("\n")[0] || "Check Logs for details.";
-          setToggleError(detail);
-          toast.error(`Failed to start ${channel.name}`, { description: detail });
-        }
-      }
-    } finally {
-      setToggling(null);
-    }
   };
 
   const free = CHANNELS.filter((c) => c.tier === "free");
@@ -150,19 +182,6 @@ const ChannelsPage = () => {
         </p>
       </div>
 
-      {toggleError && lastToggleChannelId && (
-        <ActionableError
-          title="Channel action failed"
-          summary={toggleError}
-          details={toggleError}
-          fixLabel="Try Again"
-          onFix={() => {
-            const channel = CHANNELS.find((c) => c.id === lastToggleChannelId);
-            if (channel) void handleToggle(channel);
-          }}
-        />
-      )}
-
       {/* Available channels */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground/70">
@@ -175,8 +194,6 @@ const ChannelsPage = () => {
               channel={c}
               status={statuses[c.id] ?? { state: "loading" }}
               onSetUp={() => handleSetUp(c)}
-              onToggle={() => handleToggle(c)}
-              toggling={toggling === c.id}
             />
           ))}
           {googleWorkspaceUnlocked && googleWorkspaceUpgrade && (
@@ -229,8 +246,6 @@ const ChannelsPage = () => {
                 channel={c}
                 status={statuses[c.id] ?? { state: "loading" }}
                 onSetUp={() => handleSetUp(c)}
-                onToggle={() => handleToggle(c)}
-                toggling={toggling === c.id}
               />
             ))}
           </div>

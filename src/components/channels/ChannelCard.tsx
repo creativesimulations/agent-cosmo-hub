@@ -14,11 +14,9 @@ interface ChannelCardProps {
   channel: Channel;
   status: ChannelStatus;
   onSetUp: () => void;
-  onToggle: () => void;
-  toggling?: boolean;
 }
 
-const ChannelCard = ({ channel, status, onSetUp, onToggle, toggling }: ChannelCardProps) => {
+const ChannelCard = ({ channel, status, onSetUp }: ChannelCardProps) => {
   const Icon = channel.icon;
 
   const statusBadge = () => {
@@ -43,13 +41,13 @@ const ChannelCard = ({ channel, status, onSetUp, onToggle, toggling }: ChannelCa
       return (
         <span className="inline-flex items-center gap-1 text-[11px] text-success">
           <span className="w-2 h-2 rounded-full bg-success animate-pulse-glow" />
-          Running
+          Active
         </span>
       );
     }
     return (
       <span className="inline-flex items-center gap-1 text-[11px] text-foreground/70">
-        <CheckCircle2 className="w-3 h-3" /> Configured
+        <Loader2 className="w-3 h-3 animate-spin" /> Starting…
       </span>
     );
   };
@@ -80,34 +78,15 @@ const ChannelCard = ({ channel, status, onSetUp, onToggle, toggling }: ChannelCa
             <Lock className="w-3.5 h-3.5 mr-1.5" /> Unlock
           </Button>
         ) : (
-          <>
-            <Button
-              variant={status.state === "not-configured" ? "default" : "outline"}
-              size="sm"
-              onClick={onSetUp}
-              className={cn("w-full", status.state === "not-configured" && "gradient-primary text-primary-foreground")}
-              disabled={status.state === "loading"}
-            >
-              {status.state === "configured" ? "Reconfigure" : "Set up"}
-            </Button>
-            {status.state === "configured" && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onToggle}
-                disabled={toggling}
-                className="w-full"
-              >
-                {toggling ? (
-                  <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Working…</>
-                ) : status.running ? (
-                  "Stop"
-                ) : (
-                  "Start"
-                )}
-              </Button>
-            )}
-          </>
+          <Button
+            variant={status.state === "not-configured" ? "default" : "outline"}
+            size="sm"
+            onClick={onSetUp}
+            className={cn("w-full", status.state === "not-configured" && "gradient-primary text-primary-foreground")}
+            disabled={status.state === "loading"}
+          >
+            {status.state === "configured" ? "Reconfigure" : "Set up"}
+          </Button>
         )}
       </div>
     </GlassCard>
