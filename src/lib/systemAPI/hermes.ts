@@ -1364,14 +1364,58 @@ export const hermesAPI = {
   async startGateway(): Promise<CommandResult> {
     agentLogs.push({ source: 'gateway', level: 'info', summary: 'Starting messaging gateway…' });
     await materializeHermesEnv();
-    const r = await runHermesCli('hermes gateway start', { timeout: 30000 });
+    // Some Hermes installs don't have the user-service unit registered yet.
+    // Install/register the gateway service, then retry start before giving up.
+    // NOTE: runHermesCli wraps everything in `set -e`, so we explicitly switch
+    // to `set +e` here to collect rc codes and run fallback steps.
+    const r = await runHermesCli(
+      [
+        'set +e',
+        'hermes gateway start 2>&1',
+        'RC=$?',
+        'if [ "$RC" -ne 0 ]; then',
+        '  hermes gateway install 2>&1 || hermes gateway enable 2>&1 || true',
+        '  hermes gateway start 2>&1',
+        '  RC=$?',
+        'fi',
+        'if [ "$RC" -ne 0 ]; then',
+        '  hermes gateway status 2>&1 || true',
+        'fi',
+        // Last resort for environments where service units are unavailable:
+        // run gateway in background and verify a live process exists.
+        'if [ "$RC" -ne 0 ]; then',
+        '  nohup hermes gateway >/tmp/hermes-gateway.log 2>&1 &',
+        '  sleep 2',
+        '  pgrep -f "hermes gateway" >/dev/null 2>&1',
+        '  if [ $? -eq 0 ]; then',
+        '    echo "[gateway] service unit missing; started in background mode"',
+        '    RC=0',
+        '  fi',
+        'fi',
+        'exit "$RC"',
+      ].join('\n'),
+      { timeout: 90000 },
+    );
+    const combined = `${r.stdout || ''}\n${r.stderr || ''}`.toLowerCase();
+    const missingGatewayUnit =
+      combined.includes('hermes-gateway.service') &&
+      (combined.includes('not found') || combined.includes('could not be found'));
+    const normalized = missingGatewayUnit
+      ? {
+          ...r,
+          success: false,
+          stderr:
+            (r.stderr?.trim() ? `${r.stderr.trim()}\n` : '') +
+            'Gateway service unit is missing. Run `hermes gateway install` in a terminal, then retry channel setup.',
+        }
+      : r;
     agentLogs.push({
       source: 'gateway',
-      level: r.success ? 'info' : 'error',
-      summary: r.success ? 'Gateway started' : `Gateway failed (exit=${r.code})`,
-      detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
+      level: normalized.success ? 'info' : 'error',
+      summary: normalized.success ? 'Gateway started' : `Gateway failed (exit=${normalized.code})`,
+      detail: truncateForLog([normalized.stdout, normalized.stderr].filter(Boolean).join('\n')),
     });
-    return r;
+    return normalized;
   },
 
   /** Stop the messaging gateway */
@@ -2484,6 +2528,65 @@ model: ${options.model || 'openrouter/auto'}
       await this.setSkillEnabled(skillName, true).catch(() => undefined);
     }
     return { success: true, skillName, hasManifest, requiredSecrets: [] };
+  },
+
+  /**
+   * Install + enable the built-in Google Workspace skill and run its auth flow.
+   * We try multiple command variants because Hermes CLI naming changed across releases.
+   */
+  async setupGoogleWorkspace(): Promise<{
+    success: boolean;
+    installed: boolean;
+    enabled: boolean;
+    authed: boolean;
+    output: string;
+    error?: string;
+  }> {
+    await materializeHermesEnv().catch(() => undefined);
+
+    const install = await runHermesCli(
+      [
+        'hermes skills install google-workspace 2>&1',
+        '|| hermes skill install google-workspace 2>&1',
+        '|| hermes install skill google-workspace 2>&1',
+        '|| hermes skills add google-workspace 2>&1',
+      ].join(' '),
+      { timeout: 120000 },
+    );
+    const installed = install.success;
+
+    const enableRes = await this.setSkillEnabled('google-workspace', true).catch((e) => ({
+      success: false,
+      error: e instanceof Error ? e.message : String(e),
+    }));
+    const enabled = !!enableRes?.success;
+
+    const auth = await runHermesCli(
+      [
+        'hermes auth google-workspace 2>&1',
+        '|| hermes auth google 2>&1',
+        '|| hermes google-workspace auth 2>&1',
+        '|| gws auth login 2>&1',
+      ].join(' '),
+      { timeout: 180000 },
+    );
+    const authed = auth.success;
+
+    const output = [install.stdout, install.stderr, auth.stdout, auth.stderr]
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+
+    const success = installed && enabled && authed;
+    const error = success
+      ? undefined
+      : !installed
+      ? 'Could not install `google-workspace` skill from Hermes registry.'
+      : !enabled
+      ? (enableRes as { error?: string })?.error || 'Skill install succeeded but enabling `google-workspace` failed.'
+      : 'Google Workspace auth did not complete. Retry setup and finish the browser/device login.'
+
+    return { success, installed, enabled, authed, output, error };
   },
 
   /** Install a Hermes tool from a local folder into ~/.hermes/tools/. */

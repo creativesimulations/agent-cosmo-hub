@@ -97,6 +97,7 @@ export const systemAPI = {
   chatPing: hermesAPI.chatPing.bind(hermesAPI),
   installSkillFromPath: hermesAPI.installSkillFromPath.bind(hermesAPI),
   installSkillFromGit: hermesAPI.installSkillFromGit.bind(hermesAPI),
+  setupGoogleWorkspace: hermesAPI.setupGoogleWorkspace.bind(hermesAPI),
   installToolFromPath: hermesAPI.installToolFromPath.bind(hermesAPI),
   revealSkillsFolder: hermesAPI.revealSkillsFolder.bind(hermesAPI),
   probeBrowserNavigate: hermesAPI.probeBrowserNavigate.bind(hermesAPI),

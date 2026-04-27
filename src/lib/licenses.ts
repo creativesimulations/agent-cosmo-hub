@@ -59,6 +59,15 @@ export const UPGRADES: Upgrade[] = [
     buyUrl: 'https://ronbot.com/upgrades/browserbase', // TODO: replace with real URL
     priceLabel: 'One-time · $29',
   },
+  {
+    id: 'googleworkspace',
+    name: 'Google Workspace skill',
+    tagline: 'Connect Gmail, Calendar, Drive, Docs, and Sheets from your agent.',
+    description:
+      "Unlocks one-click setup for Hermes' google-workspace skill, including install + OAuth flow guidance for Gmail, Calendar, Drive, Contacts, Sheets, and Docs.",
+    buyUrl: 'https://ronbot.com/upgrades/googleworkspace', // TODO: replace with real URL
+    priceLabel: 'One-time · $1',
+  },
 ];
 
 /** Look up an upgrade by id. */

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Puzzle, AlertCircle, CheckCircle2, Loader2, RefreshCw, Search, Package, Wrench,
-  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal, Globe, Plus,
+  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal, Globe, Plus, Sparkles, ExternalLink,
 } from "lucide-react";
 import InstallSkillDialog from "@/components/skills/InstallSkillDialog";
 import GlassCard from "@/components/ui/GlassCard";
@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 import BrowserBackendBadge from "@/components/skills/BrowserBackendBadge";
 import ActionableError from "@/components/ui/ActionableError";
+import { getUpgrade, isUpgradeUnlocked } from "@/lib/licenses";
 
 type Skill = {
   name: string;
@@ -28,6 +29,8 @@ type Skill = {
   description?: string;
   requiredSecrets?: string[];
 };
+
+const openExternal = (url: string) => window.open(url, "_blank", "noopener,noreferrer");
 
 const Skills = () => {
   const navigate = useNavigate();
@@ -46,6 +49,8 @@ const Skills = () => {
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
   const [installOpen, setInstallOpen] = useState(false);
   const [actionError, setActionError] = useState<string>("");
+  const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
+  const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
 
   // Read ?focus=<capId> from the URL — drives a scroll + highlight of any
   // skill rows whose names match the capability's candidate skill list.
@@ -68,10 +73,11 @@ const Skills = () => {
     }
     setLoading(true);
     setError(null);
-    const [result, cfg, sec] = await Promise.all([
+    const [result, cfg, sec, googleworkspace] = await Promise.all([
       systemAPI.listSkills(),
       systemAPI.getSkillsConfig(),
       secretsStore.list(),
+      isUpgradeUnlocked("googleworkspace"),
     ]);
     if (result.success) {
       setSkills(result.skills);
@@ -81,6 +87,7 @@ const Skills = () => {
     }
     setDisabledSet(new Set(cfg.disabled));
     setSecretKeys(new Set(sec.keys || []));
+    setUnlocks({ googleworkspace });
     setLoading(false);
   }, [agentConnected]);
 
@@ -180,6 +187,35 @@ const Skills = () => {
     const missing = (skill.requiredSecrets ?? []).filter((k) => !secretKeys.has(k));
     if (missing.length > 0) return { label: "Needs setup", tone: "needs" };
     return { label: "Ready", tone: "ready" };
+  };
+
+  const googleWorkspaceUpgrade = getUpgrade("googleworkspace");
+  const googleWorkspaceUnlocked = !!unlocks.googleworkspace;
+  const googleWorkspaceSkill = skills.find((s) => s.name.toLowerCase() === "google-workspace");
+  const googleWorkspaceNeedsSecrets = (googleWorkspaceSkill?.requiredSecrets ?? []).filter(
+    (k) => !secretKeys.has(k),
+  );
+
+  const handleGoogleWorkspaceSetup = async () => {
+    if (!googleWorkspaceUnlocked) return;
+    setGoogleWorkspaceBusy(true);
+    try {
+      const r = await systemAPI.setupGoogleWorkspace();
+      if (r.success) {
+        toast.success("Google Workspace is connected", {
+          description: "Gmail/Calendar/Drive tools are now ready for the next agent restart.",
+        });
+        setActionError("");
+        await load();
+        return;
+      }
+      setActionError(r.error || "Google Workspace setup failed.");
+      toast.error("Google Workspace setup failed", {
+        description: r.error || "Check diagnostics output and retry.",
+      });
+    } finally {
+      setGoogleWorkspaceBusy(false);
+    }
   };
 
   if (!agentConnected) {
@@ -356,6 +392,64 @@ const Skills = () => {
           className="pl-9 bg-background/50 border-white/10"
         />
       </div>
+
+      <GlassCard className={`p-4 space-y-3 ${googleWorkspaceUnlocked ? "" : "border-primary/30 bg-primary/5"}`}>
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-md bg-primary/15 text-primary flex items-center justify-center shrink-0">
+              <Sparkles className="w-4.5 h-4.5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-semibold text-foreground">Google Workspace (paid add-on)</h3>
+                <Badge variant="outline" className="border-white/10 text-muted-foreground text-[10px]">
+                  {googleWorkspaceUpgrade?.priceLabel ?? "One-time · $1"}
+                </Badge>
+                {googleWorkspaceUnlocked && (
+                  <Badge variant="outline" className="border-success/30 text-success text-[10px]">
+                    Unlocked
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                One-click setup for Hermes <code>google-workspace</code> skill (Gmail, Calendar, Drive, Docs, Sheets).
+              </p>
+              {googleWorkspaceUnlocked && googleWorkspaceSkill && googleWorkspaceNeedsSecrets.length > 0 && (
+                <p className="text-[11px] text-warning mt-1">
+                  Missing secrets: {googleWorkspaceNeedsSecrets.join(", ")}
+                </p>
+              )}
+            </div>
+          </div>
+          {googleWorkspaceUnlocked ? (
+            <Button
+              size="sm"
+              onClick={() => void handleGoogleWorkspaceSetup()}
+              className="gradient-primary text-primary-foreground shrink-0"
+              disabled={googleWorkspaceBusy}
+            >
+              {googleWorkspaceBusy ? (
+                <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Setting up…</>
+              ) : (
+                <>Set up Google Workspace</>
+              )}
+            </Button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => openExternal(googleWorkspaceUpgrade?.buyUrl ?? "https://ronbot.com/upgrades")}
+              >
+                <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> Buy add-on
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => navigate("/upgrades")}>
+                Enter key
+              </Button>
+            </div>
+          )}
+        </div>
+      </GlassCard>
 
       <GlassCard className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-3 flex-wrap">
