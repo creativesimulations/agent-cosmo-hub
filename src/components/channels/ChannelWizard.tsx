@@ -621,7 +621,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           const msg = "Ronbot could not remove the previous WhatsApp session files.";
           setWaPairingError(msg);
           toast.error("Could not prepare clean WhatsApp session", {
-            description: "Close any running Hermes WhatsApp session and try again.",
+            description: "Close any running WhatsApp bridge session and try again.",
           });
           setWaPairingPhase("idle");
           return;
@@ -670,7 +670,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         return;
       }
       setWaPairingPhase("pairing");
-      setWaStatusHint("Waiting for WhatsApp QR output from Hermes…");
+      setWaStatusHint("Waiting for WhatsApp QR output from Ronbot…");
       await systemAPI.runWhatsAppPairing(appendWaPairingChunk, {
         onStreamId: (id) => {
           waStreamIdRef.current = id;
@@ -725,7 +725,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaRetryReady(true);
     } else {
       setWaPairingError(
-        "Hermes closed before a session was saved. Check the log for errors, or try Start QR pairing again after scanning.",
+        "Pairing closed before a session was saved. Check the log for errors, or try Start QR pairing again after scanning.",
       );
       setWaRetryReady(true);
     }
@@ -886,7 +886,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const r = await systemAPI.refreshGatewayInstall();
       if (r.success) {
         toast.success("Gateway service refreshed", {
-          description: "Hermes re-saved your PATH for the messaging gateway. Start the gateway from Channels if needed.",
+          description: "Ronbot re-saved your PATH for the messaging gateway. Start the gateway from Channels if needed.",
         });
         if (channel.id === "whatsapp") {
           const pr = await systemAPI.checkWhatsAppPairingPrereqs();
@@ -1261,7 +1261,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               ["telegram", "slack", "discord", "signal"].includes(channel.id) && (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-background/30 px-3 py-2 text-[11px] text-muted-foreground">
                   <span className="min-w-[12rem] flex-1">
-                    After installing curl, Python, or Node, or changing PATH, refresh the gateway service so Hermes snapshots PATH (recommended in Hermes docs for macOS/Linux).
+                    After installing curl, Python, or Node, or changing PATH, refresh the gateway service so Ronbot snapshots PATH.
                   </span>
                   <Button
                     type="button"
@@ -1286,14 +1286,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 title="A system tool is missing for the connection test"
                 summary={
                   channel.id === "signal"
-                    ? "Ronbot uses curl to ping the signal-cli health URL Hermes documents. Python is not required for this channel test."
-                    : "Ronbot uses curl and Python 3 to verify your bot tokens when Hermes does not provide a built-in gateway test command."
+                    ? "Ronbot uses curl to ping the signal-cli health URL. Python is not required for this channel test."
+                    : "Ronbot uses curl and Python 3 to verify your bot tokens directly."
                 }
                 details={
                   setupToolsDetail ||
                   (channel.id === "signal"
-                    ? "Install curl in the same environment Hermes uses. On Windows with WSL, install curl inside that Linux distro."
-                    : "Install curl and Python 3 in the same environment Hermes uses. On Windows with WSL, install them inside that Linux distro.")
+                    ? "Install curl in the same environment Ronbot uses. On Windows with WSL, install curl inside that Linux distro."
+                    : "Install curl and Python 3 in the same environment Ronbot uses. On Windows with WSL, install them inside that Linux distro.")
                 }
                 fixLabel={channel.id === "signal" ? "cURL downloads" : "Python downloads"}
                 onFix={() => {
@@ -1309,10 +1309,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             {channel.id === "whatsapp" && waPairPrereqChecked && !waPairPrereqOk && (
               <ActionableError
                 title="WhatsApp pairing needs npm and script"
-                summary="Ronbot uses a managed Node runtime for WhatsApp bridge dependencies and needs script(1) to allocate a PTY so Hermes can render the QR in this window."
+                summary="Ronbot uses a managed Node runtime for WhatsApp bridge dependencies and needs script(1) to allocate a PTY so the QR can render in this window."
                 details={
                   waPairPrereqDetail ||
-                  "Use Auto-fix to prepare the managed runtime and missing tools. WhatsApp pairing follows Hermes docs: gateway is the long-running service, and this step only links/saves the session."
+                  "Use Auto-fix to prepare the managed runtime and missing tools. The gateway is the long-running service; this step only links and saves the session."
                 }
                 fixLabel="Auto-fix now"
                 fixing={waAutoFixing}
@@ -1416,7 +1416,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                       variant="outline"
                       onClick={() => void forceFreshWhatsAppPairing()}
                       disabled={waForceFreshBusy || waPairingActive || waAutoFixing}
-                      title="Wipe local Hermes session and Baileys bridge auth folders, then start a fresh QR pairing."
+                      title="Wipe local WhatsApp session and bridge auth folders, then start a fresh QR pairing."
                     >
                       {waForceFreshBusy ? (
                         <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Clearing…</>
@@ -1429,7 +1429,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 {waStaleSessionDetected && !waPairingActive && (
                   <p className="text-[11px] text-amber-500/90 leading-relaxed">
                     Looks like an old WhatsApp session is being resumed instead of pairing fresh. This often
-                    happens after reinstalling Ronbot — `~/.hermes` survives uninstall on Windows/WSL. Use
+                    happens after reinstalling Ronbot because local agent data survives uninstall on Windows/WSL. Use
                     "Force fresh QR pairing" to wipe the cached session and bridge auth files.
                   </p>
                 )}
@@ -1457,7 +1457,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                         ? [...waPairingLines, ...(waLogBuffer.current ? [waLogBuffer.current] : [])].join("\n")
                         : waPairingActive
                           ? "Starting…"
-                          : "Output from Hermes will appear here."}
+                          : "Output from Ronbot will appear here."}
                     </pre>
                     <div ref={waLogEndRef} />
                   </div>
