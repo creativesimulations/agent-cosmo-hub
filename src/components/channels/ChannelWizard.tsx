@@ -894,6 +894,110 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   };
 
+  /**
+   * Wipe a channel's leftover state so the user can start clean.
+   * Stops the gateway, removes env keys (env file + secrets store), and for
+   * WhatsApp also clears Hermes session + Baileys bridge auth folders that
+   * survive uninstalling Ronbot when ~/.hermes lives in WSL.
+   */
+  const resetChannel = async () => {
+    setResetting(true);
+    try {
+      const keys = (channel.resetEnvVars && channel.resetEnvVars.length > 0)
+        ? channel.resetEnvVars
+        : channel.credentials.map((c) => c.envVar);
+
+      // Stop any running gateway so it doesn't recreate state mid-reset.
+      await systemAPI.stopGateway().catch(() => undefined);
+
+      // WhatsApp: nuke local session + bridge auth dirs first.
+      if (channel.id === "whatsapp") {
+        const cleared = await systemAPI.clearWhatsAppSession();
+        if (!cleared.success) {
+          toast.error("Could not clear WhatsApp session files", {
+            description: cleared.stderr?.split("\n")[0] || "Try again or close any running Hermes WhatsApp session.",
+          });
+        }
+      }
+
+      // Strip env keys from ~/.hermes/.env and from secure secrets storage.
+      const stripped = await systemAPI.removeChannelEnvKeys(keys);
+      if (!stripped.success) {
+        toast.error("Could not remove env keys", {
+          description: stripped.error || "Check ~/.hermes/.env permissions and try again.",
+        });
+        return;
+      }
+      for (const k of keys) {
+        await systemAPI.secrets.delete(k).catch(() => false);
+      }
+      // Re-materialize so anything still managed gets a clean .env back.
+      await systemAPI.materializeEnv().catch(() => undefined);
+
+      // Reset wizard local state.
+      setHadExistingConfig(false);
+      setValues((prev) => {
+        const next = { ...prev };
+        for (const k of keys) next[k] = "";
+        // Re-apply hidden defaults for WhatsApp etc.
+        for (const cred of channel.credentials) {
+          if (cred.kind === "hidden" && cred.defaultValue) next[cred.envVar] = cred.defaultValue;
+          if (cred.kind === "choice" && cred.defaultValue) next[cred.envVar] = cred.defaultValue;
+        }
+        return next;
+      });
+      setWaPaired(false);
+      setWaPairedChecked(false);
+      setWaRelinkRequested(false);
+      setWaAwaitingResetConfirm(false);
+      setWaStaleSessionDetected(false);
+      setWaPairingError("");
+      setTestResult("idle");
+      setTestError("");
+
+      toast.success(`${channel.name} reset`, {
+        description: "Stale credentials removed. Restart setup from step 1.",
+      });
+      // Send the user back to step 1 so they re-enter credentials cleanly.
+      setStep(1);
+      setResetConfirmOpen(false);
+      onComplete();
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  /**
+   * WhatsApp escape hatch: when pairing stalls because Baileys found a stale
+   * session, clear ALL local session/auth files and restart pairing without
+   * requiring the user to redo any earlier steps.
+   */
+  const forceFreshWhatsAppPairing = async () => {
+    setWaForceFreshBusy(true);
+    try {
+      const cleared = await systemAPI.clearWhatsAppSession();
+      if (!cleared.success) {
+        toast.error("Could not clear WhatsApp session files", {
+          description: cleared.stderr?.split("\n")[0] || "Try again or check WSL file permissions.",
+        });
+        return;
+      }
+      setWaPaired(false);
+      setWaPairedChecked(true);
+      setWaStaleSessionDetected(false);
+      setWaPairingError("");
+      setWaRelinkRequested(false);
+      setWaAwaitingResetConfirm(false);
+      setWaRetryReady(false);
+      toast.success("Cleared previous WhatsApp session", {
+        description: "Starting a fresh QR pairing now…",
+      });
+      await startWaPairing(false);
+    } finally {
+      setWaForceFreshBusy(false);
+    }
+  };
+
   const next = async () => {
     if (step === 2) {
       const ok = await saveCredentials();
