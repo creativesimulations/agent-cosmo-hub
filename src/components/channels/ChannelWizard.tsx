@@ -1286,14 +1286,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 title="A system tool is missing for the connection test"
                 summary={
                   channel.id === "signal"
-                    ? "Ronbot uses curl to ping the signal-cli health URL Hermes documents. Python is not required for this channel test."
-                    : "Ronbot uses curl and Python 3 to verify your bot tokens when Hermes does not provide a built-in gateway test command."
+                    ? "Ronbot uses curl to ping the signal-cli health URL. Python is not required for this channel test."
+                    : "Ronbot uses curl and Python 3 to verify your bot tokens directly."
                 }
                 details={
                   setupToolsDetail ||
                   (channel.id === "signal"
-                    ? "Install curl in the same environment Hermes uses. On Windows with WSL, install curl inside that Linux distro."
-                    : "Install curl and Python 3 in the same environment Hermes uses. On Windows with WSL, install them inside that Linux distro.")
+                    ? "Install curl in the same environment Ronbot uses. On Windows with WSL, install curl inside that Linux distro."
+                    : "Install curl and Python 3 in the same environment Ronbot uses. On Windows with WSL, install them inside that Linux distro.")
                 }
                 fixLabel={channel.id === "signal" ? "cURL downloads" : "Python downloads"}
                 onFix={() => {
