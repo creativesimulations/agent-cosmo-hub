@@ -1950,26 +1950,29 @@ export const hermesAPI = {
     );
   },
 
-  /** True when WhatsApp session data exists (i.e., QR pairing completed). */
+  /** True when WhatsApp session data exists with a real Baileys creds.json. */
   async isWhatsAppPaired(): Promise<{ success: boolean; paired: boolean; error?: string }> {
     const r = await runHermesShell(
       [
         'set +e',
-        // Primary Hermes-managed session dir + Baileys bridge auth dirs.
-        // We must inspect ALL of them: a stale install can leave files in
-        // any one of these and Baileys will try to resume instead of pairing.
+        // Authoritative pairing signal = a Baileys creds.json under one of the
+        // canonical session dirs. Counting "any file in any of seven possible
+        // paths" produced false positives (e.g. an empty cache dir).
         'BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
-        'TOTAL=0',
-        'for d in "$HOME/.hermes/platforms/whatsapp/session" "$HOME/.hermes/whatsapp" "$HOME/.hermes/.whatsapp" "$BRIDGE_DIR"/auth_info* "$BRIDGE_DIR"/baileys_auth* "$BRIDGE_DIR"/session*; do',
+        'PAIRED=0',
+        'for d in "$HOME/.hermes/platforms/whatsapp/session" "$HOME/.hermes/whatsapp/session" "$HOME/.hermes/whatsapp" "$HOME/.hermes/.whatsapp" "$BRIDGE_DIR"/auth_info* "$BRIDGE_DIR"/baileys_auth* "$BRIDGE_DIR"/session*; do',
         '  [ -e "$d" ] || continue',
-        '  if [ -d "$d" ]; then C="$(find "$d" -type f 2>/dev/null | head -n 1 | wc -l | tr -d \' \')"; else C=1; fi',
-        '  TOTAL=$((TOTAL + C))',
+        '  if [ -f "$d/creds.json" ] || [ -f "$d" ]; then',
+        '    # creds.json present, OR the path itself is a creds file (rare).',
+        '    case "$d" in',
+        '      */creds.json) PAIRED=1 ;;',
+        '      *) [ -f "$d/creds.json" ] && PAIRED=1 ;;',
+        '    esac',
+        '  fi',
+        '  [ "$PAIRED" -eq 1 ] && break',
         'done',
-        'if [ "$TOTAL" -gt 0 ]; then',
-        '  echo "PAIRED=1"',
-        'else',
-        '  echo "PAIRED=0"',
-        'fi',
+        'echo "PAIRED=$PAIRED"',
+        'exit 0',
       ].join('\n'),
       { timeout: 10000 },
     );
