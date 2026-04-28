@@ -917,10 +917,22 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         }
         const testOk = await runTest();
         if (!testOk) return;
-        const outcome = await restartWhatsAppGatewayWithNewSession();
+        let outcome = await restartWhatsAppGatewayWithNewSession();
         if (outcome === "fail") {
-          setTestResult("fail");
-          return;
+          // First failure on finalize is almost always the Node 18 / Baileys
+          // crypto.subtle crash. Run the atomic runtime repair and retry
+          // ONCE before surfacing the error and leaving the wizard open.
+          const failure = await systemAPI.classifyWhatsAppBridgeFailure().catch(() => ({ kind: "unknown" as const }));
+          const diag = await systemAPI.getWhatsAppRuntimeDiagnostic().catch(() => null);
+          if (failure.kind === "node-version" || diag?.bridgeLogShowsNode18) {
+            toast.message("Repairing WhatsApp bridge runtime…", { description: "Re-applying Node v20 shim and gateway service overrides." });
+            await systemAPI.repairWhatsAppGatewayRuntime(appendWaPairingChunk).catch(() => undefined);
+            outcome = await restartWhatsAppGatewayWithNewSession();
+          }
+          if (outcome === "fail") {
+            setTestResult("fail");
+            return;
+          }
         }
         bumpMessagingProbe();
         setWaBridgeInactiveHint("");
