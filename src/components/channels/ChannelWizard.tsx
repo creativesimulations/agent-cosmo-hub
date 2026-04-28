@@ -1042,6 +1042,27 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaRePairRestartBusy(true);
     setWaBridgeInactiveHint("");
     try {
+      // 1. Atomic runtime repair: install Node v20, write shims (with the
+      // literal "$@" fix), drop systemd override, patch adapter, rotate
+      // logs, restart gateway, verify gateway PID actually has the shim
+      // dir on its captured PATH. This addresses the recurring case where
+      // the user clicks Re-pair + Restart but the bridge keeps crashing
+      // on Node 18 because the gateway service PATH was not refreshed.
+      appendWaPairingChunk({ type: "stdout", data: "[ronbot] running atomic runtime repair…\n" });
+      const repair = await systemAPI
+        .repairWhatsAppGatewayRuntime(appendWaPairingChunk)
+        .catch((e) => ({ ok: false, steps: [{ name: "repair", ok: false, detail: e instanceof Error ? e.message : String(e) }] as Array<{ name: string; ok: boolean; detail?: string }> }));
+      for (const s of repair.steps) {
+        appendWaPairingChunk({ type: s.ok ? "stdout" : "stderr", data: `[ronbot] ${s.ok ? "✓" : "✗"} ${s.name}${s.detail ? ` — ${s.detail}` : ""}\n` });
+      }
+      if (!repair.ok) {
+        const failed = repair.steps.find((s) => !s.ok);
+        toast.error("Runtime repair did not complete", {
+          description: failed ? `${failed.name}: ${failed.detail || "see log"}` : "See log for details.",
+        });
+        // Still try to proceed — the user may have a working setup despite a non-fatal step.
+      }
+      // 2. Now clear local session and re-pair.
       await systemAPI.materializeEnv().catch(() => undefined);
       await systemAPI.stopGateway().catch(() => undefined);
       const cleared = await systemAPI.clearWhatsAppSession();
@@ -1052,15 +1073,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         return;
       }
       await systemAPI.materializeEnv().catch(() => undefined);
-      // Re-apply Node v20 shim, service PATH patch, and adapter patch BEFORE
-      // re-installing the gateway service. refreshGatewayInstall will then
-      // re-apply the patches a second time after `hermes gateway install`
-      // regenerates the unit/plist, so the captured PATH always wins.
-      await systemAPI.ensureWhatsAppManagedNode().catch(() => undefined);
-      await systemAPI
-        .terminateWhatsAppPairingProcesses({ includeGatewayBridge: true })
-        .catch(() => undefined);
-      await systemAPI.refreshGatewayInstall().catch(() => undefined);
       await systemAPI.startGateway().catch(() => undefined);
       setWaPaired(false);
       setWaPairedChecked(true);
