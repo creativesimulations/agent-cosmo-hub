@@ -2624,7 +2624,152 @@ export const hermesAPI = {
   },
 
   /**
-   * Run WhatsApp pairing in the official Baileys bridge `--pair-only` mode.
+   * Rotate stale WhatsApp bridge / gateway logs so the failure classifier
+   * doesn't read pre-fix Node 18 stack traces and report them as a current
+   * failure. Renames *.log → *.log.prev (overwriting any existing .prev).
+   */
+  async rotateWhatsAppBridgeLogs(): Promise<{ success: boolean; rotated: string[] }> {
+    if (!isElectron()) return { success: true, rotated: [] };
+    const r = await runHermesShell(
+      [
+        'set +e',
+        'ROTATED=""',
+        'for f in \\',
+        '  "$HOME/.hermes/platforms/whatsapp/bridge.log" \\',
+        '  "$HOME/.hermes/logs/whatsapp-bridge.log" \\',
+        '  "$HOME/.hermes/logs/gateway.log" \\',
+        '  "$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log"; do',
+        '  [ -f "$f" ] || continue',
+        '  mv -f "$f" "$f.prev" 2>/dev/null && ROTATED="$ROTATED $f" || true',
+        'done',
+        'echo "ROTATED=$ROTATED"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 5000 },
+    );
+    const rotated = ((r.stdout || '').match(/ROTATED=(.*)/)?.[1] || '').trim().split(/\s+/).filter(Boolean);
+    return { success: true, rotated };
+  },
+
+  /**
+   * Verify that the running gateway process is actually using the managed
+   * Node v20 by inspecting its captured environment block (Linux: /proc).
+   * Returns whether the live PATH starts with ~/.hermes/bin.
+   */
+  async verifyGatewayUsesManagedNode(): Promise<{
+    success: boolean;
+    pid?: number;
+    pathStartsWithShim: boolean;
+    rawPath?: string;
+    error?: string;
+  }> {
+    if (!isElectron()) return { success: true, pathStartsWithShim: true };
+    const r = await runHermesShell(
+      [
+        'set +e',
+        'PID=""',
+        'if command -v systemctl >/dev/null 2>&1; then',
+        '  PID="$(systemctl --user show -p MainPID --value hermes-gateway.service 2>/dev/null)"',
+        '  [ "$PID" = "0" ] && PID=""',
+        'fi',
+        'if [ -z "$PID" ] && command -v pgrep >/dev/null 2>&1; then',
+        '  PID="$(pgrep -f \'hermes.*gateway\' 2>/dev/null | head -n 1)"',
+        'fi',
+        '[ -n "$PID" ] || { echo "NO_PID"; exit 0; }',
+        'echo "PID=$PID"',
+        'if [ -r "/proc/$PID/environ" ]; then',
+        '  ENVPATH="$(tr "\\0" "\\n" < /proc/$PID/environ | awk -F= "/^PATH=/{ sub(/^PATH=/,\\\"\\\"); print; exit }")"',
+        '  echo "PATH_RAW=$ENVPATH"',
+        'fi',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 6000 },
+    );
+    const out = r.stdout || '';
+    if (out.includes('NO_PID')) {
+      return { success: false, pathStartsWithShim: false, error: 'Gateway process not found.' };
+    }
+    const pidStr = out.match(/PID=(\d+)/)?.[1];
+    const rawPath = out.match(/PATH_RAW=(.*)/)?.[1]?.trim();
+    const pid = pidStr ? Number(pidStr) : undefined;
+    if (!rawPath) {
+      // /proc not readable (macOS or hardened systemd) — can't verify, treat as inconclusive success.
+      return { success: true, pid, pathStartsWithShim: true, rawPath: undefined };
+    }
+    const home = process.env?.HOME || '';
+    const shimPrefix = `${home}/.hermes/bin`;
+    const startsWith = rawPath.startsWith(shimPrefix) || rawPath.startsWith('~/.hermes/bin');
+    return { success: true, pid, pathStartsWithShim: startsWith, rawPath };
+  },
+
+  /**
+   * Atomic, idempotent end-to-end repair for the WhatsApp bridge runtime.
+   * Wraps every individual fix into a single call the wizard can invoke
+   * from a "Repair runtime + restart gateway" button. Returns a structured
+   * step list so the UI can render progress.
+   */
+  async repairWhatsAppGatewayRuntime(
+    onOutput?: CommandOutputHandler,
+  ): Promise<{
+    ok: boolean;
+    steps: Array<{ name: string; ok: boolean; detail?: string }>;
+    diagnostics?: Awaited<ReturnType<typeof hermesAPI.getWhatsAppRuntimeDiagnostic>>;
+  }> {
+    const steps: Array<{ name: string; ok: boolean; detail?: string }> = [];
+    const log = (line: string) => onOutput?.({ type: 'stdout', data: `[ronbot-repair] ${line}\n` });
+    // 1. Ensure managed Node runtime tarball is installed.
+    log('ensuring managed Node v20 runtime…');
+    const runtime = await this.ensureHermesNodeRuntime(onOutput).catch((e) => ({
+      success: false,
+      stderr: e instanceof Error ? e.message : String(e),
+      stdout: '',
+      code: 1,
+    } as CommandResult));
+    steps.push({ name: 'managed-node-runtime', ok: runtime.success, detail: runtime.success ? undefined : (runtime.stderr || runtime.stdout || '').split('\n').slice(-3).join('\n') });
+    if (!runtime.success) return { ok: false, steps };
+    // 2. Write/refresh the shim and patch service + adapter.
+    log('writing ~/.hermes/bin shims and patching gateway service + adapter…');
+    const shim = await this.ensureWhatsAppManagedNode().catch((e) => ({ success: false, error: e instanceof Error ? e.message : String(e) }));
+    steps.push({ name: 'managed-node-shim', ok: shim.success, detail: shim.success ? `version ${(shim as { version?: string }).version || 'unknown'}` : (shim as { error?: string }).error });
+    if (!shim.success) return { ok: false, steps };
+    // 3. Rotate stale logs so the next failure-classification reads fresh data.
+    log('rotating stale bridge logs…');
+    const rot = await this.rotateWhatsAppBridgeLogs().catch(() => ({ success: false, rotated: [] as string[] }));
+    steps.push({ name: 'rotate-logs', ok: rot.success, detail: rot.rotated.length ? `rotated ${rot.rotated.length} file(s)` : 'no logs to rotate' });
+    // 4. Kill any crash-looping bridge process before restart.
+    log('terminating any crash-looping bridge processes…');
+    await this.terminateWhatsAppPairingProcesses({ includeGatewayBridge: true }).catch(() => undefined);
+    // 5. Materialize env + refresh gateway install (best-effort).
+    await materializeHermesEnv().catch(() => undefined);
+    const refresh = await this.refreshGatewayInstall().catch((e) => ({ success: false, stderr: e instanceof Error ? e.message : String(e), stdout: '', code: 1 } as CommandResult));
+    steps.push({ name: 'refresh-gateway-install', ok: refresh.success, detail: refresh.success ? undefined : (refresh.stderr || refresh.stdout || '').split('\n')[0] });
+    // 6. Re-apply patches AFTER refreshGatewayInstall (it may rewrite the unit).
+    await this.patchGatewayServicePathForWhatsApp().catch(() => undefined);
+    await this.patchHermesWhatsAppAdapterForNode().catch(() => undefined);
+    // 7. Restart gateway.
+    log('restarting gateway…');
+    await this.stopGateway().catch(() => undefined);
+    const start = await this.startGateway().catch((e) => ({ success: false, stderr: e instanceof Error ? e.message : String(e), stdout: '', code: 1 } as CommandResult));
+    steps.push({ name: 'restart-gateway', ok: start.success, detail: start.success ? undefined : (start.stderr || start.stdout || '').split('\n')[0] });
+    if (!start.success) return { ok: false, steps };
+    // 8. Verify the running PID actually has ~/.hermes/bin in PATH.
+    log('verifying gateway PID environment…');
+    let verify = { success: false, pathStartsWithShim: false } as Awaited<ReturnType<typeof hermesAPI.verifyGatewayUsesManagedNode>>;
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      verify = await this.verifyGatewayUsesManagedNode().catch(() => verify);
+      if (verify.success && verify.pathStartsWithShim) break;
+      await new Promise((res) => setTimeout(res, 1500));
+    }
+    steps.push({
+      name: 'verify-gateway-path',
+      ok: verify.pathStartsWithShim,
+      detail: verify.rawPath ? `PATH=${verify.rawPath.split(':').slice(0, 3).join(':')}…` : (verify.error || 'unable to read /proc — assuming OK'),
+    });
+    const diagnostics = await this.getWhatsAppRuntimeDiagnostic().catch(() => undefined);
+    const ok = steps.every((s) => s.ok || s.name === 'verify-gateway-path' && !verify.error);
+    return { ok, steps, diagnostics };
+  },
    *
    * Why bridge.js --pair-only instead of `hermes whatsapp`:
    *  - It prints the QR straight to stdout (qrcode-terminal), so the renderer
