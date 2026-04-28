@@ -155,6 +155,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waBridgeLogText, setWaBridgeLogText] = useState("");
   const [waBridgeLogLoading, setWaBridgeLogLoading] = useState(false);
   const [waBridgeInactiveHint, setWaBridgeInactiveHint] = useState("");
+  /** Guard against double-click reentry before state updates land. */
+  const resetInFlightRef = useRef(false);
+  const startPairingInFlightRef = useRef(false);
+  const forceFreshInFlightRef = useRef(false);
+  const restartGatewayInFlightRef = useRef(false);
+  const rePairRestartInFlightRef = useRef(false);
+  const viewLogsInFlightRef = useRef(false);
+  const refreshGatewayInstallInFlightRef = useRef(false);
 
   // Pre-load any already-stored credentials so reconfiguring is friction-free.
   useEffect(() => {
@@ -687,6 +695,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   ]);
 
   const startWaPairing = async (resetSessionFirst: boolean) => {
+    if (startPairingInFlightRef.current) return;
+    startPairingInFlightRef.current = true;
     waDebugRunIdRef.current = `wa-${Date.now()}`;
     // #region agent log
     emitWaDebugLog("H4", "ChannelWizard.tsx:startWaPairing:start", "start pairing requested", {
@@ -823,6 +833,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairingError(e instanceof Error ? e.message : String(e));
       setWaRetryReady(true);
     } finally {
+      startPairingInFlightRef.current = false;
       // #region agent log
       emitWaDebugLog("H5", "ChannelWizard.tsx:startWaPairing:finally", "start pairing finalized", {
         streamId: waStreamIdRef.current,
@@ -965,6 +976,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   }, [appendWaPairingChunk, requestSudoPassword]);
 
   const requestWaPairingStart = async () => {
+    if (startPairingInFlightRef.current) return;
     if (waRequiresSessionReset && !waAwaitingResetConfirm) {
       setWaAwaitingResetConfirm(true);
       return;
@@ -978,6 +990,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   };
 
   const cancelWaPairing = async () => {
+    if (startPairingInFlightRef.current) return;
     const id = waStreamIdRef.current;
     setWaPairingActive(false);
     setWaPairingPhase("idle");
@@ -991,18 +1004,23 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   };
 
   const handleViewBridgeLogs = async () => {
+    if (viewLogsInFlightRef.current) return;
+    viewLogsInFlightRef.current = true;
     setWaBridgeLogLoading(true);
     try {
       const r = await systemAPI.readWhatsAppBridgeLogTail(200);
       setWaBridgeLogText(r.content || "(empty)");
       setWaBridgeLogDialogOpen(true);
     } finally {
+      viewLogsInFlightRef.current = false;
       setWaBridgeLogLoading(false);
     }
   };
 
   const handleRePairAndRestart = async () => {
+    if (rePairRestartInFlightRef.current) return;
     if (channel.id !== "whatsapp") return;
+    rePairRestartInFlightRef.current = true;
     setWaRePairRestartBusy(true);
     setWaBridgeInactiveHint("");
     try {
@@ -1025,6 +1043,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       waAutoPairAttemptedForSessionRef.current = false;
       await startWaPairing(false);
     } finally {
+      rePairRestartInFlightRef.current = false;
       setWaRePairRestartBusy(false);
     }
   };
@@ -1046,6 +1065,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   }, [emitWaDebugLog, waPairingActive, waPairingPhase]);
 
   const handleRefreshGatewayInstall = async () => {
+    if (refreshGatewayInstallInFlightRef.current) return;
+    refreshGatewayInstallInFlightRef.current = true;
     setGatewayRefreshBusy(true);
     try {
       if (channel.id === "whatsapp") {
@@ -1068,6 +1089,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         });
       }
     } finally {
+      refreshGatewayInstallInFlightRef.current = false;
       setGatewayRefreshBusy(false);
     }
   };
@@ -1139,7 +1161,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   };
 
   const handleWizardRestartGateway = async () => {
+    if (restartGatewayInFlightRef.current) return;
     if (channel.id !== "whatsapp") return;
+    restartGatewayInFlightRef.current = true;
     setWizardGatewayRestartBusy(true);
     try {
       const outcome = await restartWhatsAppGatewayWithNewSession();
@@ -1149,6 +1173,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         description: "WhatsApp picked up your latest session and gateway settings.",
       });
     } finally {
+      restartGatewayInFlightRef.current = false;
       setWizardGatewayRestartBusy(false);
     }
   };
@@ -1198,6 +1223,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
    * survive uninstalling Ronbot when ~/.hermes lives in WSL.
    */
   const resetChannel = async () => {
+    if (resetInFlightRef.current) return;
+    resetInFlightRef.current = true;
     setResetting(true);
     try {
       const keys = (channel.resetEnvVars && channel.resetEnvVars.length > 0)
@@ -1261,6 +1288,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setResetConfirmOpen(false);
       onComplete();
     } finally {
+      resetInFlightRef.current = false;
       setResetting(false);
     }
   };
@@ -1271,6 +1299,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
    * requiring the user to redo any earlier steps.
    */
   const forceFreshWhatsAppPairing = async () => {
+    if (forceFreshInFlightRef.current) return;
+    forceFreshInFlightRef.current = true;
     setWaForceFreshBusy(true);
     try {
       const cleared = await systemAPI.clearWhatsAppSession();
@@ -1292,6 +1322,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       });
       await startWaPairing(false);
     } finally {
+      forceFreshInFlightRef.current = false;
       setWaForceFreshBusy(false);
     }
   };

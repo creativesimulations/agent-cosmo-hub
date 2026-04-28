@@ -22,12 +22,14 @@ const WhatsAppTerminal = ({ content, resetKey, className, onReadyChange }: Whats
     const host = hostRef.current;
     if (!host) return;
     const term = new Terminal({
-      convertEol: false,
+      // Hermes QR/log streams can emit LF-only lines; convert to CRLF to avoid
+      // cursor carry ("staircase" drift) that destroys QR/module alignment.
+      convertEol: true,
       cursorBlink: false,
       disableStdin: true,
       fontFamily: '"JetBrains Mono", "Cascadia Mono", "Consolas", "Menlo", monospace',
-      // Smaller glyphs make dense QR blocks easier to fit/scannably render.
-      fontSize: 6,
+      // Keep normal log readability; QR sizing should be handled separately.
+      fontSize: 12,
       lineHeight: 1,
       letterSpacing: 0,
       rows: 30,

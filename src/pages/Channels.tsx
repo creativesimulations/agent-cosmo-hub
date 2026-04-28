@@ -34,6 +34,9 @@ const ChannelsPage = () => {
   const [whatsappResetBusy, setWhatsappResetBusy] = useState(false);
   const [gatewayRestartBusy, setGatewayRestartBusy] = useState(false);
   const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
+  const restartGatewayInFlightRef = useRef(false);
+  const whatsappResetInFlightRef = useRef(false);
+  const googleSetupInFlightRef = useRef(false);
   const channelsDebugRunRef = useRef("");
   // Tracks channels in a brief post-wizard "starting" grace window so the
   // card shows "Starting…" only while the bridge is given a chance to come
@@ -266,6 +269,8 @@ const ChannelsPage = () => {
   );
 
   const handleRestartGateway = useCallback(async () => {
+    if (restartGatewayInFlightRef.current) return;
+    restartGatewayInFlightRef.current = true;
     setGatewayRestartBusy(true);
     try {
       await systemAPI.materializeEnv().catch(() => undefined);
@@ -282,12 +287,15 @@ const ChannelsPage = () => {
       bumpCapabilityProbes();
       toast.success("Messaging gateway restarted");
     } finally {
+      restartGatewayInFlightRef.current = false;
       setGatewayRestartBusy(false);
       void refresh();
     }
   }, [refresh, bumpCapabilityProbes]);
 
   const confirmWhatsAppReset = async () => {
+    if (whatsappResetInFlightRef.current) return;
+    whatsappResetInFlightRef.current = true;
     setWhatsappResetBusy(true);
     try {
       const r = await systemAPI.resetWhatsAppChannel();
@@ -300,6 +308,7 @@ const ChannelsPage = () => {
       setWhatsappResetOpen(false);
       void refresh();
     } finally {
+      whatsappResetInFlightRef.current = false;
       setWhatsappResetBusy(false);
     }
   };
@@ -326,6 +335,8 @@ const ChannelsPage = () => {
 
   const handleGoogleWorkspaceSetup = async () => {
     if (!googleWorkspaceUnlocked) return;
+    if (googleSetupInFlightRef.current) return;
+    googleSetupInFlightRef.current = true;
     setGoogleWorkspaceBusy(true);
     try {
       const r = await systemAPI.setupGoogleWorkspace();
@@ -339,6 +350,7 @@ const ChannelsPage = () => {
         });
       }
     } finally {
+      googleSetupInFlightRef.current = false;
       setGoogleWorkspaceBusy(false);
     }
   };
