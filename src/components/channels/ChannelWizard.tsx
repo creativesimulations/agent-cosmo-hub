@@ -563,8 +563,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       .terminateWhatsAppPairingProcesses({ includeGatewayBridge: true })
       .catch(() => undefined);
     await systemAPI.stopGateway().catch(() => undefined);
+    // Rotate stale bridge/gateway logs so the failure classifier below reads
+    // only post-restart output instead of pre-fix Node 18 stack traces.
+    await systemAPI.rotateWhatsAppBridgeLogs().catch(() => undefined);
     await systemAPI.materializeEnv().catch(() => undefined);
     await systemAPI.refreshGatewayInstall().catch(() => undefined);
+    // Re-apply patches AFTER refreshGatewayInstall (which rewrites the unit).
+    await systemAPI.patchGatewayServicePathForWhatsApp().catch(() => undefined);
+    await systemAPI.patchHermesWhatsAppAdapterForNode().catch(() => undefined);
     const r = await systemAPI.startGateway();
     if (!r.success) {
       const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
