@@ -1629,7 +1629,7 @@ export const hermesAPI = {
         'fi',
         // --- 4. bridge log tail (diagnostic only) ---
         'BRIDGE_TAIL=""',
-        'WA_FILES="$HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log $HOME/.hermes/logs/bridge.log $HOME/.hermes/logs/gateway.log"',
+        'WA_FILES="$HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log"',
         'for f in $WA_FILES; do',
         '  [ -f "$f" ] || continue',
         '  chunk="$(tail -n 120 "$f" 2>/dev/null || true)"',
@@ -1697,7 +1697,7 @@ export const hermesAPI = {
       [
         'set +e',
         'OUT=""',
-        'WA_FILES="$HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log $HOME/.hermes/logs/bridge.log $HOME/.hermes/logs/gateway.log"',
+        'WA_FILES="$HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log"',
         'for f in $WA_FILES; do',
         '  [ -f "$f" ] || continue',
         '  chunk="$(tail -n ' + String(n) + ' "$f" 2>/dev/null || true)"',

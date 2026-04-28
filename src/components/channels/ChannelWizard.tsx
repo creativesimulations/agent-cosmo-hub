@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle, RotateCcw, Trash2, ScrollText } from "lucide-react";
+import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle, RotateCcw, Trash2 } from "lucide-react";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
 import type { Channel } from "@/lib/channels";
@@ -144,16 +144,12 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waStaleSessionDetected, setWaStaleSessionDetected] = useState(false);
   const [waForceFreshBusy, setWaForceFreshBusy] = useState(false);
   const [waRePairRestartBusy, setWaRePairRestartBusy] = useState(false);
-  const [waBridgeLogDialogOpen, setWaBridgeLogDialogOpen] = useState(false);
-  const [waBridgeLogText, setWaBridgeLogText] = useState("");
-  const [waBridgeLogLoading, setWaBridgeLogLoading] = useState(false);
   const [waBridgeInactiveHint, setWaBridgeInactiveHint] = useState("");
   /** Guard against double-click reentry before state updates land. */
   const resetInFlightRef = useRef(false);
   const startPairingInFlightRef = useRef(false);
   const forceFreshInFlightRef = useRef(false);
   const rePairRestartInFlightRef = useRef(false);
-  const viewLogsInFlightRef = useRef(false);
   const refreshGatewayInstallInFlightRef = useRef(false);
 
   // Pre-load any already-stored credentials so reconfiguring is friction-free.
@@ -577,7 +573,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       : "Could not confirm WhatsApp after starting the gateway. Try pairing again.";
     setFormError(detail + (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""));
     toast.error("WhatsApp bridge not confirmed", {
-      description: "Try Re-pair + Restart or open bridge logs.",
+      description: "Try Re-pair + Restart.",
     });
     return "fail";
   }, []);
@@ -855,11 +851,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         const testOk = await runTest();
         if (!testOk) return;
         const outcome = await restartWhatsAppGatewayWithNewSession();
-        if (outcome === "fail") return;
+        if (outcome === "fail") {
+          setTestResult("fail");
+          return;
+        }
         bumpMessagingProbe();
         setWaBridgeInactiveHint("");
         toast.success(`${channel.name} channel enabled`, {
-          description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
+          description: "WhatsApp is now active. You can communicate with your agent using WhatsApp.",
         });
         onComplete();
         onClose();
@@ -967,20 +966,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       await systemAPI.killStream(id);
     }
     await systemAPI.terminateWhatsAppPairingProcesses().catch(() => undefined);
-  };
-
-  const handleViewBridgeLogs = async () => {
-    if (viewLogsInFlightRef.current) return;
-    viewLogsInFlightRef.current = true;
-    setWaBridgeLogLoading(true);
-    try {
-      const r = await systemAPI.readWhatsAppBridgeLogTail(200);
-      setWaBridgeLogText(r.content || "(empty)");
-      setWaBridgeLogDialogOpen(true);
-    } finally {
-      viewLogsInFlightRef.current = false;
-      setWaBridgeLogLoading(false);
-    }
   };
 
   const handleRePairAndRestart = async () => {
@@ -1094,14 +1079,22 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     if (!open || step !== testStep) return;
     if (waWhatsAppFinalizeInFlightRef.current) return;
     void (async () => {
-      const outcome = await restartWhatsAppGatewayWithNewSession();
-      if (outcome === "fail") return;
-      bumpMessagingProbe();
-      toast.success(`${channel.name} channel enabled`, {
-        description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
-      });
-      onComplete();
-      onClose();
+      waWhatsAppFinalizeInFlightRef.current = true;
+      try {
+        const outcome = await restartWhatsAppGatewayWithNewSession();
+        if (outcome === "fail") {
+          setTestResult("fail");
+          return;
+        }
+        bumpMessagingProbe();
+        toast.success(`${channel.name} channel enabled`, {
+          description: "WhatsApp is now active. You can communicate with your agent using WhatsApp.",
+        });
+        onComplete();
+        onClose();
+      } finally {
+        waWhatsAppFinalizeInFlightRef.current = false;
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run only on first transition to ok
   }, [testResult, open, channel.id, step, testStep]);
@@ -1358,14 +1351,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               <>
                 <div className="space-y-2 text-xs text-muted-foreground leading-relaxed">
                   <p>
-                    Ronbot writes the exact keys Hermes expects (
-                    <code className="font-mono text-[11px]">WHATSAPP_ENABLED</code>,{" "}
-                    <code className="font-mono text-[11px]">WHATSAPP_MODE</code>,{" "}
-                    <code className="font-mono text-[11px]">WHATSAPP_ALLOWED_USERS</code>
-                    ) into your OS keychain and mirrors them into{" "}
-                    <code className="font-mono text-[11px]">~/.hermes/.env</code> when you continue.
-                  </p>
-                  <p>
                     <strong className="text-foreground">Next step:</strong> QR pairing here (no terminal). Changing
                     mode or access rules later may require a quick re-link when Ronbot prompts you.
                   </p>
@@ -1495,11 +1480,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 </div>
               ))}
             </div>
-            {channel.id === "whatsapp" && step === credStep && (
-              <p className="text-[11px] text-muted-foreground border-t border-border/40 pt-3">
-                Defaults match the Hermes docs: <code className="font-mono">WHATSAPP_MODE=self-chat</code> with an explicit E.164 allowlist.
-              </p>
-            )}
           </div>
         )}
 
@@ -1507,7 +1487,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         {step === testStep && (
           <div className="space-y-4 py-2">
             <h3 className="text-sm font-semibold text-foreground">Test &amp; enable</h3>
-            <p className="text-sm text-muted-foreground">{channel.testHint}</p>
+            {channel.id !== "whatsapp" && (
+              <p className="text-sm text-muted-foreground">{channel.testHint}</p>
+            )}
 
             {hadExistingConfig && (
               <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2">
@@ -1715,21 +1697,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                   <p className="text-[11px] text-muted-foreground">{waStatusHint}</p>
                 )}
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs"
-                    disabled={waBridgeLogLoading}
-                    onClick={() => void handleViewBridgeLogs()}
-                  >
-                    {waBridgeLogLoading ? (
-                      <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
-                    ) : (
-                      <ScrollText className="w-3 h-3 mr-1.5" />
-                    )}
-                    View WhatsApp bridge logs
-                  </Button>
                   {waBridgeInactiveHint ? (
                     <Button
                       type="button"
@@ -1792,22 +1759,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
                   Checking tools for this step…
-                </div>
-              ) : channel.id === "whatsapp" && (!waPairedChecked || !waPaired || waRequiresSessionReset || waAwaitingResetConfirm) ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  {waPairedChecked ? (
-                    <>
-                      <AlertCircle className="w-4 h-4 shrink-0" />
-                      {waRequiresSessionReset || waAwaitingResetConfirm
-                        ? "Confirm relink above to replace the current session, then test runs automatically."
-                        : "Link WhatsApp above, then the test runs automatically."}
-                    </>
-                  ) : (
-                    <>
-                      <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
-                      Checking WhatsApp link and tools…
-                    </>
-                  )}
                 </div>
               ) : !setupToolsOk ? (
                 <p className="text-sm text-muted-foreground">Fix the missing tools above, then run the test.</p>
@@ -1895,9 +1846,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               Enable {channel.name}
             </Button>
           ) : (
-            <Button disabled className="gradient-primary text-primary-foreground">
-              Finalizing WhatsApp automatically…
-            </Button>
+            <p className="text-sm text-muted-foreground px-1">Finialiaizing whatsapp connection</p>
           )}
         </DialogFooter>
       </DialogContent>
@@ -1955,25 +1904,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         </DialogContent>
       </Dialog>
 
-      <Dialog open={waBridgeLogDialogOpen} onOpenChange={setWaBridgeLogDialogOpen}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>WhatsApp bridge logs</DialogTitle>
-            <DialogDescription>
-              Tail of <code className="font-mono text-xs">bridge.log</code> / gateway logs from your Hermes home. Use
-              with WHATSAPP_DEBUG for maximum detail.
-            </DialogDescription>
-          </DialogHeader>
-          <pre className="text-[11px] leading-snug font-mono whitespace-pre-wrap break-all max-h-[60vh] overflow-y-auto rounded border border-border/50 bg-background/50 p-3">
-            {waBridgeLogText}
-          </pre>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setWaBridgeLogDialogOpen(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </Dialog>
   );
 };
