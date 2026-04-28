@@ -1957,7 +1957,7 @@ export const hermesAPI = {
    */
   async refreshGatewayInstall(): Promise<CommandResult> {
     await materializeHermesEnv().catch(() => undefined);
-    return runHermesCli(
+    const r = await runHermesCli(
       [
         'set +e',
         HERMES_PATH_EXPORT,
@@ -1968,6 +1968,14 @@ export const hermesAPI = {
       ].join('\n'),
       { timeout: 120000 },
     );
+    // Hermes regenerates the systemd unit / launchd plist on every install,
+    // overwriting any prior PATH edits. Immediately re-prepend the managed
+    // Node shim and patch the installed WhatsApp adapter so the bridge
+    // subprocess always launches on Node v20 instead of the system Node 18
+    // captured in the unit's PATH snapshot.
+    await this.patchGatewayServicePathForWhatsApp().catch(() => undefined);
+    await this.patchHermesWhatsAppAdapterForNode().catch(() => undefined);
+    return r;
   },
 
   /** True when WhatsApp session data exists with a real Baileys creds.json. */
@@ -2273,7 +2281,268 @@ export const hermesAPI = {
       summary: `ensureWhatsAppManagedNode: Node shim ready (${version ?? 'unknown'})`,
       detail: `Wrote ${shimPath ?? '~/.hermes/bin/node'} and added NODE/HERMES_NODE_BIN/WHATSAPP_NODE_BIN + PATH overrides to ~/.hermes/.env so the gateway spawns the WhatsApp bridge on Node v20.`,
     });
+    // Best-effort follow-up: patch the gateway service unit/plist so its
+    // captured PATH starts with ~/.hermes/bin, AND patch the installed
+    // WhatsApp adapter so the bridge subprocess uses the managed Node even
+    // if the service PATH is rewritten later. These do not block success
+    // because the env overrides + shim alone may already be enough on some
+    // setups; we still want to report any patch failures in the log.
+    const svc = await this.patchGatewayServicePathForWhatsApp().catch((e) => ({
+      success: false,
+      patched: [] as string[],
+      error: e instanceof Error ? e.message : String(e),
+    }));
+    const adapter = await this.patchHermesWhatsAppAdapterForNode().catch((e) => ({
+      success: false,
+      patched: false,
+      error: e instanceof Error ? e.message : String(e),
+    }));
+    agentLogs.push({
+      source: 'system',
+      level: svc.success && adapter.success ? 'info' : 'warn',
+      summary: `ensureWhatsAppManagedNode: service patched=${svc.patched.length} adapter patched=${adapter.patched}`,
+      detail: [svc.error ? `service: ${svc.error}` : '', adapter.error ? `adapter: ${adapter.error}` : '']
+        .filter(Boolean)
+        .join('\n') || undefined,
+    });
     return { success: true, version, shimPath };
+  },
+
+  /**
+   * Patch every installed Hermes gateway service unit / launchd plist so
+   * its captured PATH starts with `$HOME/.hermes/bin`. Without this, the
+   * service supervisor spawns the WhatsApp bridge with system Node 18 and
+   * Baileys crashes on `globalThis.crypto.subtle`.
+   *
+   * Also runs `systemctl --user daemon-reload` (or launchctl bootout +
+   * bootstrap) so the patched definition is applied without a full reboot.
+   *
+   * Idempotent: running it twice is a no-op when the shim path is already
+   * first in PATH.
+   */
+  async patchGatewayServicePathForWhatsApp(): Promise<{
+    success: boolean;
+    patched: string[];
+    skipped: string[];
+    error?: string;
+  }> {
+    if (!isElectron()) return { success: true, patched: [], skipped: [] };
+    const r = await runHermesShell(
+      [
+        'set +e',
+        'SHIM_DIR="$HOME/.hermes/bin"',
+        '[ -x "$SHIM_DIR/node" ] || { echo "MISSING_SHIM"; exit 1; }',
+        'PATCHED=""',
+        'SKIPPED=""',
+        // ── systemd user units ──
+        'for u in "$HOME/.config/systemd/user"/hermes-gateway*.service; do',
+        '  [ -f "$u" ] || continue',
+        '  if grep -qE "Environment=\\\"PATH=" "$u"; then',
+        '    if grep -qE "Environment=\\\"PATH=$HOME/.hermes/bin:" "$u" || grep -qF "Environment=\\\"PATH=$SHIM_DIR" "$u"; then',
+        '      SKIPPED="$SKIPPED $u"; continue',
+        '    fi',
+        '    cp "$u" "$u.ronbot.bak.$(date +%s)" 2>/dev/null || true',
+        '    # Insert the shim dir at the front of the existing PATH value',
+        '    awk -v shim="$SHIM_DIR" \'{',
+        '      if ($0 ~ /^Environment="PATH=/) {',
+        '        sub(/^Environment="PATH=/, "Environment=\\"PATH=" shim ":")',
+        '      }',
+        '      print',
+        '    }\' "$u" > "$u.tmp" && mv "$u.tmp" "$u"',
+        '    PATCHED="$PATCHED $u"',
+        '  else',
+        '    cp "$u" "$u.ronbot.bak.$(date +%s)" 2>/dev/null || true',
+        '    awk -v shim="$SHIM_DIR" \'',
+        '      /^\\[Service\\]/ { print; print "Environment=\\"PATH=" shim ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\\""; next }',
+        '      { print }\' "$u" > "$u.tmp" && mv "$u.tmp" "$u"',
+        '    PATCHED="$PATCHED $u"',
+        '  fi',
+        'done',
+        // Reload user systemd if we touched a unit
+        'if [ -n "$PATCHED" ] && command -v systemctl >/dev/null 2>&1; then',
+        '  systemctl --user daemon-reload >/dev/null 2>&1 || true',
+        'fi',
+        // ── launchd (macOS) ──
+        'for p in "$HOME/Library/LaunchAgents"/*hermes*gateway*.plist; do',
+        '  [ -f "$p" ] || continue',
+        '  if grep -qF "$SHIM_DIR:" "$p"; then SKIPPED="$SKIPPED $p"; continue; fi',
+        '  cp "$p" "$p.ronbot.bak.$(date +%s)" 2>/dev/null || true',
+        '  # Find the <key>PATH</key> followed by <string>...</string> and prepend shim',
+        '  python3 - "$p" "$SHIM_DIR" <<\'PY\' || true',
+        'import sys, re, pathlib',
+        'p = pathlib.Path(sys.argv[1])',
+        'shim = sys.argv[2]',
+        'text = p.read_text()',
+        'def repl(m):',
+        '    val = m.group(2)',
+        '    if val.startswith(shim + ":"):',
+        '        return m.group(0)',
+        '    return f"{m.group(1)}{shim}:{val}{m.group(3)}"',
+        'new = re.sub(r"(<key>PATH</key>\\s*<string>)([^<]*)(</string>)", repl, text, count=1)',
+        'if new != text:',
+        '    p.write_text(new)',
+        'PY',
+        '  PATCHED="$PATCHED $p"',
+        'done',
+        'echo "PATCHED=$PATCHED"',
+        'echo "SKIPPED=$SKIPPED"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 20000 },
+    );
+    const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+    if (out.includes('MISSING_SHIM')) {
+      return { success: false, patched: [], skipped: [], error: 'Managed Node shim not installed yet — run ensureWhatsAppManagedNode first.' };
+    }
+    const patched = (out.match(/PATCHED=(.*)/)?.[1] || '').trim().split(/\s+/).filter(Boolean);
+    const skipped = (out.match(/SKIPPED=(.*)/)?.[1] || '').trim().split(/\s+/).filter(Boolean);
+    return { success: r.success, patched, skipped };
+  },
+
+  /**
+   * Patch the installed Hermes WhatsApp adapter so the bridge subprocess
+   * uses the managed Node binary directly, regardless of the service
+   * unit's effective PATH. Upstream Hermes hardcodes `["node", ...]`,
+   * which means a bare `node` is resolved against the service PATH —
+   * usually system Node 18 on Debian/Ubuntu — and Baileys crashes.
+   *
+   * The patch is minimal and idempotent: it inserts a small helper that
+   * prefers `WHATSAPP_NODE_BIN` / `NODE_BIN` / `~/.hermes/bin/node`
+   * before falling back to whatever `node` is on PATH. A `.ronbot.bak`
+   * is created the first time the file is rewritten.
+   */
+  async patchHermesWhatsAppAdapterForNode(): Promise<{
+    success: boolean;
+    patched: boolean;
+    path?: string;
+    error?: string;
+  }> {
+    if (!isElectron()) return { success: true, patched: false };
+    const r = await runHermesShell(
+      [
+        'set +e',
+        'F=""',
+        'for cand in "$HOME/.hermes/hermes-agent/gateway/platforms/whatsapp.py" "$HOME/.hermes/venv/lib"/python*/site-packages/gateway/platforms/whatsapp.py; do',
+        '  [ -f "$cand" ] || continue',
+        '  F="$cand"; break',
+        'done',
+        '[ -n "$F" ] || { echo "ADAPTER_NOT_FOUND"; exit 0; }',
+        'echo "ADAPTER_PATH=$F"',
+        'if grep -q "RONBOT_NODE_BIN_PATCH" "$F"; then echo "ALREADY_PATCHED"; exit 0; fi',
+        'cp "$F" "$F.ronbot.bak" 2>/dev/null || true',
+        'python3 - "$F" <<\'PY\' || { echo "PATCH_FAILED"; exit 1; }',
+        'import sys, re, pathlib',
+        'p = pathlib.Path(sys.argv[1])',
+        'src = p.read_text()',
+        'helper = (',
+        '"\\n# RONBOT_NODE_BIN_PATCH: prefer managed Node so Baileys gets globalThis.crypto.subtle\\n"',
+        '"def _ronbot_node_bin():\\n"',
+        '"    import os, shutil\\n"',
+        '"    for env_key in (\\"WHATSAPP_NODE_BIN\\", \\"NODE_BIN\\", \\"HERMES_NODE_BIN\\", \\"NODE\\"):\\n"',
+        '"        v = os.environ.get(env_key)\\n"',
+        '"        if v and os.path.isfile(v):\\n"',
+        '"            return v\\n"',
+        '"    home = os.path.expanduser(\\"~\\")\\n"',
+        '"    shim = os.path.join(home, \\".hermes\\", \\"bin\\", \\"node\\")\\n"',
+        '"    if os.path.isfile(shim):\\n"',
+        '"        return shim\\n"',
+        '"    found = shutil.which(\\"node\\")\\n"',
+        '"    return found or \\"node\\"\\n"',
+        ')',
+        '# Insert the helper after the first import block / module docstring.',
+        'm = re.search(r"(?ms)^(\\s*\\"\\"\\".*?\\"\\"\\"\\s*\\n)", src)',
+        'insert_at = m.end() if m else 0',
+        'src = src[:insert_at] + helper + src[insert_at:]',
+        '# Replace [\\"node\\", ...bridge_path...] with [_ronbot_node_bin(), ...]',
+        'src2, n = re.subn(r"\\[\\s*\\\"node\\\"\\s*,", "[_ronbot_node_bin(),", src)',
+        'if n == 0:',
+        '    sys.stderr.write(\\"no node literal found\\\\n\\")',
+        '    sys.exit(2)',
+        'p.write_text(src2)',
+        'PY',
+        'PATCH_RC=$?',
+        'if [ "$PATCH_RC" -eq 0 ]; then echo "PATCHED_OK"; else echo "PATCH_FAILED"; fi',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 15000 },
+    );
+    const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+    const path = (out.match(/ADAPTER_PATH=(\S+)/)?.[1] || '').trim() || undefined;
+    if (out.includes('ADAPTER_NOT_FOUND')) {
+      return { success: true, patched: false, error: 'Installed Hermes WhatsApp adapter not found at the expected paths.' };
+    }
+    if (out.includes('ALREADY_PATCHED')) return { success: true, patched: true, path };
+    if (out.includes('PATCHED_OK')) return { success: true, patched: true, path };
+    return { success: false, patched: false, path, error: out.split('\n').slice(-6).join('\n').trim() };
+  },
+
+  /**
+   * Diagnostic snapshot used by the wizard before declaring failure: which
+   * `node` the gateway service is actually about to spawn, what version it
+   * reports, whether the shim + patches are in place, and whether the
+   * recent bridge log already shows Node 18 crashes.
+   */
+  async getWhatsAppRuntimeDiagnostic(): Promise<{
+    success: boolean;
+    shimVersion?: string;
+    serviceUnitPath?: string;
+    serviceUnitPathStartsWithShim: boolean;
+    adapterPatched: boolean;
+    adapterPath?: string;
+    bridgeLogShowsNode18: boolean;
+    rawSummary: string;
+  }> {
+    if (!isElectron()) {
+      return {
+        success: true,
+        shimVersion: HERMES_NODE_VERSION,
+        serviceUnitPathStartsWithShim: true,
+        adapterPatched: true,
+        bridgeLogShowsNode18: false,
+        rawSummary: '[preview] runtime diagnostic',
+      };
+    }
+    const r = await runHermesShell(
+      [
+        'set +e',
+        'SHIM_VER="$($HOME/.hermes/bin/node --version 2>/dev/null || echo missing)"',
+        'echo "SHIM_VER=$SHIM_VER"',
+        'UNIT=""',
+        'for u in "$HOME/.config/systemd/user"/hermes-gateway*.service; do [ -f "$u" ] && { UNIT="$u"; break; }; done',
+        'echo "UNIT=$UNIT"',
+        'STARTS=0',
+        'if [ -n "$UNIT" ] && grep -qE "Environment=\\\"PATH=$HOME/.hermes/bin:" "$UNIT"; then STARTS=1; fi',
+        'echo "UNIT_STARTS_WITH_SHIM=$STARTS"',
+        'ADAPT=""',
+        'for cand in "$HOME/.hermes/hermes-agent/gateway/platforms/whatsapp.py" "$HOME/.hermes/venv/lib"/python*/site-packages/gateway/platforms/whatsapp.py; do',
+        '  [ -f "$cand" ] && { ADAPT="$cand"; break; }',
+        'done',
+        'echo "ADAPTER=$ADAPT"',
+        'AP=0',
+        'if [ -n "$ADAPT" ] && grep -q "RONBOT_NODE_BIN_PATCH" "$ADAPT"; then AP=1; fi',
+        'echo "ADAPTER_PATCHED=$AP"',
+        'NODE18=0',
+        'for f in "$HOME/.hermes/platforms/whatsapp/bridge.log" "$HOME/.hermes/logs/whatsapp-bridge.log" "$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log"; do',
+        '  [ -f "$f" ] || continue',
+        '  if tail -n 60 "$f" 2>/dev/null | grep -qE "Node\\.js v18\\."; then NODE18=1; break; fi',
+        'done',
+        'echo "NODE18=$NODE18"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 10000 },
+    );
+    const out = r.stdout || '';
+    const get = (re: RegExp) => out.match(re)?.[1]?.trim() || '';
+    return {
+      success: r.success,
+      shimVersion: get(/SHIM_VER=(\S+)/) || undefined,
+      serviceUnitPath: get(/UNIT=(\S+)/) || undefined,
+      serviceUnitPathStartsWithShim: get(/UNIT_STARTS_WITH_SHIM=(\d)/) === '1',
+      adapterPatched: get(/ADAPTER_PATCHED=(\d)/) === '1',
+      adapterPath: get(/ADAPTER=(\S+)/) || undefined,
+      bridgeLogShowsNode18: get(/NODE18=(\d)/) === '1',
+      rawSummary: out.trim(),
+    };
   },
 
   /**

@@ -1,90 +1,186 @@
-## What is actually broken
+## What is still broken
 
-The error in your wizard is unambiguous:
+The repeated error proves the previous repair did not affect the process that actually starts the WhatsApp bridge:
 
-```
-.../@whiskeysockets/baileys/lib/Utils/crypto.js:6
-const { subtle } = globalThis.crypto;
-                            ^
-TypeError: Cannot destructure property 'subtle' of 'globalThis.crypto' as it is undefined.
-Node.js v18.19.1
+```text
+Hermes gateway service -> gateway/platforms/whatsapp.py -> subprocess.Popen(["node", bridge.js, ...])
 ```
 
-Two facts matter:
+Upstream Hermes currently starts the bridge with a hardcoded `"node"` command in `gateway/platforms/whatsapp.py`. It does not read `NODE`, `NODE_BIN`, `HERMES_NODE_BIN`, or `WHATSAPP_NODE_BIN` when launching `bridge.js`.
 
-1. The crash happens in **Node v18.19.1** — your system Node. Baileys (current Whiskeysockets build) loads `globalThis.crypto.subtle` at module top-level. Node only exposes `globalThis.crypto` to ES modules starting at **v19+** (and reliably in v20 LTS). On v18.19.1 it is `undefined`, so the bridge dies before it can connect.
-2. The Ronbot pair-only call already uses the managed Node v20.19.2. So pairing succeeds and `creds.json` is saved. But once the wizard restarts `hermes gateway`, the **gateway service** spawns `bridge.js` itself using whatever `node` is on the service unit's PATH — which is the system `node` (v18.19.1). It crashes, systemd/launchd restarts it, it crashes again — that's why you see the same stack trace pasted four times.
+So the previous plan installed a managed Node v20 shim and wrote env overrides, but the running gateway service is still resolving `node` from its own service-unit PATH. That PATH still points to the system Node v18.19.1, so Baileys crashes before the bridge can connect.
 
-So the agent does not "see" WhatsApp because the bridge process is in a crash loop. The session is good; the runtime is wrong.
+This is not a WhatsApp session/QR issue anymore. Pairing can succeed, but the gateway-managed bridge cannot stay alive because it is launched by Node 18.
 
-A second smaller issue: the pair-only fallback path (`hermes whatsapp` via `script`) and the gateway both inherit the snapshot PATH captured by `hermes gateway install`. If that snapshot was taken before the managed Node was prepended, the gateway will keep using v18.
+## Corrections to implement
 
-## Fix plan
+### 1. Stop relying on `NODE_BIN` env vars for the gateway bridge
 
-All changes are in `src/lib/systemAPI/hermes.ts`, with small UX tweaks in `ChannelWizard.tsx` and `Channels.tsx`.
+Keep the managed Node runtime, but change the repair strategy to affect what Hermes actually uses: the `node` binary on the gateway service PATH.
 
-### 1. Force the gateway to use managed Node v20 for the bridge
+`ensureWhatsAppManagedNode()` will be strengthened to:
 
-Hermes' bridge invocation honors a `NODE` / `NODE_BIN` env var (and otherwise falls back to whatever `node` is first on PATH). We will:
+- Install/verify managed Node v20 if missing.
+- Write `~/.hermes/bin/node` as an absolute shim that directly execs the managed runtime path.
+- Write the shim without depending on shell variables inside the shim body, so it still works under systemd/launchd/non-interactive shells.
+- Verify:
+  - `~/.hermes/bin/node --version` is v20+.
+  - `PATH="$HOME/.hermes/bin:$PATH" node -e "...globalThis.crypto.subtle..."` succeeds.
 
-- Write a small launcher shim at `~/.hermes/bin/node` that `exec`s the managed `$NODE_RUNTIME_HOME/bin/node "$@"`.
-- Prepend `~/.hermes/bin` to PATH inside `~/.hermes/.env` via a new `PATH=...` line *and* via the gateway service environment.
-- Add explicit overrides to `~/.hermes/.env` so Hermes picks the right binary regardless of PATH:
-  - `HERMES_NODE_BIN=$HOME/.hermes/runtime/node-v20.19.2-linux-x64/bin/node`
-  - `WHATSAPP_NODE_BIN=$HOME/.hermes/runtime/node-v20.19.2-linux-x64/bin/node`
-  - `NODE=$HOME/.hermes/runtime/node-v20.19.2-linux-x64/bin/node`
-- After writing `.env`, run `hermes gateway install` again so the service unit re-snapshots PATH with `~/.hermes/bin` first, then `hermes gateway start`.
+### 2. Patch the gateway service definition after Hermes generates it
 
-### 2. Self-heal: detect and replace bad system Node at runtime
+Because `hermes gateway install` generates a systemd unit / launchd plist with a captured PATH, Ronbot must patch that generated service definition directly.
 
-Before starting the gateway, run a probe:
+Add a new service repair helper that, after `hermes gateway install`, detects and patches:
 
-```bash
-node -e "process.exit(globalThis.crypto && globalThis.crypto.subtle ? 0 : 42)"
+- User systemd: `~/.config/systemd/user/hermes-gateway*.service`
+- System systemd if present/readable/writable: `/etc/systemd/system/hermes-gateway*.service` best-effort only
+- macOS launchd: `~/Library/LaunchAgents/*hermes*gateway*.plist`
+
+For systemd, ensure the `[Service]` section has:
+
+```text
+Environment="PATH=%h/.hermes/bin:...existing path..."
 ```
 
-against whatever Node is first on the gateway's effective PATH. If it returns 42 (or the binary reports < v20), abort the wizard with a clear actionable error and offer to reinstall the managed runtime via the existing `ensureManagedNodeRuntime` flow before retrying. This means the user will never reach the crash loop again.
+For launchd, ensure the `PATH` value starts with:
 
-### 3. Stop the existing crash loop cleanly before restart
+```text
+$HOME/.hermes/bin:
+```
 
-The current `terminateWhatsAppPairingProcesses` deliberately leaves the gateway-managed `bridge.js` running. With a v18 crash loop in flight, we must:
+Then reload the service manager:
 
-- `hermes gateway stop`
-- `pkill -f "whatsapp-bridge/bridge.js"` (any mode, not just `--pair-only`)
-- wait for port 3000 to free, then `hermes gateway start`
-- poll `hermes gateway status` until WhatsApp shows as connected (existing helper).
+- `systemctl --user daemon-reload`
+- `systemctl --user import-environment PATH` / `set-environment PATH=...`
+- `launchctl bootout/bootstrap` or rely on `hermes gateway start` after plist rewrite, depending on platform
 
-### 4. Surface the real reason in the wizard
+This directly fixes the path that `subprocess.Popen(["node", ...])` uses.
 
-Right now the wizard shows a wall of repeated stack traces under "Channel setup needs attention." Replace that with a structured `ActionableError`:
+### 3. Patch the installed Hermes WhatsApp adapter as a fallback
 
-- Title: "WhatsApp bridge crashed (Node version too old)"
-- Summary: "Hermes is spawning the bridge with Node 18.19.1, which doesn't expose `globalThis.crypto.subtle`. Baileys requires Node 20+."
-- "Show details" reveals the raw stack.
-- "Fix Automatically" button runs steps 1–3 above.
+If the service definition still cannot be patched or Hermes regenerates it without the shim path, add a fallback source patch to the installed Hermes adapter at:
 
-Also extend `getWhatsAppGatewayHealth` to detect the specific signature `Cannot destructure property 'subtle'` in the bridge log tail and tag the channel card attention reason as **"Bridge running on wrong Node version — click to repair"**.
+```text
+~/.hermes/hermes-agent/gateway/platforms/whatsapp.py
+```
 
-### 5. Verify pairing flow still passes the right Node
+Patch only the bridge subprocess call so it chooses the managed shim first:
 
-The pair-only call already uses `$NODE_RUNTIME_HOME/bin/node`. We will assert at the top of the script that `"$NODE_BIN" -p "process.versions.node"` starts with `20.` and abort with a clear message otherwise (instead of silently falling back to system node).
+```python
+node_cmd = os.getenv("WHATSAPP_NODE_BIN") or os.getenv("NODE_BIN") or shutil.which("node") or "node"
+...
+subprocess.Popen([node_cmd, str(bridge_path), ...])
+```
 
-### 6. Other things found while investigating
+This patch will be idempotent and backed up once before editing. It is targeted to the installed local Hermes copy under `~/.hermes`, not to project source code.
 
-- Email IMAP authentication failures in your gateway log are unrelated to WhatsApp (Gmail rejecting the password — likely needs an App Password). We will not change the email flow, but we will stop showing email log noise inside the WhatsApp wizard's "Show details" panel; only WhatsApp-tagged log lines will be displayed.
-- Slack "missing scope" log lines are also unrelated and will be filtered out of the WhatsApp diagnostics view.
+Why include this fallback: upstream Hermes currently hardcodes `"node"`; service PATH patching is the cleanest fix, but an adapter patch makes the repair robust against service managers that ignore or cache environment changes.
 
-## Files touched
+### 4. Change all restart flows to run the real repair first
 
-- `src/lib/systemAPI/hermes.ts` — managed-Node shim creation, `.env` overrides, Node version probe, crash-loop-aware restart sequence, gateway log filter for WhatsApp-only lines, bridge crash detection.
-- `src/components/channels/ChannelWizard.tsx` — replace raw error dump with `ActionableError` + Auto-Fix button that re-runs the repair sequence.
-- `src/pages/Channels.tsx` — new attention reason `"node-version-too-old"` mapped to a clear tooltip and Repair action on the WhatsApp channel card.
+Update the following flows so they run the strengthened repair before starting/restarting the gateway:
+
+- WhatsApp wizard finalization (`restartWhatsAppGatewayWithNewSession`)
+- “Re-pair + Restart” button
+- Channel card “Restart messaging gateway” action
+- `startGateway()` itself when WhatsApp is enabled/configured
+- `refreshGatewayInstall()`
+
+The corrected restart sequence will be:
+
+```text
+stop gateway
+kill bridge.js crash-loop processes
+ensure managed Node shim
+hermes gateway install
+patch service PATH / launchd plist
+patch installed whatsapp.py fallback if needed
+reload service manager
+start gateway
+verify effective node from service/bridge logs
+poll WhatsApp health
+```
+
+### 5. Add a direct effective-runtime diagnostic
+
+Add a helper that reports:
+
+- `command -v node` with Ronbot’s intended PATH
+- `node --version` with Ronbot’s intended PATH
+- service unit/plist PATH first entries
+- whether `~/.hermes/bin/node` exists and passes `globalThis.crypto.subtle`
+- whether installed `whatsapp.py` still contains `Popen(["node", ...])`
+- latest bridge log Node version signature
+
+The wizard will use this before showing another generic failure. If the bridge still crashes with Node 18, the UI should say that the service definition could not be rewritten, not just “restart Ronbot”.
+
+### 6. Fix misleading UI guidance
+
+Remove the current guidance that says “managed Node v20 shim installed — retry/restart Ronbot” as if that is enough. Replace it with a specific message based on diagnostics:
+
+- “Gateway service PATH still resolves Node 18”
+- “Service unit could not be patched automatically”
+- “Installed Hermes WhatsApp adapter still hardcodes node”
+- “Bridge is not active even though runtime is correct”
+
+Also keep the raw stack trace hidden behind details and limit repeated duplicate stack traces.
+
+## Other possible causes checked
+
+The provided Hermes docs confirm the normal expected flow:
+
+- `hermes whatsapp` creates/saves the WhatsApp session.
+- `WHATSAPP_ENABLED=true` and `WHATSAPP_MODE` must be in `~/.hermes/.env`.
+- `hermes gateway` starts the bridge automatically from the saved session.
+- `hermes gateway status` is the correct active gateway check.
+
+Other potential blockers after the Node fix:
+
+- Access control: messages will be ignored/denied unless `WHATSAPP_ALLOWED_USERS=*`, `WHATSAPP_ALLOW_ALL_USERS=true`, or the sender number is allowlisted.
+- Session invalidation: if WhatsApp unlinked the session, re-pair is needed.
+- Bridge dependency drift: if WhatsApp protocol changed, updating Hermes / npm dependencies may be needed.
+
+But the current blocker is still definitively the gateway bridge runtime, because the log continues to show `Node.js v18.19.1`.
+
+## Files to change
+
+- `src/lib/systemAPI/hermes.ts`
+  - strengthen managed Node shim
+  - add service PATH patch helper
+  - add installed adapter fallback patch helper
+  - add effective runtime diagnostic helper
+  - call repair from gateway start/refresh/restart paths
+
+- `src/lib/systemAPI/index.ts`
+  - export the new helper(s)
+
+- `src/components/channels/ChannelWizard.tsx`
+  - use the stronger repair during finalization and Re-pair + Restart
+  - improve error classification and details
+
+- `src/pages/Channels.tsx`
+  - make “Restart messaging gateway” run the WhatsApp runtime repair first
+  - show clearer attention reason when Node 18 is still active
+
+- `.lovable/plan.md`
+  - update with the corrected diagnosis and implementation notes
 
 ## Expected result
 
-After approval and implementation:
+After implementation and using “Re-pair + Restart” again:
 
-1. Wizard re-runs cleanly, pairs WhatsApp, writes `.env` with the managed-Node overrides.
-2. Gateway restarts and spawns the bridge with **Node v20.19.2**, so Baileys loads without crashing.
-3. `hermes gateway status` lists WhatsApp as connected, the channel card shows **Active**, and messages sent to your bot number are delivered to the agent without any "set up WhatsApp first" reply.
-4. If the system ever regresses (e.g. user reinstalls Hermes and the snapshot PATH changes), the wizard's preflight Node probe catches it and offers a one-click repair instead of looping on the cryptic Baileys stack trace.
+1. `~/.hermes/bin/node` reports Node v20+ and passes the crypto probe.
+2. The gateway service PATH starts with `~/.hermes/bin`.
+3. The installed Hermes WhatsApp adapter either resolves the shim via PATH or uses the patched explicit node command.
+4. The bridge log no longer contains `Node.js v18.19.1` for new starts.
+5. `hermes gateway status` lists WhatsApp as connected/active.
+6. The WhatsApp channel card becomes Active, and messages from the configured/allowed WhatsApp number reach Ronbot.
+
+<lov-actions>
+  <lov-open-history>View History</lov-open-history>
+</lov-actions>
+
+<lov-actions>
+<lov-link url="https://docs.lovable.dev/tips-tricks/troubleshooting">Troubleshooting docs</lov-link>
+</lov-actions>

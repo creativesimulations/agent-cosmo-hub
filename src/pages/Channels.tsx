@@ -276,6 +276,13 @@ const ChannelsPage = () => {
       await systemAPI.materializeEnv().catch(() => undefined);
       await systemAPI.stopGateway().catch(() => undefined);
       await systemAPI.materializeEnv().catch(() => undefined);
+      // Apply the WhatsApp Node v20 runtime fix BEFORE we re-install the
+      // gateway service. refreshGatewayInstall will re-apply the same patch
+      // again after Hermes regenerates the systemd unit / launchd plist.
+      await systemAPI.ensureWhatsAppManagedNode().catch(() => undefined);
+      await systemAPI
+        .terminateWhatsAppPairingProcesses({ includeGatewayBridge: true })
+        .catch(() => undefined);
       await systemAPI.refreshGatewayInstall().catch(() => undefined);
       const r = await systemAPI.startGateway();
       if (!r.success) {
