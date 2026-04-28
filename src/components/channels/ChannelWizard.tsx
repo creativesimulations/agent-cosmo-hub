@@ -1099,6 +1099,42 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   };
 
+  const handleRepairRuntimeOnly = async () => {
+    if (waRuntimeRepairBusy) return;
+    setWaRuntimeRepairBusy(true);
+    setWaBridgeInactiveHint("");
+    try {
+      appendWaPairingChunk({ type: "stdout", data: "[ronbot] running atomic runtime repair…\n" });
+      const repair = await systemAPI
+        .repairWhatsAppGatewayRuntime(appendWaPairingChunk)
+        .catch((e) => ({ ok: false, steps: [{ name: "repair", ok: false, detail: e instanceof Error ? e.message : String(e) }] as Array<{ name: string; ok: boolean; detail?: string }> }));
+      for (const s of repair.steps) {
+        appendWaPairingChunk({ type: s.ok ? "stdout" : "stderr", data: `[ronbot] ${s.ok ? "✓" : "✗"} ${s.name}${s.detail ? ` — ${s.detail}` : ""}\n` });
+      }
+      if (repair.ok) {
+        toast.success("Runtime repaired", { description: "Gateway restarted on managed Node v20." });
+        // Re-test the bridge to see if it now comes up cleanly.
+        setFormError("");
+        const outcome = await restartWhatsAppGatewayWithNewSession();
+        if (outcome === "live") {
+          setWaBridgeInactiveHint("");
+          toast.success(`${channel.name} channel enabled`, {
+            description: "WhatsApp is now active.",
+          });
+          onComplete();
+          onClose();
+        }
+      } else {
+        const failed = repair.steps.find((s) => !s.ok);
+        toast.error("Runtime repair did not complete", {
+          description: failed ? `${failed.name}: ${failed.detail || "see log"}` : "See log for details.",
+        });
+      }
+    } finally {
+      setWaRuntimeRepairBusy(false);
+    }
+  };
+
   useEffect(() => {
     if (!waPairingActive) return;
     const timer = window.setInterval(() => {
