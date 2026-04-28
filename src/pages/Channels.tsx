@@ -20,6 +20,10 @@ const ChannelsPage = () => {
   const [activeWizard, setActiveWizard] = useState<Channel | null>(null);
   const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
   const channelsDebugRunRef = useRef("");
+  // Tracks channels in a brief post-wizard "starting" grace window so the
+  // card shows "Starting…" only while the bridge is given a chance to come
+  // up, and switches to "Attention" instead of spinning forever.
+  const pollStartRef = useRef<Map<string, number>>(new Map());
 
   const emitChannelsDebugLog = useCallback((hypothesisId: string, location: string, message: string, data: Record<string, unknown>) => {
     // #region agent log
