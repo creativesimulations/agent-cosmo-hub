@@ -1562,49 +1562,101 @@ export const hermesAPI = {
     success: boolean;
     running: boolean;
     whatsappActive: boolean;
+    source: 'gateway_state' | 'bridge_health' | 'cli_status' | 'log_tail' | 'none';
     statusOutput: string;
     bridgeLogTail: string;
+    bridgeHealthJson: string;
+    gatewayStateJson: string;
     error?: string;
   }> {
+    // Authoritative signals, in priority order:
+    //   1. ~/.hermes/gateway_state.json -> platforms.whatsapp.state == "connected"
+    //   2. http://127.0.0.1:3000/health -> { status: "connected" }
+    //   3. `hermes gateway status` text mentioning WhatsApp connected/active
+    //   4. bridge.log tail showing a Baileys "connection open" line (diag only)
+    // The gateway process itself is reported via systemd unit OR pgrep fallback.
     const r = await runHermesCli(
       [
         'set +e',
         HERMES_PATH_EXPORT,
-        // 1) gateway alive?
-        'STATUS_OUT="$(hermes gateway status 2>&1 || true)"',
+        // --- gateway process detection ---
         'PROC_OK=0',
-        // Gateway often runs as `python …` without the literal argv "hermes gateway";
-        // systemd user units still report healthy via `hermes gateway status`.
-        'pgrep -f "hermes gateway" >/dev/null 2>&1 && PROC_OK=1',
+        'if command -v systemctl >/dev/null 2>&1; then',
+        '  if systemctl --user is-active hermes-gateway >/dev/null 2>&1; then PROC_OK=1; fi',
+        '  if [ "$PROC_OK" -eq 0 ] && systemctl is-active hermes-gateway >/dev/null 2>&1; then PROC_OK=1; fi',
+        'fi',
+        'if [ "$PROC_OK" -eq 0 ]; then pgrep -f "hermes gateway" >/dev/null 2>&1 && PROC_OK=1; fi',
         'if [ "$PROC_OK" -eq 0 ]; then pgrep -f "gateway.run" >/dev/null 2>&1 && PROC_OK=1; fi',
         'if [ "$PROC_OK" -eq 0 ]; then pgrep -f "hermes.*gateway" >/dev/null 2>&1 && PROC_OK=1; fi',
+        // --- 1. gateway_state.json ---
+        'GATEWAY_STATE=""',
+        'WA_OK=0',
+        'WA_SOURCE="none"',
+        'for f in "$HOME/.hermes/gateway_state.json" "$HOME/.hermes/state/gateway_state.json"; do',
+        '  if [ -f "$f" ]; then',
+        '    GATEWAY_STATE="$(cat "$f" 2>/dev/null || true)"',
+        '    break',
+        '  fi',
+        'done',
+        'if [ -n "$GATEWAY_STATE" ]; then',
+        '  if command -v python3 >/dev/null 2>&1; then',
+        '    WA_STATE="$(printf "%s" "$GATEWAY_STATE" | python3 -c "import json,sys;\\nd=json.load(sys.stdin);\\np=(d.get(\\"platforms\\") or {}).get(\\"whatsapp\\") or {};\\nprint(p.get(\\"state\\") or \\"\\")" 2>/dev/null || true)"',
+        '    case "$WA_STATE" in',
+        '      connected|ready|online) WA_OK=1; WA_SOURCE="gateway_state" ;;',
+        '    esac',
+        '  fi',
+        '  # Fallback grep when python3 unavailable',
+        '  if [ "$WA_OK" -eq 0 ] && printf "%s" "$GATEWAY_STATE" | grep -E -i "\\\"whatsapp\\\"[[:space:]]*:[[:space:]]*\\{[^}]*\\\"state\\\"[[:space:]]*:[[:space:]]*\\\"(connected|ready|online)\\\"" >/dev/null 2>&1; then',
+        '    WA_OK=1; WA_SOURCE="gateway_state"',
+        '  fi',
+        'fi',
+        // --- 2. bridge /health ---
+        'BRIDGE_HEALTH=""',
+        'if [ "$WA_OK" -eq 0 ] && command -v curl >/dev/null 2>&1; then',
+        '  for url in "http://127.0.0.1:3000/health" "http://127.0.0.1:3000/healthz" "http://127.0.0.1:3001/health"; do',
+        '    BH="$(curl -fsS --max-time 3 "$url" 2>/dev/null || true)"',
+        '    if [ -n "$BH" ]; then',
+        '      BRIDGE_HEALTH="$BH"',
+        '      if printf "%s" "$BH" | grep -E -i "\\\"status\\\"[[:space:]]*:[[:space:]]*\\\"(connected|ready|open|online)\\\"" >/dev/null 2>&1; then',
+        '        WA_OK=1; WA_SOURCE="bridge_health"',
+        '        break',
+        '      fi',
+        '    fi',
+        '  done',
+        'fi',
+        // --- 3. CLI status ---
+        'STATUS_OUT="$(hermes gateway status 2>&1 || true)"',
+        'if [ "$WA_OK" -eq 0 ] && printf "%s" "$STATUS_OUT" | grep -E -i "whatsapp.*(connected|active|ready|online|ok)" >/dev/null 2>&1; then',
+        '  WA_OK=1; WA_SOURCE="cli_status"',
+        'fi',
         'if [ "$PROC_OK" -eq 0 ] && printf "%s" "$STATUS_OUT" | grep -Eqi "(user gateway service is running|gateway service is running|active \\(running\\)|hermes-gateway)"; then',
         '  PROC_OK=1',
         'fi',
-        'echo "STATUS_OUT_BEGIN"',
-        'printf "%s\\n" "$STATUS_OUT"',
-        'echo "STATUS_OUT_END"',
-        'echo "PROC_OK=$PROC_OK"',
-        // 2) Scan all bridge logs for WhatsApp/Baileys signals (single generic file
-        // can be dominated by Slack/Email noise and miss WhatsApp lines entirely).
+        // --- 4. bridge log tail (diagnostic only; promoted to "active" only as last resort) ---
         'BRIDGE_TAIL=""',
-        'WA_OK=0',
-        'WA_FILES="$HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log $HOME/.hermes/logs/bridge.log"',
+        'WA_FILES="$HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log $HOME/.hermes/logs/bridge.log $HOME/.hermes/logs/gateway.log"',
         'for f in $WA_FILES; do',
         '  [ -f "$f" ] || continue',
         '  chunk="$(tail -n 50 "$f" 2>/dev/null || true)"',
         '  BRIDGE_TAIL="$BRIDGE_TAIL\n--- $f ---\n$chunk"',
         'done',
-        'if [ -n "$BRIDGE_TAIL" ]; then',
-        '  if printf "%s" "$BRIDGE_TAIL" | grep -E -i "(connection.*open|connected to whatsapp|ws connection open|baileys|whatsapp.*ready|whatsapp.*connected|whatsapp.*active|session.*restored|auth.*ok|gateway\\.platforms\\.whatsapp)" >/dev/null 2>&1; then',
-        '    WA_OK=1',
+        'if [ "$WA_OK" -eq 0 ] && [ -n "$BRIDGE_TAIL" ]; then',
+        '  if printf "%s" "$BRIDGE_TAIL" | grep -E -i "(connection.*open|connected to whatsapp|whatsapp.*connected|whatsapp.*ready|baileys.*ready|gateway\\.platforms\\.whatsapp.*connected)" >/dev/null 2>&1; then',
+        '    WA_OK=1; WA_SOURCE="log_tail"',
         '  fi',
         'fi',
-        // 3) fallback: if status text mentions whatsapp + connected/active, accept it
-        'if [ "$WA_OK" -eq 0 ] && printf "%s" "$STATUS_OUT" | grep -E -i "whatsapp.*(connected|active|running|ok)" >/dev/null 2>&1; then',
-        '  WA_OK=1',
-        'fi',
+        'echo "PROC_OK=$PROC_OK"',
         'echo "WA_OK=$WA_OK"',
+        'echo "WA_SOURCE=$WA_SOURCE"',
+        'echo "STATUS_OUT_BEGIN"',
+        'printf "%s\\n" "$STATUS_OUT"',
+        'echo "STATUS_OUT_END"',
+        'echo "BRIDGE_HEALTH_BEGIN"',
+        'printf "%s\\n" "$BRIDGE_HEALTH"',
+        'echo "BRIDGE_HEALTH_END"',
+        'echo "GATEWAY_STATE_BEGIN"',
+        'printf "%s\\n" "$GATEWAY_STATE"',
+        'echo "GATEWAY_STATE_END"',
         'echo "BRIDGE_TAIL_BEGIN"',
         'printf "%s\\n" "$BRIDGE_TAIL"',
         'echo "BRIDGE_TAIL_END"',
@@ -1621,14 +1673,21 @@ export const hermesAPI = {
     };
     const statusOutput = between('STATUS_OUT_BEGIN', 'STATUS_OUT_END');
     const bridgeLogTail = between('BRIDGE_TAIL_BEGIN', 'BRIDGE_TAIL_END');
+    const bridgeHealthJson = between('BRIDGE_HEALTH_BEGIN', 'BRIDGE_HEALTH_END');
+    const gatewayStateJson = between('GATEWAY_STATE_BEGIN', 'GATEWAY_STATE_END');
     const procOk = /PROC_OK=1/.test(out);
     const waOk = /WA_OK=1/.test(out);
+    const sourceMatch = out.match(/WA_SOURCE=(\w+)/);
+    const source = (sourceMatch?.[1] as 'gateway_state' | 'bridge_health' | 'cli_status' | 'log_tail' | 'none') || 'none';
     return {
       success: r.success,
       running: procOk,
       whatsappActive: waOk,
+      source,
       statusOutput,
       bridgeLogTail,
+      bridgeHealthJson,
+      gatewayStateJson,
       error: r.success ? undefined : (r.stderr || '').split('\n')[0] || undefined,
     };
   },
