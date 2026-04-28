@@ -855,6 +855,19 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       toast.success("WhatsApp linked");
       waWhatsAppFinalizeInFlightRef.current = true;
       try {
+        // Make absolutely sure WHATSAPP_ENABLED=true (and the access keys) are
+        // in ~/.hermes/.env BEFORE we ask the gateway to start. Without this
+        // the gateway boots without WhatsApp and `hermes gateway status` will
+        // silently omit it — the user only finds out by messaging the agent.
+        await systemAPI.materializeEnv().catch(() => undefined);
+        const env = await systemAPI.readEnvFile().catch(() => ({} as Record<string, string>));
+        if ((env.WHATSAPP_ENABLED || "").trim().toLowerCase() !== "true") {
+          setWaPairingError(
+            "WhatsApp credentials saved, but WHATSAPP_ENABLED=true is missing from ~/.hermes/.env. Try reconfiguring the channel — Ronbot will rewrite the env file.",
+          );
+          setWaRetryReady(true);
+          return;
+        }
         const testOk = await runTest();
         if (!testOk) return;
         const outcome = await restartWhatsAppGatewayWithNewSession();

@@ -196,9 +196,15 @@ const ChannelsPage = () => {
       }
       if (!waRunning) {
         const tail = (waHealth.bridgeLogTail || waHealth.statusOutput || "").split("\n").slice(-4).join("\n").trim();
-        waAttention = waHealth.running
-          ? `Gateway is running but the WhatsApp bridge isn't connected (source=${waHealth.source}). ${tail ? "Last log: " + tail : "Reconfigure to re-pair."}`
-          : "Messaging gateway isn't running. Open the wizard to restart it.";
+        const status = (waHealth.statusOutput || "").toLowerCase();
+        const gatewaySeesWhatsApp = /whatsapp/.test(status);
+        if (!waHealth.running) {
+          waAttention = "Messaging gateway isn't running. Open the wizard to restart it.";
+        } else if (!gatewaySeesWhatsApp) {
+          waAttention = "Gateway is running but doesn't list WhatsApp as a configured platform. Reconfigure to make sure WHATSAPP_ENABLED=true is in ~/.hermes/.env, then restart the gateway.";
+        } else {
+          waAttention = `Gateway running but the WhatsApp bridge isn't connected (source=${waHealth.source}). ${tail ? "Last log: " + tail : "Reconfigure to re-pair."}`;
+        }
       }
     }
 
