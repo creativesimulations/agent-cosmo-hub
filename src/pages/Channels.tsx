@@ -20,6 +20,10 @@ const ChannelsPage = () => {
   const [activeWizard, setActiveWizard] = useState<Channel | null>(null);
   const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
   const channelsDebugRunRef = useRef("");
+  // Tracks channels in a brief post-wizard "starting" grace window so the
+  // card shows "Starting…" only while the bridge is given a chance to come
+  // up, and switches to "Attention" instead of spinning forever.
+  const pollStartRef = useRef<Map<string, number>>(new Map());
 
   const emitChannelsDebugLog = useCallback((hypothesisId: string, location: string, message: string, data: Record<string, unknown>) => {
     // #region agent log
@@ -143,12 +147,14 @@ const ChannelsPage = () => {
     // Hermes gateway status output can be inconsistent across versions.
     // For WhatsApp specifically, use dedicated health checks so we only
     // report "running" when the bridge is truly connected.
+    let waAttention: string | undefined;
     if (configuredChannels.includes("whatsapp")) {
       const waHealth = await systemAPI.getWhatsAppGatewayHealth();
       emitChannelsDebugLog("C5", "Channels.tsx:refresh:waHealth", "whatsapp bridge health", {
         success: waHealth.success,
         running: waHealth.running,
         whatsappActive: waHealth.whatsappActive,
+        source: waHealth.source,
       });
       const waRunning = !!(waHealth.success && waHealth.running && waHealth.whatsappActive);
       if (waRunning && !runningChannels.includes("whatsapp")) {
@@ -156,6 +162,12 @@ const ChannelsPage = () => {
       }
       if (!waRunning && runningChannels.includes("whatsapp")) {
         runningChannels = runningChannels.filter((id) => id !== "whatsapp");
+      }
+      if (!waRunning) {
+        const tail = (waHealth.bridgeLogTail || waHealth.statusOutput || "").split("\n").slice(-4).join("\n").trim();
+        waAttention = waHealth.running
+          ? `Gateway is running but the WhatsApp bridge isn't connected (source=${waHealth.source}). ${tail ? "Last log: " + tail : "Reconfigure to re-pair."}`
+          : "Messaging gateway isn't running. Open the wizard to restart it.";
       }
     }
 
@@ -167,9 +179,18 @@ const ChannelsPage = () => {
       }
       const configured = isChannelConfigured(channel, env, whatsappPaired);
       if (!configured) {
+        pollStartRef.current.delete(channel.id);
         next[channel.id] = { state: "not-configured" };
       } else {
-        next[channel.id] = { state: "configured", running: runningChannels.includes(channel.id) };
+        const running = runningChannels.includes(channel.id);
+        const startedAt = pollStartRef.current.get(channel.id);
+        const withinGrace = !!startedAt && Date.now() - startedAt < 30000;
+        if (running || !withinGrace) {
+          pollStartRef.current.delete(channel.id);
+        }
+        const starting = !running && withinGrace;
+        const attentionReason = channel.id === "whatsapp" ? waAttention : undefined;
+        next[channel.id] = { state: "configured", running, starting, attentionReason };
       }
     }
     // #region agent log
@@ -184,6 +205,27 @@ const ChannelsPage = () => {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Re-poll while any channel is in its post-setup grace window so the card
+  // converges from "Starting…" → "Active" without waiting for a manual reload.
+  useEffect(() => {
+    const anyStarting = Object.values(statuses).some(
+      (s) => s.state === "configured" && s.starting,
+    );
+    if (!anyStarting) return;
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [statuses, refresh]);
+
+  const handleWizardComplete = useCallback(
+    (channelId: string) => {
+      pollStartRef.current.set(channelId, Date.now());
+      void refresh();
+    },
+    [refresh],
+  );
 
   const handleSetUp = (channel: Channel) => {
     if (channel.tier === "paid" && !unlocks[channel.upgradeId!]) {
@@ -335,7 +377,7 @@ const ChannelsPage = () => {
           channel={activeWizard}
           open={!!activeWizard}
           onClose={() => setActiveWizard(null)}
-          onComplete={refresh}
+          onComplete={() => handleWizardComplete(activeWizard.id)}
         />
       )}
     </div>

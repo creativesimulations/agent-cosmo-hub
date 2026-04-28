@@ -833,7 +833,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         void (async () => {
           const ok = await runTest();
           if (!ok) return;
-          setWaStatusHint("Starting messaging gateway…");
+          setWaStatusHint("Restarting messaging gateway with new session…");
+          // Force a clean restart so the gateway re-reads ~/.hermes/.env and
+          // the WhatsApp session directory we just populated. Without the
+          // stop, an already-running gateway keeps the old (empty) auth state
+          // and the WhatsApp adapter stays disconnected.
+          await systemAPI.stopGateway().catch(() => undefined);
+          await systemAPI.refreshGatewayInstall().catch(() => undefined);
           const r = await systemAPI.startGateway();
           if (!r.success) {
             const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
