@@ -1,70 +1,71 @@
-## Findings
+Plan to fix the WhatsApp QR setup regression and the gateway not recognizing WhatsApp
 
-The phone shows Ronbot as linked, but the agent doesn't reply. The pairing succeeds, yet the Hermes gateway either isn't reading the same session or isn't reporting WhatsApp as a connected platform. The Channels card stays "Starting…" because the app's heuristic health check (process pgrep + log grep) never definitively proves WhatsApp is active.
+Findings from the current code and your logs:
+- The wizard still launches `hermes whatsapp` through a pseudo-terminal. Your gateway log shows repeated orphaned `hermes whatsapp`/`script` processes from earlier attempts. Those stale interactive processes can keep sessions/TTYs alive and prevent a fresh QR from rendering.
+- The official Hermes bridge has a direct pair-only mode: `node bridge.js --pair-only --session ~/.hermes/platforms/whatsapp/session --mode <mode>`. This is a better fit for the app because it prints the QR directly, saves the exact gateway session directory, and exits after pairing.
+- The gateway log never shows `Connecting to whatsapp...`; it only starts Slack and Email. That means the gateway is not seeing WhatsApp as a configured platform at start time, or it is reading stale env/service state. The setup must verify `WHATSAPP_ENABLED=true` is actually materialized before restarting the gateway, and status checks should report if WhatsApp is missing from `hermes gateway status`.
+- Email IMAP and Slack missing-scope errors in the log are unrelated to QR rendering, but their repeated reconnect noise can hide the WhatsApp signal. The WhatsApp flow should surface WhatsApp-specific diagnostics instead of dumping general gateway noise.
 
-Per upstream Hermes:
-- `hermes whatsapp` (the CLI flow) saves pairing at `~/.hermes/whatsapp/session/creds.json`.
-- The gateway adapter prefers `~/.hermes/platforms/whatsapp/session` for new installs, falling back to legacy `~/.hermes/whatsapp/session` if it already exists.
-- The bridge is a Node.js process exposing `http://127.0.0.1:3000/health` returning `{ status: "connected" | "disconnected", queueLength, uptime }`.
-- The gateway writes `~/.hermes/gateway_state.json` with `gateway_state` plus a `platforms.<name>.state` field (`connecting`, `connected`, `retrying`, `fatal`).
-- `hermes gateway status` lists the gateway process state and configured/connected platforms.
-- The agent is enabled by `WHATSAPP_ENABLED=true` + `WHATSAPP_MODE` + an allowlist (`WHATSAPP_ALLOWED_USERS` or `WHATSAPP_ALLOW_ALL_USERS=true`) in `~/.hermes/.env`.
-- Hermes uses Baileys (NOT Meta Cloud API or Twilio). The in-app agent saying it needs Meta/Twilio is a hallucination — the gateway is the single source of truth.
+Implementation changes to make:
 
-Adding the user's hint: the most reliable runtime signals are, in order of authority:
-1. `~/.hermes/gateway_state.json` → `platforms.whatsapp.state == "connected"`.
-2. `http://127.0.0.1:3000/health` → `status == "connected"`.
-3. `hermes gateway status` text mentioning WhatsApp connected.
-4. `~/.hermes/logs/gateway.log` and `bridge.log` tail for WhatsApp/Baileys connection lines.
-5. systemd user unit `hermes-gateway` active.
+1. Replace the fragile QR pairing command
+- Update `src/lib/systemAPI/hermes.ts` `runWhatsAppPairing()` to run the official bridge directly in pair-only mode:
+  - `node ~/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.js --pair-only --session ~/.hermes/platforms/whatsapp/session --mode "$WHATSAPP_MODE"`
+  - source `~/.hermes/.env` first so `WHATSAPP_MODE`, `WHATSAPP_ALLOWED_USERS`, and `WHATSAPP_DEBUG` are available.
+  - set `TERM=xterm-256color`, `FORCE_COLOR=1`, and explicit terminal dimensions so `qrcode-terminal` can render reliably.
+  - keep the managed Node runtime at the front of PATH.
+- Keep a fallback to `hermes whatsapp` only if `bridge.js` is missing, but mark that fallback clearly in the wizard output.
 
-## Plan
+2. Improve stale process cleanup
+- Expand `terminateWhatsAppPairingProcesses()` and pre-pair cleanup to kill:
+  - old `script ... hermes whatsapp` wrappers,
+  - old `hermes whatsapp` children,
+  - old `node ... whatsapp-bridge/bridge.js --pair-only` runs.
+- Do not kill the long-running gateway bridge on port 3000 except when explicitly resetting/re-pairing, so a healthy gateway is not disrupted unnecessarily.
 
-1. Make pairing write to the path the gateway will read
-   - Update `runWhatsAppPairing` to call the bridge directly in pair-only mode against the gateway-preferred session path (`~/.hermes/platforms/whatsapp/session`), with fallback to the legacy path if it already exists.
-   - On successful pair, if a legacy `~/.hermes/whatsapp/session` exists but is empty/stale, leave it; otherwise migrate creds into the new path so the gateway picks it up.
-   - Tighten `isWhatsAppPaired()` to require an actual `creds.json` in one of the canonical session dirs, not just any auth file.
+3. Make session handling canonical
+- Ensure `clearWhatsAppSession()` removes all known legacy paths plus the canonical `~/.hermes/platforms/whatsapp/session`.
+- Ensure `isWhatsAppPaired()` and `getWhatsAppSessionFileCount()` focus on a real `creds.json`, not just any leftover file.
+- After pair-only exits successfully, verify `~/.hermes/platforms/whatsapp/session/creds.json` exists. If pair-only saved to an older path for any reason, mirror it into the canonical path.
 
-2. Write the runtime config Hermes actually reads
-   - Continue mirroring secrets to `~/.hermes/.env`: `WHATSAPP_ENABLED=true`, `WHATSAPP_MODE`, `WHATSAPP_ALLOWED_USERS` (or `WHATSAPP_ALLOW_ALL_USERS=true` if user chose `*`).
-   - Add a managed `whatsapp:` block to `~/.hermes/config.yaml` with `unauthorized_dm_behavior: ignore` and preserve any user customizations.
-   - Do not touch Meta/Twilio anywhere — Hermes WhatsApp is Baileys-based.
+4. Verify the gateway sees WhatsApp, not just that a session exists
+- Add a dedicated diagnostic in `getWhatsAppGatewayHealth()` for:
+  - gateway running,
+  - `hermes gateway status` includes WhatsApp as a configured/connected platform,
+  - bridge `/health` is connected,
+  - canonical session `creds.json` exists,
+  - last WhatsApp bridge log tail.
+- Update the wizard to fail with an actionable message if `WHATSAPP_ENABLED=true` is missing from `~/.hermes/.env` after saving, or if `hermes gateway status` shows no WhatsApp section after restart.
 
-3. Always restart the gateway after a successful pair
-   - After `clearWhatsAppSession` + pair, run: `stopGateway` → `refreshGatewayInstall` (snapshots PATH for managed Node) → `startGateway`.
-   - This guarantees the gateway re-reads `.env` and the new session directory.
+5. Restart gateway in the right order
+- After successful pairing:
+  - materialize `.env`,
+  - stop the gateway,
+  - refresh/install the gateway service so PATH is captured,
+  - start the gateway,
+  - poll for WhatsApp status using the improved health check.
+- If the gateway starts but WhatsApp is not listed, show that exact reason instead of closing the wizard as successful.
 
-4. Replace heuristic health with the canonical signals (in priority order)
-   - New `getWhatsAppGatewayHealth()`:
-     - Parse `~/.hermes/gateway_state.json`. If `platforms.whatsapp.state == "connected"` → active.
-     - Probe `http://127.0.0.1:3000/health`. If `status == "connected"` → active.
-     - Run `hermes gateway status` and accept WhatsApp-connected text.
-     - Read `bridge.log` / `gateway.log` tails for diagnostics only (not for declaring success).
-     - Treat `systemctl --user is-active hermes-gateway` (and the system unit fallback) as "process running" but require one of the WhatsApp-specific signals above for "WhatsApp active".
-   - Return structured fields: `running`, `whatsappActive`, `source` (`gateway_state` | `bridge_health` | `cli_status` | `none`), `bridgeLogTail`, `statusOutput`.
+6. Fix wizard UX around QR visibility
+- Keep the terminal renderer, but add a plain text QR fallback that is always visible if xterm is not ready or if the QR appears in buffered output.
+- Add a short “No QR yet” timeout state that offers “Force fresh QR pairing” and shows the last WhatsApp-specific log lines, not the whole gateway log.
+- Prevent the auto-start effect from repeatedly launching pairing if prerequisites are ready but a stale session/reset confirmation is pending.
 
-5. Fix the "Starting…" loop on the Channels card
-   - In `Channels.tsx`, drive the WhatsApp card status from the new authoritative health check.
-   - States: not-configured → not-configured; configured + active → Active; configured + not active → "Attention" with a tooltip/toast linking to Logs (no permanent silent spinner).
-   - Re-poll briefly after the wizard closes (e.g., every 2s for ~30s) to converge to Active.
+7. Channel card status
+- Adjust the WhatsApp channel card attention reason to distinguish:
+  - “WhatsApp is configured but not listed by Hermes gateway,”
+  - “Gateway running but bridge not connected,”
+  - “Session missing or stale,”
+  - “Gateway not running.”
+- Keep the spinner only during the short post-setup grace window; otherwise show Attention with the reason.
 
-6. Remove leftover heuristics that lie
-   - `buildChannelCredentialTestScript` for `whatsapp` should require `creds.json` in a canonical dir, not just "any file in any of seven possible paths".
-   - The wizard's "Enable WhatsApp" button should only succeed when the new health check returns `whatsappActive`. If it doesn't within 30s, it shows the bridge log tail and offers a one-click "Restart gateway".
+Files to update after approval:
+- `src/lib/systemAPI/hermes.ts`
+- `src/components/channels/ChannelWizard.tsx`
+- `src/pages/Channels.tsx`
+- possibly `src/components/channels/ChannelCard.tsx` if the card needs a clearer status label/tooltip.
 
-7. Tests
-   - Unit-test the health parser against fixtures of `gateway_state.json`, bridge `/health` JSON, and `hermes gateway status` text.
-   - Test that pairing targets the gateway session path.
-   - Test that the credential test only passes with a real `creds.json`.
-
-## Files to update
-
-- `src/lib/systemAPI/hermes.ts` — pairing path, session detection, credential test, health probe (gateway_state.json + /health + CLI), startGateway sequencing.
-- `src/lib/systemAPI/index.ts` — export any new helpers (already exports `getWhatsAppGatewayHealth`).
-- `src/components/channels/ChannelWizard.tsx` — restart-after-pair flow, success gate uses authoritative health, log tail surface on failure.
-- `src/pages/Channels.tsx` — card status derives from new health check; bounded re-poll after wizard close; never permanent "Starting…".
-- `src/lib/systemAPI/hermes.install.test.ts` (or new test) — health parser + path tests.
-
-## Expected outcome
-
-After the QR scan: gateway restarts with the right session and env, `gateway_state.json` reports `platforms.whatsapp.state = connected` (corroborated by `/health`), the Channels card flips to Active, and the agent receives and replies to WhatsApp messages without any further user prompting. No "Starting…" loop, no Meta/Twilio detour.
+Expected result:
+- Starting WhatsApp setup reliably displays a QR code from the official Hermes bridge pair-only flow.
+- Scanning the QR saves credentials into `~/.hermes/platforms/whatsapp/session`, the exact path the gateway uses.
+- After setup, `hermes gateway status` should list WhatsApp, the bridge health should become connected, and the agent should be reachable on WhatsApp without the user asking the agent to configure anything manually.

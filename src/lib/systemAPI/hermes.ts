@@ -2148,16 +2148,17 @@ export const hermesAPI = {
   },
 
   /**
-   * Best-effort cleanup for orphaned interactive `hermes whatsapp` runs.
-   * Old script/hermes pairing processes can keep stale PTYs around and prevent
-   * the current wizard run from rendering a fresh QR stream reliably.
+   * Best-effort cleanup for orphaned interactive pairing runs.
+   * Covers the legacy `hermes whatsapp` PTY wrapper AND any stale pair-only
+   * Node bridge invocations from previous wizard attempts. Does NOT touch the
+   * long-running gateway-managed bridge (which runs without `--pair-only`).
    */
   async terminateWhatsAppPairingProcesses(): Promise<{ success: boolean; killed: number; output: string }> {
     const r = await runHermesShell(
       [
         'set +e',
         'K=0',
-        'for pat in "script -q -e -c hermes whatsapp" "script -q /dev/null bash -lc hermes whatsapp" "hermes whatsapp"; do',
+        'for pat in "script -q -e -c hermes whatsapp" "script -q -e -f -c hermes whatsapp" "script -q -f /dev/null bash -lc hermes whatsapp" "script -q /dev/null bash -lc hermes whatsapp" "hermes whatsapp" "whatsapp-bridge/bridge.js --pair-only"; do',
         '  if pkill -f "$pat" >/dev/null 2>&1; then K=$((K + 1)); fi',
         'done',
         'echo "KILLED=$K"',
