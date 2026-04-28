@@ -144,6 +144,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waStaleSessionDetected, setWaStaleSessionDetected] = useState(false);
   const [waForceFreshBusy, setWaForceFreshBusy] = useState(false);
   const [waRePairRestartBusy, setWaRePairRestartBusy] = useState(false);
+  const [waRuntimeRepairBusy, setWaRuntimeRepairBusy] = useState(false);
   const [waBridgeInactiveHint, setWaBridgeInactiveHint] = useState("");
   /** Guard against double-click reentry before state updates land. */
   const resetInFlightRef = useRef(false);
