@@ -647,6 +647,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       void systemAPI.killStream(id);
       waStreamIdRef.current = null;
     }
+    void systemAPI.terminateWhatsAppPairingProcesses().catch(() => undefined);
   }, [open]);
 
   /** Clear wizard-only WHATSAPP_DEBUG unless the user opted to keep it. */
@@ -709,6 +710,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairingPhase("runtime");
     waStreamIdRef.current = null;
     try {
+      await systemAPI.terminateWhatsAppPairingProcesses().catch(() => undefined);
       if (waPairPrereqChecked && !waPairPrereqOk) {
         const fixed = await autoFixWhatsAppPairingTools();
         if (!fixed) return;
@@ -972,6 +974,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     if (id) {
       await systemAPI.killStream(id);
     }
+    await systemAPI.terminateWhatsAppPairingProcesses().catch(() => undefined);
   };
 
   const handleViewBridgeLogs = async () => {
@@ -1012,68 +1015,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaRePairRestartBusy(false);
     }
   };
-
-  useEffect(() => {
-    if (!open || step !== testStep || channel.id !== "whatsapp" || !waPairingActive) return;
-    const timer = window.setInterval(() => {
-      void (async () => {
-        const paired = await systemAPI.isWhatsAppPaired();
-        if (!(paired.success && paired.paired)) return;
-        const id = waStreamIdRef.current;
-        if (id) {
-          await systemAPI.killStream(id);
-        }
-        waStreamIdRef.current = null;
-        setWaPairingActive(false);
-        setWaPairingPhase("idle");
-        setWaStatusHint("");
-        setWaPaired(true);
-        setWaPairingError("");
-        toast.success("WhatsApp linked");
-        setTestResult("idle");
-        void (async () => {
-          waWhatsAppFinalizeInFlightRef.current = true;
-          try {
-            const ok = await runTest();
-            if (!ok) return;
-            const outcome = await restartWhatsAppGatewayWithNewSession();
-            if (outcome === "fail") return;
-            bumpMessagingProbe();
-            setWaBridgeInactiveHint("");
-            if (outcome === "live") {
-              toast.success(`${channel.name} channel enabled`, {
-                description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
-              });
-            } else {
-              toast.success(`${channel.name} channel enabled`, {
-                description:
-                  "WhatsApp is linked and the gateway was restarted. Use “Restart messaging gateway” below if messages are slow to arrive.",
-              });
-            }
-            onComplete();
-            onClose();
-          } finally {
-            waWhatsAppFinalizeInFlightRef.current = false;
-          }
-        })();
-      })();
-    }, 2000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [
-    open,
-    step,
-    channel.id,
-    channel.name,
-    waPairingActive,
-    runTest,
-    onClose,
-    onComplete,
-    testStep,
-    restartWhatsAppGatewayWithNewSession,
-    bumpMessagingProbe,
-  ]);
 
   useEffect(() => {
     if (!waPairingActive) return;

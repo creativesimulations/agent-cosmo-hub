@@ -2148,6 +2148,29 @@ export const hermesAPI = {
   },
 
   /**
+   * Best-effort cleanup for orphaned interactive `hermes whatsapp` runs.
+   * Old script/hermes pairing processes can keep stale PTYs around and prevent
+   * the current wizard run from rendering a fresh QR stream reliably.
+   */
+  async terminateWhatsAppPairingProcesses(): Promise<{ success: boolean; killed: number; output: string }> {
+    const r = await runHermesShell(
+      [
+        'set +e',
+        'K=0',
+        'for pat in "script -q -e -c hermes whatsapp" "script -q /dev/null bash -lc hermes whatsapp" "hermes whatsapp"; do',
+        '  if pkill -f "$pat" >/dev/null 2>&1; then K=$((K + 1)); fi',
+        'done',
+        'echo "KILLED=$K"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 12000 },
+    );
+    const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+    const killed = Number((out.match(/KILLED=(\d+)/)?.[1] ?? '0'));
+    return { success: r.success, killed, output: out.trim() };
+  },
+
+  /**
    * Stream `hermes whatsapp` (QR + logs) for in-app pairing. Uses `timeout: 0`
    * so the child is not killed while the user scans. Call `killStream` from
    * the UI if the user cancels.
@@ -2179,6 +2202,10 @@ export const hermesAPI = {
         'set +e',
         HERMES_PATH_EXPORT,
         getHermesNodeEnvExport(),
+        // Clean up orphaned interactive sessions from previous attempts.
+        'pkill -f "script -q -e -c hermes whatsapp" >/dev/null 2>&1 || true',
+        'pkill -f "script -q /dev/null bash -lc hermes whatsapp" >/dev/null 2>&1 || true',
+        'pkill -f "hermes whatsapp" >/dev/null 2>&1 || true',
         'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
         'if command -v script >/dev/null 2>&1; then',
         '  if script --version 2>&1 | grep -qF util-linux; then',
