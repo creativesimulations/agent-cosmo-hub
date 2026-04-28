@@ -755,15 +755,20 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       await systemAPI.materializeEnv().catch(() => undefined);
       setWaPairingPhase("runtime");
       setWaStatusHint("Refreshing gateway PATH automatically…");
+      // Best-effort: `hermes gateway install` may fail on systems without
+      // `systemctl --user` (e.g. macOS, headless Linux without a user bus).
+      // The Node shim + adapter patch are applied regardless, so we treat
+      // this as a soft warning and continue to bridge-deps/pairing instead
+      // of blocking the QR code from ever appearing.
       const refresh = await systemAPI.refreshGatewayInstall();
       if (!refresh.success) {
-        const detail = refresh.stderr?.split("\n")[0] || refresh.stdout?.split("\n")[0] || "Could not refresh gateway PATH.";
-        setWaPairingError(detail);
-        toast.error("Could not refresh gateway PATH", {
-          description: detail,
+        const detail = refresh.stderr?.split("\n")[0] || refresh.stdout?.split("\n")[0] || "";
+        if (detail) {
+          appendWaPairingChunk(`[ronbot] gateway refresh skipped: ${detail}\n`);
+        }
+        toast.message("Gateway PATH refresh skipped", {
+          description: detail || "Continuing with managed Node shim and adapter patch.",
         });
-        setWaPairingPhase("idle");
-        return;
       }
       setWaPairingPhase("bridge-deps");
       setWaStatusHint(
