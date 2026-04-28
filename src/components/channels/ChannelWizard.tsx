@@ -1797,19 +1797,33 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 )}
                 <div className="flex flex-wrap gap-2">
                   {waBridgeInactiveHint ? (
-                    <Button
-                      type="button"
-                      variant="default"
-                      size="sm"
-                      className="h-8 text-xs"
-                      disabled={waRePairRestartBusy || waPairingActive}
-                      onClick={() => void handleRePairAndRestart()}
-                    >
-                      {waRePairRestartBusy ? (
-                        <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
-                      ) : null}
-                      Re-pair + Restart
-                    </Button>
+                    <>
+                      <Button
+                        type="button"
+                        variant="default"
+                        size="sm"
+                        className="h-8 text-xs"
+                        disabled={waRePairRestartBusy || waPairingActive || waRuntimeRepairBusy}
+                        onClick={() => void handleRePairAndRestart()}
+                      >
+                        {waRePairRestartBusy ? (
+                          <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
+                        ) : null}
+                        Re-pair + Restart
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs"
+                        disabled={waRuntimeRepairBusy || waPairingActive || waRePairRestartBusy}
+                        title="Re-install Node v20 shim, drop systemd PATH override, patch the WhatsApp adapter, and restart the gateway — without clearing your linked WhatsApp session."
+                        onClick={() => void handleRepairRuntimeOnly()}
+                      >
+                        {waRuntimeRepairBusy ? <Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> : null}
+                        Repair runtime only
+                      </Button>
+                    </>
                   ) : null}
                 </div>
                 {waBridgeInactiveHint ? (
