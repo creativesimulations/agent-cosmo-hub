@@ -764,7 +764,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       if (!refresh.success) {
         const detail = refresh.stderr?.split("\n")[0] || refresh.stdout?.split("\n")[0] || "";
         if (detail) {
-          appendWaPairingChunk(`[ronbot] gateway refresh skipped: ${detail}\n`);
+          appendWaPairingChunk({ type: "stderr", data: `[ronbot] gateway refresh skipped: ${detail}\n` });
         }
         toast.message("Gateway PATH refresh skipped", {
           description: detail || "Continuing with managed Node shim and adapter patch.",
