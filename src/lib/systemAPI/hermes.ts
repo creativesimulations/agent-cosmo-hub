@@ -226,17 +226,13 @@ const buildChannelCredentialTestScript = (channelId: string): string => {
     '      echo "Set WHATSAPP_ALLOWED_USERS (recommended) or WHATSAPP_ALLOW_ALL_USERS=true." >&2',
     '      exit 1',
     '    fi',
-    '    BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
     '    HAS_CREDS=0',
-    '    for d in "$HOME/.hermes/platforms/whatsapp/session" "$HOME/.hermes/whatsapp/session" "$HOME/.hermes/whatsapp" "$HOME/.hermes/.whatsapp" "$BRIDGE_DIR"/auth_info* "$BRIDGE_DIR"/baileys_auth* "$BRIDGE_DIR"/session*; do',
-    '      [ -e "$d" ] || continue',
-    '      if [ -f "$d/creds.json" ]; then HAS_CREDS=1; break; fi',
-    '    done',
+    '    [ -f "$HOME/.hermes/platforms/whatsapp/session/creds.json" ] && HAS_CREDS=1',
     '    if [ "$HAS_CREDS" -eq 0 ]; then',
-    '      echo "WhatsApp is not linked yet — finish QR pairing first." >&2',
+    '      echo "WhatsApp is not linked yet in ~/.hermes/platforms/whatsapp/session — finish QR pairing first." >&2',
     '      exit 1',
     '    fi',
-    '    echo "WhatsApp Baileys creds.json found. Pairing was verified."',
+    '    echo "WhatsApp canonical creds.json found. Pairing was verified."',
   ].join('\n');
   const signalBlock = [
     '    [ -n "${SIGNAL_HTTP_URL:-}" ] || { echo "SIGNAL_HTTP_URL is required" >&2; exit 1; }',
@@ -1631,7 +1627,7 @@ export const hermesAPI = {
         'if [ "$PROC_OK" -eq 0 ] && printf "%s" "$STATUS_OUT" | grep -Eqi "(user gateway service is running|gateway service is running|active \\(running\\)|hermes-gateway)"; then',
         '  PROC_OK=1',
         'fi',
-        // --- 4. bridge log tail (diagnostic only; promoted to "active" only as last resort) ---
+        // --- 4. bridge log tail (diagnostic only) ---
         'BRIDGE_TAIL=""',
         'WA_FILES="$HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log $HOME/.hermes/logs/bridge.log $HOME/.hermes/logs/gateway.log"',
         'for f in $WA_FILES; do',
@@ -1639,11 +1635,6 @@ export const hermesAPI = {
         '  chunk="$(tail -n 120 "$f" 2>/dev/null || true)"',
         '  BRIDGE_TAIL="$BRIDGE_TAIL\n--- $f ---\n$chunk"',
         'done',
-        'if [ "$WA_OK" -eq 0 ] && [ -n "$BRIDGE_TAIL" ]; then',
-        '  if printf "%s" "$BRIDGE_TAIL" | grep -E -i "(connection.*open|connected to whatsapp|whatsapp.*(connected|ready|online)|baileys|@whiskeysockets|logged in|authenticated|pairing.*success|gateway\\.platforms\\.whatsapp)" >/dev/null 2>&1; then',
-        '    WA_OK=1; WA_SOURCE="log_tail"',
-        '  fi',
-        'fi',
         'echo "PROC_OK=$PROC_OK"',
         'echo "WA_OK=$WA_OK"',
         'echo "WA_SOURCE=$WA_SOURCE"',
@@ -1984,22 +1975,9 @@ export const hermesAPI = {
     const r = await runHermesShell(
       [
         'set +e',
-        // Authoritative pairing signal = a Baileys creds.json under one of the
-        // canonical session dirs. Counting "any file in any of seven possible
-        // paths" produced false positives (e.g. an empty cache dir).
-        'BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
+        // Canonical Hermes signal for WhatsApp pairing.
         'PAIRED=0',
-        'for d in "$HOME/.hermes/platforms/whatsapp/session" "$HOME/.hermes/whatsapp/session" "$HOME/.hermes/whatsapp" "$HOME/.hermes/.whatsapp" "$BRIDGE_DIR"/auth_info* "$BRIDGE_DIR"/baileys_auth* "$BRIDGE_DIR"/session*; do',
-        '  [ -e "$d" ] || continue',
-        '  if [ -f "$d/creds.json" ] || [ -f "$d" ]; then',
-        '    # creds.json present, OR the path itself is a creds file (rare).',
-        '    case "$d" in',
-        '      */creds.json) PAIRED=1 ;;',
-        '      *) [ -f "$d/creds.json" ] && PAIRED=1 ;;',
-        '    esac',
-        '  fi',
-        '  [ "$PAIRED" -eq 1 ] && break',
-        'done',
+        'if [ -f "$HOME/.hermes/platforms/whatsapp/session/creds.json" ]; then PAIRED=1; fi',
         'echo "PAIRED=$PAIRED"',
         'exit 0',
       ].join('\n'),

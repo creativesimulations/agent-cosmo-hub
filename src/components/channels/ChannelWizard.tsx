@@ -10,7 +10,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle, RotateCcw, Trash2, ScrollText } from "lucide-react";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
@@ -116,7 +115,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waPairPrereqOk, setWaPairPrereqOk] = useState(false);
   const [waPairPrereqDetail, setWaPairPrereqDetail] = useState("");
   const [waBaseline, setWaBaseline] = useState<WaBaseline | null>(null);
-  const [waRelinkRequested, setWaRelinkRequested] = useState(false);
   const [waAwaitingResetConfirm, setWaAwaitingResetConfirm] = useState(false);
   const [waRetryReady, setWaRetryReady] = useState(false);
   const [waAutoFixing, setWaAutoFixing] = useState(false);
@@ -128,7 +126,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [setupToolsOk, setSetupToolsOk] = useState(false);
   const [setupToolsDetail, setSetupToolsDetail] = useState("");
   const [gatewayRefreshBusy, setGatewayRefreshBusy] = useState(false);
-  const [wizardGatewayRestartBusy, setWizardGatewayRestartBusy] = useState(false);
   const waLogBuffer = useRef("");
   const waStreamIdRef = useRef<string | null>(null);
   /** Prevents auto "Enable" from racing the mid-pairing gateway restart path. */
@@ -147,10 +144,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waStaleSessionDetected, setWaStaleSessionDetected] = useState(false);
   const [waForceFreshBusy, setWaForceFreshBusy] = useState(false);
   const [waRePairRestartBusy, setWaRePairRestartBusy] = useState(false);
-  /** Open testing = WHATSAPP_ALLOWED_USERS=* (Hermes docs). Default on for novices. */
-  const [waOpenTesting, setWaOpenTesting] = useState(true);
-  /** If false, WHATSAPP_DEBUG is cleared when the wizard closes. */
-  const [waKeepDebugLogs, setWaKeepDebugLogs] = useState(false);
   const [waBridgeLogDialogOpen, setWaBridgeLogDialogOpen] = useState(false);
   const [waBridgeLogText, setWaBridgeLogText] = useState("");
   const [waBridgeLogLoading, setWaBridgeLogLoading] = useState(false);
@@ -159,7 +152,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const resetInFlightRef = useRef(false);
   const startPairingInFlightRef = useRef(false);
   const forceFreshInFlightRef = useRef(false);
-  const restartGatewayInFlightRef = useRef(false);
   const rePairRestartInFlightRef = useRef(false);
   const viewLogsInFlightRef = useRef(false);
   const refreshGatewayInstallInFlightRef = useRef(false);
@@ -186,7 +178,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaPairPrereqOk(false);
     setWaPairPrereqDetail("");
     setWaBaseline(null);
-    setWaRelinkRequested(false);
     setWaAwaitingResetConfirm(false);
     setWaRetryReady(false);
     setWaAutoFixing(false);
@@ -228,11 +219,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         setValues(next);
         setHadExistingConfig(wasConfigured);
         if (channel.id === "whatsapp") {
-          const au = (next.WHATSAPP_ALLOWED_USERS || "").trim();
-          const allowAllFlag = (env.WHATSAPP_ALLOW_ALL_USERS || "").trim().toLowerCase() === "true";
-          setWaOpenTesting(au === "*" || allowAllFlag);
-          const dbg = ((await systemAPI.secrets.get("WHATSAPP_DEBUG")) || "").trim().toLowerCase();
-          setWaKeepDebugLogs(dbg === "true");
           setWaBaseline({
             mode: (next.WHATSAPP_MODE || "").trim(),
             allowedUsers: normalizeAllowedUsers(next.WHATSAPP_ALLOWED_USERS || ""),
@@ -290,15 +276,16 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const requiredFilled = useMemo(() => {
     const base = channel.credentials.every((c) => c.optional || (values[c.envVar] || "").trim().length > 0);
     if (channel.id !== "whatsapp") return base;
-    if (waOpenTesting) return base;
-    const digits = (values.WHATSAPP_ALLOWED_USERS || "").trim().replace(/\D/g, "");
-    return base && E164_PHONE_ONLY.test(digits);
-  }, [channel.credentials, channel.id, values, waOpenTesting]);
+    const raw = (values.WHATSAPP_ALLOWED_USERS || "").trim();
+    const entries = raw.split(",").map((p) => p.trim()).filter(Boolean);
+    if (entries.length === 0) return false;
+    return base && entries.every((n) => E164_PHONE_ONLY.test(n));
+  }, [channel.credentials, channel.id, values]);
   const waModeCurrent = (values.WHATSAPP_MODE || "").trim();
   const waAllowedUsersCurrent = normalizeAllowedUsers(values.WHATSAPP_ALLOWED_USERS || "");
   const waHasModeChange = !!waBaseline && waBaseline.mode !== waModeCurrent;
   const waHasAllowlistChange = !!waBaseline && waBaseline.allowedUsers !== waAllowedUsersCurrent;
-  const waRequiresSessionReset = waPaired && (waRelinkRequested || waHasModeChange || waHasAllowlistChange);
+  const waRequiresSessionReset = waPaired && (waHasModeChange || waHasAllowlistChange);
 
   const appendWaPairingChunk = useCallback((event: { type: string; data?: string }) => {
     if ((event.type !== "stdout" && event.type !== "stderr") || !event.data) return;
@@ -451,30 +438,24 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setSaving(true);
     try {
       if (channel.id === "whatsapp") {
-        if (waOpenTesting) {
-          await systemAPI.secrets.delete("WHATSAPP_ALLOW_ALL_USERS").catch(() => false);
-          const okStar = await systemAPI.secrets.set("WHATSAPP_ALLOWED_USERS", "*");
-          if (!okStar) {
-            setFormError("Failed to save access control");
-            toast.error("Failed to save access control");
-            return false;
-          }
-        } else {
-          const digits = (values.WHATSAPP_ALLOWED_USERS || "").trim().replace(/\D/g, "");
-          if (!E164_PHONE_ONLY.test(digits)) {
-            const msg =
-              "Enter your full phone number in E.164 format (digits only, country code first, e.g. 15551234567), or turn on open testing.";
-            setFormError(msg);
-            toast.error("Phone number required", { description: msg });
-            return false;
-          }
-          await systemAPI.secrets.delete("WHATSAPP_ALLOW_ALL_USERS").catch(() => false);
-          const okPhone = await systemAPI.secrets.set("WHATSAPP_ALLOWED_USERS", digits);
-          if (!okPhone) {
-            setFormError("Failed to save phone number");
-            toast.error("Failed to save phone number");
-            return false;
-          }
+        const entries = (values.WHATSAPP_ALLOWED_USERS || "")
+          .split(",")
+          .map((p) => p.trim())
+          .filter(Boolean);
+        if (entries.length === 0 || !entries.every((n) => E164_PHONE_ONLY.test(n))) {
+          const msg =
+            "Enter one or more E.164 numbers (digits only, country code first), comma-separated. Example: 15551234567,447700900123";
+          setFormError(msg);
+          toast.error("Valid allowlist required", { description: msg });
+          return false;
+        }
+        await systemAPI.secrets.delete("WHATSAPP_ALLOW_ALL_USERS").catch(() => false);
+        const normalized = entries.join(",");
+        const okPhone = await systemAPI.secrets.set("WHATSAPP_ALLOWED_USERS", normalized);
+        if (!okPhone) {
+          setFormError("Failed to save WhatsApp allowed users");
+          toast.error("Failed to save WhatsApp allowed users");
+          return false;
         }
         await systemAPI.secrets.set("WHATSAPP_DEBUG", "true").catch(() => false);
       }
@@ -558,7 +539,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   }, [channel]);
 
   /** Stop/start gateway so a new WhatsApp session is picked up (shared by pairing completion + manual button). */
-  const restartWhatsAppGatewayWithNewSession = useCallback(async (): Promise<"live" | "soft" | "fail"> => {
+  const restartWhatsAppGatewayWithNewSession = useCallback(async (): Promise<"live" | "fail"> => {
     setWaBridgeInactiveHint("");
     await systemAPI.materializeEnv().catch(() => undefined);
     setWaStatusHint("Restarting messaging gateway with new session…");
@@ -587,18 +568,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setFormError("");
       return "live";
     }
-    const pairedNow = await systemAPI.isWhatsAppPaired();
-    if (r.success && pairedNow.success && pairedNow.paired) {
-      setFormError("");
-      return "soft";
-    }
     const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
     const logR = await systemAPI.readWhatsAppBridgeLogTail(100);
     const hint = (logR.content || tail).split("\n").slice(-20).join("\n").trim();
     setWaBridgeInactiveHint(hint);
     const detail = tail
       ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
-      : "Could not confirm WhatsApp after starting the gateway. Try pairing again, then enable.";
+      : "Could not confirm WhatsApp after starting the gateway. Try pairing again.";
     setFormError(detail + (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""));
     toast.error("WhatsApp bridge not confirmed", {
       description: "Try Re-pair + Restart or open bridge logs.",
@@ -658,15 +634,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     void systemAPI.terminateWhatsAppPairingProcesses().catch(() => undefined);
   }, [open]);
 
-  /** Clear wizard-only WHATSAPP_DEBUG unless the user opted to keep it. */
+  /** Clear wizard-only WHATSAPP_DEBUG on close. */
   useEffect(() => {
     if (open || channel.id !== "whatsapp") return;
-    if (waKeepDebugLogs) return;
     void (async () => {
       await systemAPI.secrets.delete("WHATSAPP_DEBUG").catch(() => false);
       await systemAPI.materializeEnv().catch(() => undefined);
     })();
-  }, [open, channel.id, waKeepDebugLogs]);
+  }, [open, channel.id]);
 
   useEffect(() => {
     if (!open || step !== testStep || testing) return;
@@ -807,7 +782,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         return;
       }
       if (!resetSessionFirst && sessionState.count > 0) {
-        setWaRelinkRequested(true);
         setWaAwaitingResetConfirm(true);
         setWaPairingError("Ronbot detected an existing local WhatsApp session. Confirm relink to replace it and continue.");
         setWaPairingPhase("idle");
@@ -857,7 +831,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     const paired = await systemAPI.isWhatsAppPaired();
     if (paired.success && paired.paired) {
       setWaPaired(true);
-      setWaRelinkRequested(false);
       setWaAwaitingResetConfirm(false);
       setWaBaseline({
         mode: waModeCurrent,
@@ -885,16 +858,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         if (outcome === "fail") return;
         bumpMessagingProbe();
         setWaBridgeInactiveHint("");
-        if (outcome === "live") {
-          toast.success(`${channel.name} channel enabled`, {
-            description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
-          });
-        } else {
-          toast.success(`${channel.name} channel enabled`, {
-            description:
-              "WhatsApp is linked and the gateway was restarted. Use “Restart messaging gateway” below if messages are slow to arrive.",
-          });
-        }
+        toast.success(`${channel.name} channel enabled`, {
+          description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
+        });
         onComplete();
         onClose();
       } finally {
@@ -1075,8 +1041,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const r = await systemAPI.refreshGatewayInstall();
       if (r.success) {
         toast.success("Gateway service refreshed", {
-          description:
-            "Ronbot re-saved your PATH for the messaging gateway. Use “Restart messaging gateway” in this wizard or on the WhatsApp card if the bridge needs a fresh start.",
+          description: "Ronbot re-saved your PATH for the messaging gateway.",
         });
         if (channel.id === "whatsapp") {
           const pr = await systemAPI.checkWhatsAppPairingPrereqs();
@@ -1091,90 +1056,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     } finally {
       refreshGatewayInstallInFlightRef.current = false;
       setGatewayRefreshBusy(false);
-    }
-  };
-
-  const enableGateway = async () => {
-    await systemAPI.materializeEnv().catch(() => undefined);
-    const r = await systemAPI.startGateway();
-    if (!r.success) {
-      const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
-      setFormError(detail);
-      toast.error("Failed to start gateway", { description: detail });
-      return;
-    }
-    if (channel.id === "whatsapp") {
-      const deadline = Date.now() + 90000;
-      let lastHealth: Awaited<ReturnType<typeof systemAPI.getWhatsAppBridgeStatus>> | null = null;
-      while (Date.now() < deadline) {
-        const h = await systemAPI.getWhatsAppBridgeStatus();
-        lastHealth = h;
-        if (h.running && h.whatsappActive) break;
-        await new Promise((res) => setTimeout(res, 2500));
-      }
-      if (lastHealth?.running && lastHealth.whatsappActive) {
-        setFormError("");
-        setWaBridgeInactiveHint("");
-        bumpMessagingProbe();
-        toast.success(`${channel.name} channel enabled`, {
-          description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
-        });
-        onComplete();
-        onClose();
-        return;
-      }
-      // `hermes gateway start` already succeeded (`r.success`). Process detection
-      // often misses `python … gateway` (no "hermes gateway" argv), so do not
-      // block enable on log heuristics alone when a session exists.
-      const pairedNow = await systemAPI.isWhatsAppPaired();
-      if (r.success && pairedNow.success && pairedNow.paired) {
-        setFormError("");
-        setWaBridgeInactiveHint("");
-        bumpMessagingProbe();
-        toast.success(`${channel.name} channel enabled`, {
-          description:
-            "WhatsApp is linked and the gateway was started. Use “Restart messaging gateway” in this wizard or on the WhatsApp card if messages are slow to arrive.",
-        });
-        onComplete();
-        onClose();
-        return;
-      }
-      const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
-      const logR = await systemAPI.readWhatsAppBridgeLogTail(100);
-      const extra = logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : "";
-      const detail = tail
-        ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
-        : "Could not confirm WhatsApp after starting the gateway. Try pairing again from step 3, then enable.";
-      setFormError(detail + extra);
-      setWaBridgeInactiveHint((logR.content || tail).split("\n").slice(-16).join("\n").trim());
-      toast.error("WhatsApp bridge not confirmed", {
-        description: "Use Re-pair + Restart or view bridge logs below.",
-      });
-      return;
-    }
-    setFormError("");
-    toast.success(`${channel.name} channel enabled`, {
-      description: "Your agent is now reachable here.",
-    });
-    onComplete();
-    onClose();
-  };
-
-  const handleWizardRestartGateway = async () => {
-    if (restartGatewayInFlightRef.current) return;
-    if (channel.id !== "whatsapp") return;
-    restartGatewayInFlightRef.current = true;
-    setWizardGatewayRestartBusy(true);
-    try {
-      const outcome = await restartWhatsAppGatewayWithNewSession();
-      if (outcome === "fail") return;
-      bumpMessagingProbe();
-      toast.success("Messaging gateway restarted", {
-        description: "WhatsApp picked up your latest session and gateway settings.",
-      });
-    } finally {
-      restartGatewayInFlightRef.current = false;
-      setWizardGatewayRestartBusy(false);
     }
   };
 
@@ -1203,7 +1084,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     waPairingActive,
   ]);
 
-  /** When the channel test flips to ok (e.g. already linked), run enable without an extra click. */
+  /** When the channel test flips to ok (e.g. already linked), finalize automatically. */
   useEffect(() => {
     if (channel.id !== "whatsapp") return;
     const prev = prevWhatsAppTestResultRef.current;
@@ -1212,8 +1093,17 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     if (!becameOk) return;
     if (!open || step !== testStep) return;
     if (waWhatsAppFinalizeInFlightRef.current) return;
-    void enableGateway();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- enableGateway closes the wizard on success; omit from deps to avoid stale closures re-firing
+    void (async () => {
+      const outcome = await restartWhatsAppGatewayWithNewSession();
+      if (outcome === "fail") return;
+      bumpMessagingProbe();
+      toast.success(`${channel.name} channel enabled`, {
+        description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
+      });
+      onComplete();
+      onClose();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run only on first transition to ok
   }, [testResult, open, channel.id, step, testStep]);
 
   /**
@@ -1273,7 +1163,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       });
       setWaPaired(false);
       setWaPairedChecked(false);
-      setWaRelinkRequested(false);
       setWaAwaitingResetConfirm(false);
       setWaStaleSessionDetected(false);
       setWaPairingError("");
@@ -1314,7 +1203,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaPairedChecked(true);
       setWaStaleSessionDetected(false);
       setWaPairingError("");
-      setWaRelinkRequested(false);
       setWaAwaitingResetConfirm(false);
       setWaRetryReady(false);
       toast.success("Cleared previous WhatsApp session", {
@@ -1473,8 +1361,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                     Ronbot writes the exact keys Hermes expects (
                     <code className="font-mono text-[11px]">WHATSAPP_ENABLED</code>,{" "}
                     <code className="font-mono text-[11px]">WHATSAPP_MODE</code>,{" "}
-                    <code className="font-mono text-[11px]">WHATSAPP_ALLOWED_USERS</code> and/or{" "}
-                    <code className="font-mono text-[11px]">WHATSAPP_ALLOW_ALL_USERS</code>
+                    <code className="font-mono text-[11px]">WHATSAPP_ALLOWED_USERS</code>
                     ) into your OS keychain and mirrors them into{" "}
                     <code className="font-mono text-[11px]">~/.hermes/.env</code> when you continue.
                   </p>
@@ -1484,69 +1371,27 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                   </p>
                 </div>
                 <div className="rounded-lg border border-border/60 bg-background/30 p-4 space-y-4">
-                  <div className="flex items-start gap-3 space-y-0">
-                    <Checkbox
-                      id="wa-open-testing"
-                      checked={waOpenTesting}
-                      onCheckedChange={(c) => {
-                        const on = c === true;
-                        setWaOpenTesting(on);
-                        setValues((v) => ({
-                          ...v,
-                          WHATSAPP_ALLOWED_USERS: on ? "*" : v.WHATSAPP_ALLOWED_USERS === "*" ? "" : v.WHATSAPP_ALLOWED_USERS,
-                        }));
+                  <div className="space-y-1">
+                    <Label htmlFor="wa-phone-e164" className="text-xs">
+                      Allowed WhatsApp numbers (E.164, comma-separated) <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="wa-phone-e164"
+                      type="text"
+                      inputMode="text"
+                      value={values.WHATSAPP_ALLOWED_USERS || ""}
+                      onChange={(e) => {
+                        const raw = e.target.value.replace(/[^\d,\s]/g, "");
+                        setValues((v) => ({ ...v, WHATSAPP_ALLOWED_USERS: raw }));
                       }}
+                      placeholder="15551234567,447700900123"
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="bg-background/50 font-mono text-sm"
                     />
-                    <div className="space-y-1">
-                      <Label htmlFor="wa-open-testing" className="text-sm font-medium cursor-pointer">
-                        Open testing — allow any WhatsApp number (<code className="font-mono text-xs">*</code>)
-                      </Label>
-                      <p className="text-[11px] text-muted-foreground leading-relaxed">
-                        Hermes treats <code className="font-mono">WHATSAPP_ALLOWED_USERS=*</code> like everyone can DM
-                        the bot. Turn this off and enter your number for production.
-                      </p>
-                    </div>
-                  </div>
-                  {!waOpenTesting && (
-                    <div className="space-y-1">
-                      <Label htmlFor="wa-phone-e164" className="text-xs">
-                        Your WhatsApp number (E.164) <span className="text-destructive">*</span>
-                      </Label>
-                      <Input
-                        id="wa-phone-e164"
-                        type="text"
-                        inputMode="numeric"
-                        value={values.WHATSAPP_ALLOWED_USERS || ""}
-                        onChange={(e) => {
-                          const raw = e.target.value.replace(/\D/g, "");
-                          setValues((v) => ({ ...v, WHATSAPP_ALLOWED_USERS: raw }));
-                        }}
-                        placeholder="15551234567 — country code first, no + sign"
-                        autoComplete="off"
-                        spellCheck={false}
-                        className="bg-background/50 font-mono text-sm"
-                      />
-                      <p className="text-[11px] text-muted-foreground">
-                        Digits only (7–15 after country code). In self-chat, this should be the same number as the
-                        WhatsApp account you will link.
-                      </p>
-                    </div>
-                  )}
-                  <div className="flex items-start gap-3">
-                    <Checkbox
-                      id="wa-keep-debug"
-                      checked={waKeepDebugLogs}
-                      onCheckedChange={(c) => setWaKeepDebugLogs(c === true)}
-                    />
-                    <div className="space-y-1">
-                      <Label htmlFor="wa-keep-debug" className="text-sm font-medium cursor-pointer">
-                        Keep <code className="font-mono text-xs">WHATSAPP_DEBUG=true</code> after this wizard
-                      </Label>
-                      <p className="text-[11px] text-muted-foreground leading-relaxed">
-                        While the wizard runs, Ronbot sets debug so Hermes writes richer events to bridge logs. Leave
-                        this on if you are diagnosing issues.
-                      </p>
-                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Digits only per number (country code first, no +). Use commas to allow multiple numbers.
+                    </p>
                   </div>
                 </div>
               </>
@@ -1652,8 +1497,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             </div>
             {channel.id === "whatsapp" && step === credStep && (
               <p className="text-[11px] text-muted-foreground border-t border-border/40 pt-3">
-                Defaults match the Hermes docs: <code className="font-mono">WHATSAPP_MODE=self-chat</code> and open
-                access for the quickest first run.
+                Defaults match the Hermes docs: <code className="font-mono">WHATSAPP_MODE=self-chat</code> with an explicit E.164 allowlist.
               </p>
             )}
           </div>
@@ -1794,9 +1638,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                           disabled={waPairingActive}
                           onClick={() => {
                             setWaAwaitingResetConfirm(false);
-                            if (!waHasModeChange && !waHasAllowlistChange) {
-                              setWaRelinkRequested(false);
-                            }
                           }}
                         >
                           Cancel
@@ -1946,28 +1787,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               </div>
             )}
 
-            {channel.id === "whatsapp" && setupToolsOk && waPairPrereqOk && waPairedChecked && waPaired && !waRequiresSessionReset && (
-              <div className="rounded-lg border border-border/60 bg-background/30 p-4 space-y-3">
-                <h4 className="text-sm font-medium text-foreground">WhatsApp already linked</h4>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Current session is active. If you want to link a different number, start a fresh relink flow.
-                </p>
-                <div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setWaRelinkRequested(true);
-                      setWaAwaitingResetConfirm(true);
-                    }}
-                  >
-                    Link a different WhatsApp account
-                  </Button>
-                </div>
-              </div>
-            )}
-
             <div className="rounded-lg border border-border/60 bg-background/30 p-4">
               {!setupToolsChecked ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -2010,27 +1829,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               {testResult === "ok" && (
                 <div className="space-y-3">
                   <div className="flex items-center gap-2 text-sm text-success">
-                    <CheckCircle2 className="w-4 h-4" /> Credentials look good. Ready to enable.
+                    <CheckCircle2 className="w-4 h-4" /> Credentials verified. Finalizing automatically.
                   </div>
-                  {channel.id === "whatsapp" && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="w-full sm:w-auto"
-                      disabled={wizardGatewayRestartBusy || waPairingActive || testing}
-                      onClick={() => void handleWizardRestartGateway()}
-                    >
-                      {wizardGatewayRestartBusy ? (
-                        <>
-                          <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
-                          Restarting gateway…
-                        </>
-                      ) : (
-                        "Restart messaging gateway"
-                      )}
-                    </Button>
-                  )}
                 </div>
               )}
               {testResult === "fail" && (
@@ -2069,13 +1869,34 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 <>Next <ArrowRight className="w-4 h-4 ml-1" /></>
               )}
             </Button>
-          ) : (
+          ) : channel.id !== "whatsapp" ? (
             <Button
-              onClick={enableGateway}
+              onClick={() => {
+                void (async () => {
+                  await systemAPI.materializeEnv().catch(() => undefined);
+                  const r = await systemAPI.startGateway();
+                  if (!r.success) {
+                    const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
+                    setFormError(detail);
+                    toast.error("Failed to start gateway", { description: detail });
+                    return;
+                  }
+                  setFormError("");
+                  toast.success(`${channel.name} channel enabled`, {
+                    description: "Your agent is now reachable here.",
+                  });
+                  onComplete();
+                  onClose();
+                })();
+              }}
               disabled={testResult !== "ok"}
               className="gradient-primary text-primary-foreground"
             >
               Enable {channel.name}
+            </Button>
+          ) : (
+            <Button disabled className="gradient-primary text-primary-foreground">
+              Finalizing WhatsApp automatically…
             </Button>
           )}
         </DialogFooter>

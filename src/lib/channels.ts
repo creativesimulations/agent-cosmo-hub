@@ -248,10 +248,9 @@ export const CHANNELS: Channel[] = [
       {
         envVar: 'WHATSAPP_ALLOWED_USERS',
         label: 'Who may message the agent',
-        hint: 'Hermes format: E.164 digits only (country code first, no +), comma-separated, or * for everyone. Optional `WHATSAPP_ALLOW_ALL_USERS=true` is equivalent to *.',
+        hint: 'Hermes format: E.164 digits only (country code first, no +), comma-separated.',
         inputType: 'text',
-        /** Novice default per Hermes docs — restrict later in the wizard. */
-        defaultValue: '*',
+        defaultValue: '',
       },
     ],
     testHint:
