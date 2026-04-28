@@ -1041,6 +1041,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         return;
       }
       await systemAPI.materializeEnv().catch(() => undefined);
+      // Re-apply Node v20 shim, service PATH patch, and adapter patch BEFORE
+      // re-installing the gateway service. refreshGatewayInstall will then
+      // re-apply the patches a second time after `hermes gateway install`
+      // regenerates the unit/plist, so the captured PATH always wins.
+      await systemAPI.ensureWhatsAppManagedNode().catch(() => undefined);
+      await systemAPI
+        .terminateWhatsAppPairingProcesses({ includeGatewayBridge: true })
+        .catch(() => undefined);
       await systemAPI.refreshGatewayInstall().catch(() => undefined);
       await systemAPI.startGateway().catch(() => undefined);
       setWaPaired(false);
