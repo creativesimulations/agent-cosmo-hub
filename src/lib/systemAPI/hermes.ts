@@ -2349,7 +2349,28 @@ export const hermesAPI = {
         '[ -x "$SHIM_DIR/node" ] || { echo "MISSING_SHIM"; exit 1; }',
         'PATCHED=""',
         'SKIPPED=""',
-        // ── systemd user units ──
+        // ── systemd user units: install a drop-in FIRST so the PATH override
+        // survives `hermes gateway install` rewriting the base unit. The
+        // drop-in is what makes the fix permanent; the in-place unit edit
+        // below is a belt-and-braces fallback for older systemd.
+        'if command -v systemctl >/dev/null 2>&1; then',
+        '  for svc in hermes-gateway.service hermes-gateway-whatsapp.service hermes-gateway@.service; do',
+        '    DROPIN_DIR="$HOME/.config/systemd/user/${svc}.d"',
+        '    mkdir -p "$DROPIN_DIR"',
+        '    DROPIN="$DROPIN_DIR/10-ronbot-whatsapp-node.conf"',
+        '    cat > "$DROPIN" <<DROP_EOF',
+        '[Service]',
+        'Environment="PATH=%h/.hermes/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
+        'Environment="WHATSAPP_NODE_BIN=%h/.hermes/bin/node"',
+        'Environment="NODE_BIN=%h/.hermes/bin/node"',
+        'Environment="HERMES_NODE_BIN=%h/.hermes/bin/node"',
+        'Environment="NODE=%h/.hermes/bin/node"',
+        'DROP_EOF',
+        '    PATCHED="$PATCHED $DROPIN"',
+        '  done',
+        '  systemctl --user daemon-reload >/dev/null 2>&1 || true',
+        'fi',
+        // ── In-place unit edit (legacy fallback) ──
         'for u in "$HOME/.config/systemd/user"/hermes-gateway*.service; do',
         '  [ -f "$u" ] || continue',
         '  if grep -qE "Environment=\\\"PATH=" "$u"; then',
