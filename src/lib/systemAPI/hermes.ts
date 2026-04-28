@@ -1957,7 +1957,7 @@ export const hermesAPI = {
    */
   async refreshGatewayInstall(): Promise<CommandResult> {
     await materializeHermesEnv().catch(() => undefined);
-    return runHermesCli(
+    const r = await runHermesCli(
       [
         'set +e',
         HERMES_PATH_EXPORT,
@@ -1968,6 +1968,14 @@ export const hermesAPI = {
       ].join('\n'),
       { timeout: 120000 },
     );
+    // Hermes regenerates the systemd unit / launchd plist on every install,
+    // overwriting any prior PATH edits. Immediately re-prepend the managed
+    // Node shim and patch the installed WhatsApp adapter so the bridge
+    // subprocess always launches on Node v20 instead of the system Node 18
+    // captured in the unit's PATH snapshot.
+    await this.patchGatewayServicePathForWhatsApp().catch(() => undefined);
+    await this.patchHermesWhatsAppAdapterForNode().catch(() => undefined);
+    return r;
   },
 
   /** True when WhatsApp session data exists with a real Baileys creds.json. */
