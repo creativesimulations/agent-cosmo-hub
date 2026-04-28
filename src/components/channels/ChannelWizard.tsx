@@ -592,17 +592,33 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     const failure = await systemAPI
       .classifyWhatsAppBridgeFailure()
       .catch(() => ({ kind: "unknown" as const }));
+    const diag = await systemAPI
+      .getWhatsAppRuntimeDiagnostic()
+      .catch(() => null);
     const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
     const logR = await systemAPI.readWhatsAppBridgeLogTail(100);
     const hint = (logR.content || tail).split("\n").slice(-20).join("\n").trim();
     setWaBridgeInactiveHint(hint);
     let detail: string;
-    if (failure.kind === "node-version") {
+    if (failure.kind === "node-version" || diag?.bridgeLogShowsNode18) {
+      const reasons: string[] = [];
+      if (diag) {
+        if (!diag.shimVersion || diag.shimVersion === "missing") {
+          reasons.push("• Managed Node v20 shim is missing at ~/.hermes/bin/node.");
+        } else if (!/^v2[0-9]/.test(diag.shimVersion)) {
+          reasons.push(`• Managed Node shim reports ${diag.shimVersion} (need v20+).`);
+        }
+        if (!diag.serviceUnitPathStartsWithShim && diag.serviceUnitPath) {
+          reasons.push(`• Gateway service PATH does not start with ~/.hermes/bin (${diag.serviceUnitPath}).`);
+        }
+        if (!diag.adapterPatched) {
+          reasons.push("• Installed Hermes WhatsApp adapter still launches the bridge with bare 'node'.");
+        }
+      }
       detail =
-        `WhatsApp bridge crashed because Hermes spawned it with Node ${failure.nodeVersion ?? "18.x"}, ` +
-        `which doesn't expose globalThis.crypto.subtle. Baileys requires Node 20+. ` +
-        `Ronbot has installed a managed Node v20 shim — click "Re-pair + Restart" to retry. ` +
-        `If it fails again, restart Ronbot so the gateway service picks up the new PATH.`;
+        `WhatsApp bridge keeps crashing on Node ${failure.nodeVersion ?? "18.x"} — Baileys needs Node 20+. ` +
+        `Click "Re-pair + Restart" to apply the runtime fix.` +
+        (reasons.length ? `\n\nDiagnostics:\n${reasons.join("\n")}` : "");
     } else {
       detail = tail
         ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
@@ -611,8 +627,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setFormError(detail + (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""));
     toast.error("WhatsApp bridge not confirmed", {
       description:
-        failure.kind === "node-version"
-          ? "Bridge crashed on wrong Node version — managed Node v20 shim installed; retry."
+        failure.kind === "node-version" || diag?.bridgeLogShowsNode18
+          ? "Bridge crashed on Node 18 — click Re-pair + Restart to apply the runtime fix."
           : "Try Re-pair + Restart.",
     });
     return "fail";
