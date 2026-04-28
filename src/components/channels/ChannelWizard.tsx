@@ -1763,19 +1763,21 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               ) : !setupToolsOk ? (
                 <p className="text-sm text-muted-foreground">Fix the missing tools above, then run the test.</p>
               ) : testResult === "idle" ? (
-                <Button
-                  onClick={() => void runTest()}
-                  disabled={testing || !setupToolsOk}
-                  className="w-full"
-                >
-                  {testing ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Testing…
-                    </>
-                  ) : (
-                    "Run test"
-                  )}
-                </Button>
+                channel.id !== "whatsapp" ? (
+                  <Button
+                    onClick={() => void runTest()}
+                    disabled={testing || !setupToolsOk}
+                    className="w-full"
+                  >
+                    {testing ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Testing…
+                      </>
+                    ) : (
+                      "Run test"
+                    )}
+                  </Button>
+                ) : null
               ) : null}
               {testResult === "ok" && (
                 <div className="space-y-3">
@@ -1802,7 +1804,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         )}
 
         <DialogFooter className="gap-2 sm:gap-2">
-          {step > 0 && (
+          {step > 0 && !(channel.id === "whatsapp" && step === testStep) && (
             <Button variant="ghost" onClick={back} disabled={saving || (channel.id === "whatsapp" && step === testStep && waPairingActive)}>
               <ArrowLeft className="w-4 h-4 mr-1" /> Back
             </Button>
@@ -1846,7 +1848,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               Enable {channel.name}
             </Button>
           ) : (
-            <p className="text-sm text-muted-foreground px-1">Finialiaizing whatsapp connection</p>
+            <p className="text-sm text-muted-foreground px-1">Finalizing Whatsapp connection</p>
           )}
         </DialogFooter>
       </DialogContent>
