@@ -1573,25 +1573,30 @@ export const hermesAPI = {
         // 1) gateway alive?
         'STATUS_OUT="$(hermes gateway status 2>&1 || true)"',
         'PROC_OK=0',
+        // Gateway often runs as `python …` without the literal argv "hermes gateway";
+        // systemd user units still report healthy via `hermes gateway status`.
         'pgrep -f "hermes gateway" >/dev/null 2>&1 && PROC_OK=1',
+        'if [ "$PROC_OK" -eq 0 ]; then pgrep -f "gateway.run" >/dev/null 2>&1 && PROC_OK=1; fi',
+        'if [ "$PROC_OK" -eq 0 ]; then pgrep -f "hermes.*gateway" >/dev/null 2>&1 && PROC_OK=1; fi',
+        'if [ "$PROC_OK" -eq 0 ] && printf "%s" "$STATUS_OUT" | grep -Eqi "(user gateway service is running|gateway service is running|active \\(running\\)|hermes-gateway)"; then',
+        '  PROC_OK=1',
+        'fi',
         'echo "STATUS_OUT_BEGIN"',
         'printf "%s\\n" "$STATUS_OUT"',
         'echo "STATUS_OUT_END"',
         'echo "PROC_OK=$PROC_OK"',
-        // 2) bridge log markers — Baileys writes "open" / "Connected" once linked
-        'BRIDGE_LOG=""',
-        // Prefer WhatsApp-specific logs first; generic bridge.log often contains
-        // unrelated Slack/Email noise that can hide a healthy WhatsApp session.
-        'for f in "$HOME/.hermes/logs/whatsapp-bridge.log" "$HOME/.hermes/platforms/whatsapp/bridge.log" "$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log" "$HOME/.hermes/logs/bridge.log"; do',
-        '  [ -f "$f" ] || continue',
-        '  BRIDGE_LOG="$f"',
-        '  break',
-        'done',
+        // 2) Scan all bridge logs for WhatsApp/Baileys signals (single generic file
+        // can be dominated by Slack/Email noise and miss WhatsApp lines entirely).
         'BRIDGE_TAIL=""',
         'WA_OK=0',
-        'if [ -n "$BRIDGE_LOG" ]; then',
-        '  BRIDGE_TAIL="$(tail -n 200 "$BRIDGE_LOG" 2>/dev/null || true)"',
-        '  if printf "%s" "$BRIDGE_TAIL" | grep -E -i "(connection.*open|connected to whatsapp|ws connection open|baileys.*ready|whatsapp.*ready|whatsapp.*connected|whatsapp.*active|session.*restored|auth.*ok)" >/dev/null 2>&1; then',
+        'WA_FILES="$HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log $HOME/.hermes/logs/bridge.log"',
+        'for f in $WA_FILES; do',
+        '  [ -f "$f" ] || continue',
+        '  chunk="$(tail -n 50 "$f" 2>/dev/null || true)"',
+        '  BRIDGE_TAIL="$BRIDGE_TAIL\n--- $f ---\n$chunk"',
+        'done',
+        'if [ -n "$BRIDGE_TAIL" ]; then',
+        '  if printf "%s" "$BRIDGE_TAIL" | grep -E -i "(connection.*open|connected to whatsapp|ws connection open|baileys|whatsapp.*ready|whatsapp.*connected|whatsapp.*active|session.*restored|auth.*ok|gateway\\.platforms\\.whatsapp)" >/dev/null 2>&1; then',
         '    WA_OK=1',
         '  fi',
         'fi',

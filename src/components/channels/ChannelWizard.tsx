@@ -848,27 +848,25 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             onClose();
             return;
           }
-          // Hermes can take longer to emit "ready" markers even when pairing
-          // already succeeded. If session files exist and gateway is running,
-          // accept enable and show a softer warning.
+          // Gateway start already succeeded; pgrep often misses `python … gateway`.
           const pairedNow = await systemAPI.isWhatsAppPaired();
-          if (lastHealth?.running && pairedNow.success && pairedNow.paired) {
+          if (r.success && pairedNow.success && pairedNow.paired) {
             setFormError("");
             toast.success(`${channel.name} channel enabled`, {
-              description: "WhatsApp is paired and gateway is running. Bridge readiness logs may appear with delay.",
+              description:
+                "WhatsApp is linked and the gateway was started. If messages do not arrive, open Channels and restart the gateway once.",
             });
             onComplete();
             onClose();
             return;
           }
-          // Gateway started but WhatsApp bridge isn't confirmed connected.
           const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
           const detail = tail
-            ? `Gateway is running but WhatsApp bridge didn't confirm a connection within 30s. Last bridge output:\n${tail.split("\n").slice(-6).join("\n")}`
-            : "Gateway is running but WhatsApp bridge didn't confirm a connection within 30s. Check Logs and try restarting the gateway.";
+            ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
+            : "Could not confirm WhatsApp after starting the gateway. Try pairing again, then enable.";
           setFormError(detail);
-          toast.error("WhatsApp bridge not connected", {
-            description: "Gateway started but WhatsApp didn't connect. See the wizard for details.",
+          toast.error("WhatsApp bridge not confirmed", {
+            description: "Session may be missing — re-run QR pairing if this persists.",
           });
         })();
       })();
@@ -934,33 +932,42 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         if (h.running && h.whatsappActive) break;
         await new Promise((res) => setTimeout(res, 2500));
       }
-      if (!lastHealth?.running || !lastHealth.whatsappActive) {
-        const pairedNow = await systemAPI.isWhatsAppPaired();
-        if (lastHealth?.running && pairedNow.success && pairedNow.paired) {
-          setFormError("");
-          toast.success(`${channel.name} channel enabled`, {
-            description: "WhatsApp is paired and gateway is running. Bridge readiness logs may appear with delay.",
-          });
-          onComplete();
-          onClose();
-          return;
-        }
-        const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
-        const detail = tail
-          ? `Gateway is running but WhatsApp bridge didn't confirm a connection within 30s. Last bridge output:\n${tail.split("\n").slice(-6).join("\n")}`
-          : "Gateway started but WhatsApp didn't connect within 30s. Re-pair WhatsApp or check Logs.";
-        setFormError(detail);
-        toast.error("WhatsApp bridge not connected", {
-          description: "Gateway started but WhatsApp didn't connect.",
+      if (lastHealth?.running && lastHealth.whatsappActive) {
+        setFormError("");
+        toast.success(`${channel.name} channel enabled`, {
+          description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
         });
+        onComplete();
+        onClose();
         return;
       }
+      // `hermes gateway start` already succeeded (`r.success`). Process detection
+      // often misses `python … gateway` (no "hermes gateway" argv), so do not
+      // block enable on log heuristics alone when a session exists.
+      const pairedNow = await systemAPI.isWhatsAppPaired();
+      if (r.success && pairedNow.success && pairedNow.paired) {
+        setFormError("");
+        toast.success(`${channel.name} channel enabled`, {
+          description:
+            "WhatsApp is linked and the gateway was started. If messages do not arrive, open Channels and restart the gateway once.",
+        });
+        onComplete();
+        onClose();
+        return;
+      }
+      const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
+      const detail = tail
+        ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
+        : "Could not confirm WhatsApp after starting the gateway. Try pairing again from step 3, then enable.";
+      setFormError(detail);
+      toast.error("WhatsApp bridge not confirmed", {
+        description: "Session may be missing — re-run QR pairing if this persists.",
+      });
+      return;
     }
     setFormError("");
     toast.success(`${channel.name} channel enabled`, {
-      description: channel.id === "whatsapp"
-        ? "WhatsApp bridge is live — your agent will reply to incoming messages."
-        : "Your agent is now reachable here.",
+      description: "Your agent is now reachable here.",
     });
     onComplete();
     onClose();
