@@ -2245,13 +2245,16 @@ export const hermesAPI = {
         // Sanity-check that the written shim actually contains a literal "$@".
         'grep -q \'"$@"\' "$SHIM" || { echo "[ronbot] shim is missing literal \\"\\$@\\" — write failed" >&2; echo "SHIM_BODY_BAD"; exit 5; }',
         'echo "SHIM_PATH=$SHIM"',
-        // Sanity-check the shim runs and reports v20+.
+        // Sanity-check the shim runs and reports v20+. We pass an actual
+        // argument so a regression in "$@" handling shows up immediately.
         'SHIM_VER="$("$SHIM" --version 2>/dev/null || echo unknown)"',
         'echo "SHIM_VERSION=$SHIM_VER"',
         'case "$SHIM_VER" in',
         '  v2[0-9].*|v[3-9][0-9].*) ;;',
         '  *) echo "[ronbot] Node shim reports unexpected version: $SHIM_VER" >&2; echo "SHIM_VERSION_BAD"; exit 4 ;;',
         'esac',
+        // Crypto probe through the shim itself, mirroring how the gateway invokes node.
+        '"$SHIM" -e "process.exit(globalThis.crypto && globalThis.crypto.subtle ? 0 : 42)" 2>/dev/null || { echo "[ronbot] Shim Node $SHIM_VER does not expose globalThis.crypto.subtle" >&2; echo "SHIM_PROBE_FAILED"; exit 6; }',
         'exit 0',
       ].join('\n'),
       { timeout: 20000 },
@@ -2265,6 +2268,10 @@ export const hermesAPI = {
         error = 'The managed Node v20 runtime is not installed. Run the WhatsApp setup wizard from the start so Ronbot can install it.';
       } else if (out.includes('MANAGED_NODE_PROBE_FAILED')) {
         error = `Managed Node ${version ?? ''} does not expose globalThis.crypto.subtle. Reinstall the managed runtime and try again.`;
+      } else if (out.includes('SHIM_BODY_BAD')) {
+        error = 'Wrote ~/.hermes/bin/node but the file is missing the literal "$@" — the shim would drop arguments. Check filesystem permissions.';
+      } else if (out.includes('SHIM_PROBE_FAILED')) {
+        error = `~/.hermes/bin/node runs but does not expose globalThis.crypto.subtle. Reinstall the managed runtime.`;
       } else if (out.includes('SHIM_VERSION_BAD')) {
         error = 'Created a Node shim but it reports the wrong version. Check ~/.hermes/bin/node permissions.';
       } else if (r.stderr) {
