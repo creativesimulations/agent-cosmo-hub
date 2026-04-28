@@ -1,4 +1,4 @@
-import { CheckCircle2, Lock, Loader2 } from "lucide-react";
+import { CheckCircle2, Lock, Loader2, AlertCircle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -8,7 +8,7 @@ export type ChannelStatus =
   | { state: "loading" }
   | { state: "locked" }
   | { state: "not-configured" }
-  | { state: "configured"; running: boolean };
+  | { state: "configured"; running: boolean; starting?: boolean; attentionReason?: string };
 
 interface ChannelCardProps {
   channel: Channel;
@@ -45,9 +45,19 @@ const ChannelCard = ({ channel, status, onSetUp }: ChannelCardProps) => {
         </span>
       );
     }
+    if (status.starting) {
+      return (
+        <span className="inline-flex items-center gap-1 text-[11px] text-foreground/70">
+          <Loader2 className="w-3 h-3 animate-spin" /> Starting…
+        </span>
+      );
+    }
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] text-foreground/70">
-        <Loader2 className="w-3 h-3 animate-spin" /> Starting…
+      <span
+        className="inline-flex items-center gap-1 text-[11px] text-warning"
+        title={status.attentionReason || "Configured but not connected. Reconfigure to relink."}
+      >
+        <AlertCircle className="w-3 h-3" /> Attention
       </span>
     );
   };
