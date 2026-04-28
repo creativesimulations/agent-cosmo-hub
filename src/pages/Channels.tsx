@@ -52,6 +52,38 @@ const ChannelsPage = () => {
     }
   };
 
+  const isWhatsAppAccessConfigured = (env: Record<string, string>): boolean => {
+    const allowlist = (env.WHATSAPP_ALLOWED_USERS || "").trim();
+    const allowAll = (env.WHATSAPP_ALLOW_ALL_USERS || "").trim().toLowerCase() === "true";
+    return allowlist.length > 0 || allowAll;
+  };
+
+  const isChannelConfigured = (
+    channel: Channel,
+    env: Record<string, string>,
+    whatsappPaired: boolean,
+  ): boolean => {
+    switch (channel.id) {
+      case "slack":
+        return (
+          (env.SLACK_BOT_TOKEN || "").trim().startsWith("xoxb-") &&
+          (env.SLACK_APP_TOKEN || "").trim().startsWith("xapp-") &&
+          (env.SLACK_ALLOWED_USERS || "").trim().length > 0
+        );
+      case "whatsapp":
+        return (
+          (env.WHATSAPP_ENABLED || "").trim().toLowerCase() === "true" &&
+          ["self-chat", "bot"].includes((env.WHATSAPP_MODE || "").trim()) &&
+          isWhatsAppAccessConfigured(env) &&
+          whatsappPaired
+        );
+      default: {
+        const required = channel.credentials.filter((c) => !c.optional);
+        return required.every((c) => !!env[c.envVar] && env[c.envVar].trim().length > 0);
+      }
+    }
+  };
+
   const refresh = useCallback(async () => {
     channelsDebugRunRef.current = `channels-${Date.now()}`;
     // 1. Resolve unlocks for paid channels.
@@ -66,10 +98,13 @@ const ChannelsPage = () => {
     //    ~/.hermes/.env (configured) and `hermes status` (running).
     //    readEnvFile() returns a parsed Record<string, string>.
     const env = await systemAPI.readEnvFile();
+    const waPairState = await systemAPI.isWhatsAppPaired();
+    const whatsappPaired = !!(waPairState.success && waPairState.paired);
     // #region agent log
     emitChannelsDebugLog("C1", "Channels.tsx:refresh:env", "env-derived channel config keys", {
       hasWhatsappEnabled: !!(env.WHATSAPP_ENABLED && env.WHATSAPP_ENABLED.trim().length > 0),
       hasWhatsappAllowedUsers: !!(env.WHATSAPP_ALLOWED_USERS && env.WHATSAPP_ALLOWED_USERS.trim().length > 0),
+      hasWhatsappAllowAllUsers: (env.WHATSAPP_ALLOW_ALL_USERS || "").trim().toLowerCase() === "true",
       whatsappMode: (env.WHATSAPP_MODE || "").trim(),
       envKeyCount: Object.keys(env).length,
     });
@@ -79,8 +114,7 @@ const ChannelsPage = () => {
 
     const configuredChannels = CHANNELS.filter((channel) => {
       if (channel.tier === "paid" && !unlockMap[channel.upgradeId!]) return false;
-      const required = channel.credentials.filter((c) => !c.optional);
-      return required.every((c) => !!env[c.envVar] && env[c.envVar].trim().length > 0);
+      return isChannelConfigured(channel, env, whatsappPaired);
     }).map((c) => c.id);
     // #region agent log
     emitChannelsDebugLog("C2", "Channels.tsx:refresh:configuredChannels", "configured channels derived from env", {
@@ -106,16 +140,32 @@ const ChannelsPage = () => {
       runningChannels = await getRunningChannels();
     }
 
+    // Hermes gateway status output can be inconsistent across versions.
+    // For WhatsApp specifically, use dedicated health checks so we only
+    // report "running" when the bridge is truly connected.
+    if (configuredChannels.includes("whatsapp")) {
+      const waHealth = await systemAPI.getWhatsAppGatewayHealth();
+      emitChannelsDebugLog("C5", "Channels.tsx:refresh:waHealth", "whatsapp bridge health", {
+        success: waHealth.success,
+        running: waHealth.running,
+        whatsappActive: waHealth.whatsappActive,
+      });
+      const waRunning = !!(waHealth.success && waHealth.running && waHealth.whatsappActive);
+      if (waRunning && !runningChannels.includes("whatsapp")) {
+        runningChannels = [...runningChannels, "whatsapp"];
+      }
+      if (!waRunning && runningChannels.includes("whatsapp")) {
+        runningChannels = runningChannels.filter((id) => id !== "whatsapp");
+      }
+    }
+
     const next: Record<string, ChannelStatus> = {};
     for (const channel of CHANNELS) {
       if (channel.tier === "paid" && !unlockMap[channel.upgradeId!]) {
         next[channel.id] = { state: "locked" };
         continue;
       }
-      const required = channel.credentials.filter((c) => !c.optional);
-      const configured = required.every(
-        (c) => !!env[c.envVar] && env[c.envVar].trim().length > 0,
-      );
+      const configured = isChannelConfigured(channel, env, whatsappPaired);
       if (!configured) {
         next[channel.id] = { state: "not-configured" };
       } else {

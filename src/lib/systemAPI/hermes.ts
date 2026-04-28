@@ -222,7 +222,10 @@ const buildChannelCredentialTestScript = (channelId: string): string => {
     '    echo "Discord bot token OK. Credentials were checked directly."',
   ].join('\n');
   const whatsappBlock = [
-    '    [ -n "${WHATSAPP_ALLOWED_USERS:-}" ] || { echo "WHATSAPP_ALLOWED_USERS is required" >&2; exit 1; }',
+    '    if [ -z "${WHATSAPP_ALLOWED_USERS:-}" ] && [ "${WHATSAPP_ALLOW_ALL_USERS:-}" != "true" ]; then',
+    '      echo "Set WHATSAPP_ALLOWED_USERS (recommended) or WHATSAPP_ALLOW_ALL_USERS=true." >&2',
+    '      exit 1',
+    '    fi',
     '    BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
     '    AUTH_FILES=0',
     '    for d in "$HOME/.hermes/platforms/whatsapp/session" "$HOME/.hermes/whatsapp" "$HOME/.hermes/.whatsapp" "$BRIDGE_DIR"/auth_info* "$BRIDGE_DIR"/baileys_auth* "$BRIDGE_DIR"/session*; do',

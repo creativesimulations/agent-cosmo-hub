@@ -64,6 +64,7 @@ const Diagnostics = () => {
   const [browserBusy, setBrowserBusy] = useState(false);
   const [selfTest, setSelfTest] = useState<Awaited<ReturnType<typeof systemAPI.runBrowserSelfTest>> | null>(null);
   const [selfTestBusy, setSelfTestBusy] = useState(false);
+  const [showAllCommands, setShowAllCommands] = useState(false);
 
   useEffect(() => {
     const unsub = diagnostics.subscribe((all) => {
@@ -258,6 +259,29 @@ const Diagnostics = () => {
     });
   };
 
+  const actionableIssues: string[] = [];
+  if (storeSummary.loaded && !storeSummary.error && storeSummary.entries.length === 0) {
+    actionableIssues.push("No secrets are saved in your OS credential store. Add required keys in Secrets.");
+  }
+  if (envSummary.loaded && !envSummary.error && envSummary.entries.length === 0) {
+    actionableIssues.push("`~/.hermes/.env` has no keys yet. Run “Sync secrets now”.");
+  }
+  if (cfgSummary.loaded && !cfgSummary.error && !cfgSummary.modelLine) {
+    actionableIssues.push("No model is configured in `~/.hermes/config.yaml`.");
+  }
+  if (permsBlock === null) {
+    actionableIssues.push("Permissions block has not been synced to config yet.");
+  }
+  if (browserDiag) {
+    if (!browserDiag.cdpUrl) actionableIssues.push("Browser CDP URL is missing.");
+    if (browserDiag.cdpUrl && !browserDiag.cdpReachable) actionableIssues.push("Browser CDP is configured but not reachable.");
+    if (!browserDiag.browserEnabledInConfig) actionableIssues.push("Managed browser config block is missing.");
+    if (!browserDiag.hermesWebToolsetLoaded) actionableIssues.push("Hermes browser/web toolset is not loaded.");
+    if (browserDiag.internetPermission !== "allow") actionableIssues.push("Internet permission is not set to allow.");
+  }
+
+  const visibleEntries = showAllCommands ? entries : entries.filter((e) => !e.success);
+
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
       <div>
@@ -266,7 +290,7 @@ const Diagnostics = () => {
           Diagnostics
         </h1>
         <p className="text-sm text-muted-foreground">
-          Inspect agent state, sync secrets manually, and review every shell command the app has run.{" "}
+          View current state and fixable errors first. Technical command logs are available below when needed.{" "}
           <a href="#/logs" className="text-primary hover:underline">
             Looking for chat history or agent activity? See Logs →
           </a>
@@ -299,9 +323,57 @@ const Diagnostics = () => {
         )}
       </GlassCard>
 
-      {/* Recommended packages — non-blocking, install after the wizard */}
-      <RecommendedPackages />
+      <GlassCard className="p-4 space-y-3">
+        <h2 className="text-sm font-semibold">Current status</h2>
+        <ul className="space-y-2 text-xs">
+          <li className="flex items-center gap-2">
+            <span className={cn("w-2 h-2 rounded-full", storeSummary.error ? "bg-destructive" : "bg-success")} />
+            Secrets store: {storeSummary.error ? "error" : `${storeSummary.entries.length} key(s) saved`}
+          </li>
+          <li className="flex items-center gap-2">
+            <span className={cn("w-2 h-2 rounded-full", envSummary.error ? "bg-destructive" : "bg-success")} />
+            Env sync: {envSummary.error ? "error reading .env" : `${envSummary.entries.length} key(s) in ~/.hermes/.env`}
+          </li>
+          <li className="flex items-center gap-2">
+            <span className={cn("w-2 h-2 rounded-full", cfgSummary.error || !cfgSummary.modelLine ? "bg-warning" : "bg-success")} />
+            Model config: {cfgSummary.modelLine ? cfgSummary.modelLine : "not configured"}
+          </li>
+          <li className="flex items-center gap-2">
+            <span className={cn("w-2 h-2 rounded-full", permsBlock ? "bg-success" : "bg-warning")} />
+            Permissions block: {permsBlock ? "present" : "not synced yet"}
+          </li>
+          <li className="flex items-center gap-2">
+            <span
+              className={cn(
+                "w-2 h-2 rounded-full",
+                browserDiag && browserDiag.cdpReachable && browserDiag.browserEnabledInConfig && browserDiag.hermesWebToolsetLoaded
+                  ? "bg-success"
+                  : "bg-warning",
+              )}
+            />
+            Browser chain: {browserDiag ? (browserDiag.cdpReachable ? "ready" : "needs attention") : "checking"}
+          </li>
+        </ul>
+      </GlassCard>
 
+      <GlassCard className="p-4 space-y-3">
+        <h2 className="text-sm font-semibold">Actionable issues</h2>
+        {actionableIssues.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No obvious configuration issues detected.</p>
+        ) : (
+          <ul className="space-y-2">
+            {actionableIssues.map((issue) => (
+              <li key={issue} className="text-xs text-foreground rounded-md border border-border/60 bg-background/30 px-3 py-2">
+                {issue}
+              </li>
+            ))}
+          </ul>
+        )}
+      </GlassCard>
+
+      <details className="rounded-lg border border-border/60 bg-background/20 p-3">
+        <summary className="cursor-pointer text-sm font-semibold text-foreground">Advanced diagnostics (for support)</summary>
+        <div className="mt-3 space-y-4">
       {/* Credential store snapshot — source of truth, before materialize */}
       <GlassCard className="p-4 space-y-2">
         <div className="flex items-center justify-between">
@@ -615,22 +687,31 @@ const Diagnostics = () => {
       <GlassCard className="p-4 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold">
-            Shell command log <span className="text-muted-foreground font-normal">({entries.length} entries, newest first)</span>
+            Shell command log <span className="text-muted-foreground font-normal">({visibleEntries.length} shown / {entries.length} total)</span>
           </h2>
           <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setShowAllCommands((v) => !v)}
+            >
+              {showAllCommands ? "Hide successful" : "Show all"}
+            </Button>
             <Button size="sm" variant="ghost" onClick={copyAll}><Copy className="w-3 h-3 mr-1" /> Copy</Button>
             <Button size="sm" variant="ghost" onClick={downloadAll}><Download className="w-3 h-3 mr-1" /> Download</Button>
             <Button size="sm" variant="ghost" onClick={() => diagnostics.clear()}><Trash2 className="w-3 h-3 mr-1" /> Clear</Button>
           </div>
         </div>
 
-        {entries.length === 0 ? (
+        {visibleEntries.length === 0 ? (
           <p className="text-xs text-muted-foreground py-6 text-center">
-            No commands recorded yet. Trigger a sync, doctor, or chat to populate the log.
+            {entries.length === 0
+              ? "No commands recorded yet. Trigger a sync, doctor, or chat to populate the log."
+              : "No failing commands in the current log."}
           </p>
         ) : (
           <div className="space-y-1.5 max-h-[60vh] overflow-y-auto">
-            {entries.map((e) => {
+            {visibleEntries.map((e) => {
               const isOpen = expanded.has(e.id);
               return (
                 <motion.div
@@ -684,6 +765,9 @@ const Diagnostics = () => {
           </div>
         )}
       </GlassCard>
+      <RecommendedPackages />
+        </div>
+      </details>
     </div>
   );
 };
