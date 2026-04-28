@@ -2128,17 +2128,32 @@ export const hermesAPI = {
   /**
    * Best-effort cleanup for orphaned interactive pairing runs.
    * Covers the legacy `hermes whatsapp` PTY wrapper AND any stale pair-only
-   * Node bridge invocations from previous wizard attempts. Does NOT touch the
-   * long-running gateway-managed bridge (which runs without `--pair-only`).
+   * Node bridge invocations from previous wizard attempts.
+   *
+   * When `includeGatewayBridge` is true, ALSO kills the long-running
+   * gateway-managed `bridge.js` process. This is required when the bridge is
+   * stuck in a crash loop (e.g. wrong Node version) and we need to stop the
+   * service cleanly before restarting with a corrected runtime.
    */
-  async terminateWhatsAppPairingProcesses(): Promise<{ success: boolean; killed: number; output: string }> {
+  async terminateWhatsAppPairingProcesses(
+    options?: { includeGatewayBridge?: boolean },
+  ): Promise<{ success: boolean; killed: number; output: string }> {
+    const includeGw = options?.includeGatewayBridge ? '1' : '0';
     const r = await runHermesShell(
       [
         'set +e',
+        `INCLUDE_GW=${includeGw}`,
         'K=0',
         'for pat in "script -q -e -c hermes whatsapp" "script -q -e -f -c hermes whatsapp" "script -q -f /dev/null bash -lc hermes whatsapp" "script -q /dev/null bash -lc hermes whatsapp" "hermes whatsapp" "whatsapp-bridge/bridge.js --pair-only"; do',
         '  if pkill -f "$pat" >/dev/null 2>&1; then K=$((K + 1)); fi',
         'done',
+        'if [ "$INCLUDE_GW" = "1" ]; then',
+        '  if pkill -f "whatsapp-bridge/bridge.js" >/dev/null 2>&1; then K=$((K + 1)); fi',
+        '  # Give children a moment to exit, then SIGKILL any survivors so the',
+        '  # service supervisor stops respawning them on the wrong Node binary.',
+        '  sleep 1',
+        '  pkill -9 -f "whatsapp-bridge/bridge.js" >/dev/null 2>&1 || true',
+        'fi',
         'echo "KILLED=$K"',
         'exit 0',
       ].join('\n'),
@@ -2147,6 +2162,160 @@ export const hermesAPI = {
     const out = `${r.stdout || ''}\n${r.stderr || ''}`;
     const killed = Number((out.match(/KILLED=(\d+)/)?.[1] ?? '0'));
     return { success: r.success, killed, output: out.trim() };
+  },
+
+  /**
+   * Force the Hermes gateway to spawn the WhatsApp Baileys bridge with the
+   * managed Node v20 runtime instead of whatever `node` happens to be first
+   * on the service unit's PATH.
+   *
+   * Why this exists:
+   *   Baileys imports `globalThis.crypto.subtle` at module top level. Node
+   *   v18.x does NOT expose `globalThis.crypto` to ES modules, so the bridge
+   *   crashes with `TypeError: Cannot destructure property 'subtle' of
+   *   'globalThis.crypto' as it is undefined.` and the service supervisor
+   *   restarts it forever. The fix is to make sure the bridge process always
+   *   runs on Node ≥ 20.
+   *
+   * What this does:
+   *   1. Verifies the managed Node runtime exists (installs on demand).
+   *   2. Confirms the managed Node is actually v20+ and exposes
+   *      `globalThis.crypto.subtle`. Aborts loudly if not.
+   *   3. Writes a tiny `~/.hermes/bin/node` shim that execs the managed
+   *      `node` so anything that resolves `node` via PATH gets v20.
+   *   4. Writes `NODE`, `NODE_BIN`, `HERMES_NODE_BIN`, `WHATSAPP_NODE_BIN`,
+   *      and a `PATH=$HOME/.hermes/bin:$PATH` entry into ~/.hermes/.env so
+   *      the gateway service env (loaded from .env) picks up v20 regardless
+   *      of where it's started from.
+   *
+   * Returns `{ success, version }` where `version` is the managed Node
+   * version actually installed (e.g. "v20.19.2"). On failure, `error`
+   * carries an actionable message for the wizard.
+   */
+  async ensureWhatsAppManagedNode(): Promise<{
+    success: boolean;
+    version?: string;
+    shimPath?: string;
+    error?: string;
+  }> {
+    if (!isElectron()) {
+      return { success: true, version: HERMES_NODE_VERSION, shimPath: '~/.hermes/bin/node' };
+    }
+    const r = await runHermesShell(
+      [
+        'set +e',
+        getHermesNodeEnvExport(),
+        '[ -x "$NODE_RUNTIME_HOME/bin/node" ] || { echo "[ronbot] Managed Node runtime missing at $NODE_RUNTIME_HOME/bin/node" >&2; echo "MANAGED_NODE_MISSING"; exit 2; }',
+        'NODE_BIN="$NODE_RUNTIME_HOME/bin/node"',
+        'NODE_VER="$("$NODE_BIN" --version 2>/dev/null || echo unknown)"',
+        'echo "MANAGED_NODE_VERSION=$NODE_VER"',
+        // Verify globalThis.crypto.subtle actually exists in the managed Node.
+        '"$NODE_BIN" -e "process.exit(globalThis.crypto && globalThis.crypto.subtle ? 0 : 42)" 2>/dev/null',
+        'PROBE_RC=$?',
+        'if [ "$PROBE_RC" -ne 0 ]; then',
+        '  echo "[ronbot] Managed Node $NODE_VER does not expose globalThis.crypto.subtle (probe rc=$PROBE_RC)" >&2',
+        '  echo "MANAGED_NODE_PROBE_FAILED"',
+        '  exit 3',
+        'fi',
+        // Write the shim.
+        'mkdir -p "$HOME/.hermes/bin"',
+        'SHIM="$HOME/.hermes/bin/node"',
+        'cat > "$SHIM" <<SHIM_EOF',
+        '#!/usr/bin/env bash',
+        '# Auto-generated by Ronbot. Forces the WhatsApp bridge (and any other',
+        '# Hermes child process that resolves `node` via PATH) onto the managed',
+        '# Node v20 runtime so Baileys can load globalThis.crypto.subtle.',
+        'exec "$NODE_BIN" "$@"',
+        'SHIM_EOF',
+        'chmod 755 "$SHIM"',
+        'echo "SHIM_PATH=$SHIM"',
+        // Sanity-check the shim runs and reports v20+.
+        'SHIM_VER="$("$SHIM" --version 2>/dev/null || echo unknown)"',
+        'echo "SHIM_VERSION=$SHIM_VER"',
+        'case "$SHIM_VER" in',
+        '  v2[0-9].*|v[3-9][0-9].*) ;;',
+        '  *) echo "[ronbot] Node shim reports unexpected version: $SHIM_VER" >&2; echo "SHIM_VERSION_BAD"; exit 4 ;;',
+        'esac',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 20000 },
+    );
+    const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+    const version = (out.match(/MANAGED_NODE_VERSION=(v\S+)/)?.[1] || '').trim() || undefined;
+    const shimPath = (out.match(/SHIM_PATH=(\S+)/)?.[1] || '').trim() || undefined;
+    if (!r.success) {
+      let error = 'Could not prepare the managed Node runtime for the WhatsApp bridge.';
+      if (out.includes('MANAGED_NODE_MISSING')) {
+        error = 'The managed Node v20 runtime is not installed. Run the WhatsApp setup wizard from the start so Ronbot can install it.';
+      } else if (out.includes('MANAGED_NODE_PROBE_FAILED')) {
+        error = `Managed Node ${version ?? ''} does not expose globalThis.crypto.subtle. Reinstall the managed runtime and try again.`;
+      } else if (out.includes('SHIM_VERSION_BAD')) {
+        error = 'Created a Node shim but it reports the wrong version. Check ~/.hermes/bin/node permissions.';
+      } else if (r.stderr) {
+        error = r.stderr.split('\n').find((l) => l.trim().length > 0) || error;
+      }
+      return { success: false, version, shimPath, error };
+    }
+    // Persist env overrides so the gateway service picks the right binary
+    // when it sources ~/.hermes/.env. We write each key individually so we
+    // don't disturb the rest of the file.
+    const homeEnv = '$HOME/.hermes/bin/node';
+    await this.setEnvVar('NODE', homeEnv).catch(() => undefined);
+    await this.setEnvVar('NODE_BIN', homeEnv).catch(() => undefined);
+    await this.setEnvVar('HERMES_NODE_BIN', homeEnv).catch(() => undefined);
+    await this.setEnvVar('WHATSAPP_NODE_BIN', homeEnv).catch(() => undefined);
+    // PATH must include ~/.hermes/bin BEFORE the system PATH. We write a
+    // literal $PATH so bash expands it at source-time inside the gateway.
+    await this.setEnvVar('PATH', '$HOME/.hermes/bin:$PATH').catch(() => undefined);
+    agentLogs.push({
+      source: 'system',
+      level: 'info',
+      summary: `ensureWhatsAppManagedNode: Node shim ready (${version ?? 'unknown'})`,
+      detail: `Wrote ${shimPath ?? '~/.hermes/bin/node'} and added NODE/HERMES_NODE_BIN/WHATSAPP_NODE_BIN + PATH overrides to ~/.hermes/.env so the gateway spawns the WhatsApp bridge on Node v20.`,
+    });
+    return { success: true, version, shimPath };
+  },
+
+  /**
+   * Quick read of the most recent WhatsApp bridge crash signature, if any.
+   * Used by the wizard to map a "gateway didn't come up" failure to an
+   * actionable explanation instead of a wall of stack traces.
+   */
+  async classifyWhatsAppBridgeFailure(): Promise<{
+    kind: 'node-version' | 'unknown' | 'none';
+    nodeVersion?: string;
+    snippet?: string;
+  }> {
+    if (!isElectron()) return { kind: 'none' };
+    const r = await runHermesShell(
+      [
+        'set +e',
+        'WA_FILES="$HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log"',
+        'TAIL=""',
+        'for f in $WA_FILES; do',
+        '  [ -f "$f" ] || continue',
+        '  TAIL="$TAIL$(tail -n 80 "$f" 2>/dev/null)"',
+        '  TAIL="$TAIL\n"',
+        'done',
+        'echo "----TAIL----"',
+        'printf "%s" "$TAIL"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 8000 },
+    );
+    const tail = (r.stdout || '').split('----TAIL----').pop()?.trim() ?? '';
+    if (!tail) return { kind: 'none' };
+    if (
+      tail.includes("Cannot destructure property 'subtle'") ||
+      tail.includes('globalThis.crypto.subtle') ||
+      /baileys\/lib\/Utils\/crypto\.js/.test(tail)
+    ) {
+      const verMatch = tail.match(/Node\.js\s+(v\d+[\d.]*)/);
+      const lines = tail.split('\n').filter((l) => l.trim().length > 0);
+      const snippet = lines.slice(-12).join('\n');
+      return { kind: 'node-version', nodeVersion: verMatch?.[1], snippet };
+    }
+    return { kind: 'unknown', snippet: tail.split('\n').slice(-12).join('\n') };
   },
 
   /**

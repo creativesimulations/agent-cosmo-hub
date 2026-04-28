@@ -538,7 +538,30 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const restartWhatsAppGatewayWithNewSession = useCallback(async (): Promise<"live" | "fail"> => {
     setWaBridgeInactiveHint("");
     await systemAPI.materializeEnv().catch(() => undefined);
+    // Make sure the gateway will spawn the Baileys bridge with the managed
+    // Node v20 runtime. Without this, systems with system Node 18.x crash
+    // the bridge in a loop with `Cannot destructure property 'subtle' of
+    // globalThis.crypto` and the channel never goes live.
+    setWaStatusHint("Preparing managed Node runtime for the WhatsApp bridge…");
+    const nodePrep = await systemAPI.ensureWhatsAppManagedNode().catch((e) => ({
+      success: false,
+      error: e instanceof Error ? e.message : String(e),
+    }));
+    if (!nodePrep.success) {
+      setWaStatusHint("");
+      const detail =
+        nodePrep.error ||
+        "Could not prepare the managed Node runtime for WhatsApp. Re-run the WhatsApp setup wizard so Ronbot reinstalls Node v20.";
+      setFormError(detail);
+      toast.error("WhatsApp bridge runtime not ready", { description: detail });
+      return "fail";
+    }
     setWaStatusHint("Restarting messaging gateway with new session…");
+    // Kill any crash-looping gateway-managed bridge before we stop the
+    // service, otherwise systemd/launchd respawns it on the wrong Node.
+    await systemAPI
+      .terminateWhatsAppPairingProcesses({ includeGatewayBridge: true })
+      .catch(() => undefined);
     await systemAPI.stopGateway().catch(() => undefined);
     await systemAPI.materializeEnv().catch(() => undefined);
     await systemAPI.refreshGatewayInstall().catch(() => undefined);
@@ -564,16 +587,33 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setFormError("");
       return "live";
     }
+    // Inspect the bridge log for the well-known Node-version crash signature
+    // and surface a clear, actionable message instead of a wall of stack traces.
+    const failure = await systemAPI
+      .classifyWhatsAppBridgeFailure()
+      .catch(() => ({ kind: "unknown" as const }));
     const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
     const logR = await systemAPI.readWhatsAppBridgeLogTail(100);
     const hint = (logR.content || tail).split("\n").slice(-20).join("\n").trim();
     setWaBridgeInactiveHint(hint);
-    const detail = tail
-      ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
-      : "Could not confirm WhatsApp after starting the gateway. Try pairing again.";
+    let detail: string;
+    if (failure.kind === "node-version") {
+      detail =
+        `WhatsApp bridge crashed because Hermes spawned it with Node ${failure.nodeVersion ?? "18.x"}, ` +
+        `which doesn't expose globalThis.crypto.subtle. Baileys requires Node 20+. ` +
+        `Ronbot has installed a managed Node v20 shim — click "Re-pair + Restart" to retry. ` +
+        `If it fails again, restart Ronbot so the gateway service picks up the new PATH.`;
+    } else {
+      detail = tail
+        ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
+        : "Could not confirm WhatsApp after starting the gateway. Try pairing again.";
+    }
     setFormError(detail + (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""));
     toast.error("WhatsApp bridge not confirmed", {
-      description: "Try Re-pair + Restart.",
+      description:
+        failure.kind === "node-version"
+          ? "Bridge crashed on wrong Node version — managed Node v20 shim installed; retry."
+          : "Try Re-pair + Restart.",
     });
     return "fail";
   }, []);

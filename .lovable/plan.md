@@ -1,71 +1,90 @@
-Plan to fix the WhatsApp QR setup regression and the gateway not recognizing WhatsApp
+## What is actually broken
 
-Findings from the current code and your logs:
-- The wizard still launches `hermes whatsapp` through a pseudo-terminal. Your gateway log shows repeated orphaned `hermes whatsapp`/`script` processes from earlier attempts. Those stale interactive processes can keep sessions/TTYs alive and prevent a fresh QR from rendering.
-- The official Hermes bridge has a direct pair-only mode: `node bridge.js --pair-only --session ~/.hermes/platforms/whatsapp/session --mode <mode>`. This is a better fit for the app because it prints the QR directly, saves the exact gateway session directory, and exits after pairing.
-- The gateway log never shows `Connecting to whatsapp...`; it only starts Slack and Email. That means the gateway is not seeing WhatsApp as a configured platform at start time, or it is reading stale env/service state. The setup must verify `WHATSAPP_ENABLED=true` is actually materialized before restarting the gateway, and status checks should report if WhatsApp is missing from `hermes gateway status`.
-- Email IMAP and Slack missing-scope errors in the log are unrelated to QR rendering, but their repeated reconnect noise can hide the WhatsApp signal. The WhatsApp flow should surface WhatsApp-specific diagnostics instead of dumping general gateway noise.
+The error in your wizard is unambiguous:
 
-Implementation changes to make:
+```
+.../@whiskeysockets/baileys/lib/Utils/crypto.js:6
+const { subtle } = globalThis.crypto;
+                            ^
+TypeError: Cannot destructure property 'subtle' of 'globalThis.crypto' as it is undefined.
+Node.js v18.19.1
+```
 
-1. Replace the fragile QR pairing command
-- Update `src/lib/systemAPI/hermes.ts` `runWhatsAppPairing()` to run the official bridge directly in pair-only mode:
-  - `node ~/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.js --pair-only --session ~/.hermes/platforms/whatsapp/session --mode "$WHATSAPP_MODE"`
-  - source `~/.hermes/.env` first so `WHATSAPP_MODE`, `WHATSAPP_ALLOWED_USERS`, and `WHATSAPP_DEBUG` are available.
-  - set `TERM=xterm-256color`, `FORCE_COLOR=1`, and explicit terminal dimensions so `qrcode-terminal` can render reliably.
-  - keep the managed Node runtime at the front of PATH.
-- Keep a fallback to `hermes whatsapp` only if `bridge.js` is missing, but mark that fallback clearly in the wizard output.
+Two facts matter:
 
-2. Improve stale process cleanup
-- Expand `terminateWhatsAppPairingProcesses()` and pre-pair cleanup to kill:
-  - old `script ... hermes whatsapp` wrappers,
-  - old `hermes whatsapp` children,
-  - old `node ... whatsapp-bridge/bridge.js --pair-only` runs.
-- Do not kill the long-running gateway bridge on port 3000 except when explicitly resetting/re-pairing, so a healthy gateway is not disrupted unnecessarily.
+1. The crash happens in **Node v18.19.1** — your system Node. Baileys (current Whiskeysockets build) loads `globalThis.crypto.subtle` at module top-level. Node only exposes `globalThis.crypto` to ES modules starting at **v19+** (and reliably in v20 LTS). On v18.19.1 it is `undefined`, so the bridge dies before it can connect.
+2. The Ronbot pair-only call already uses the managed Node v20.19.2. So pairing succeeds and `creds.json` is saved. But once the wizard restarts `hermes gateway`, the **gateway service** spawns `bridge.js` itself using whatever `node` is on the service unit's PATH — which is the system `node` (v18.19.1). It crashes, systemd/launchd restarts it, it crashes again — that's why you see the same stack trace pasted four times.
 
-3. Make session handling canonical
-- Ensure `clearWhatsAppSession()` removes all known legacy paths plus the canonical `~/.hermes/platforms/whatsapp/session`.
-- Ensure `isWhatsAppPaired()` and `getWhatsAppSessionFileCount()` focus on a real `creds.json`, not just any leftover file.
-- After pair-only exits successfully, verify `~/.hermes/platforms/whatsapp/session/creds.json` exists. If pair-only saved to an older path for any reason, mirror it into the canonical path.
+So the agent does not "see" WhatsApp because the bridge process is in a crash loop. The session is good; the runtime is wrong.
 
-4. Verify the gateway sees WhatsApp, not just that a session exists
-- Add a dedicated diagnostic in `getWhatsAppGatewayHealth()` for:
-  - gateway running,
-  - `hermes gateway status` includes WhatsApp as a configured/connected platform,
-  - bridge `/health` is connected,
-  - canonical session `creds.json` exists,
-  - last WhatsApp bridge log tail.
-- Update the wizard to fail with an actionable message if `WHATSAPP_ENABLED=true` is missing from `~/.hermes/.env` after saving, or if `hermes gateway status` shows no WhatsApp section after restart.
+A second smaller issue: the pair-only fallback path (`hermes whatsapp` via `script`) and the gateway both inherit the snapshot PATH captured by `hermes gateway install`. If that snapshot was taken before the managed Node was prepended, the gateway will keep using v18.
 
-5. Restart gateway in the right order
-- After successful pairing:
-  - materialize `.env`,
-  - stop the gateway,
-  - refresh/install the gateway service so PATH is captured,
-  - start the gateway,
-  - poll for WhatsApp status using the improved health check.
-- If the gateway starts but WhatsApp is not listed, show that exact reason instead of closing the wizard as successful.
+## Fix plan
 
-6. Fix wizard UX around QR visibility
-- Keep the terminal renderer, but add a plain text QR fallback that is always visible if xterm is not ready or if the QR appears in buffered output.
-- Add a short “No QR yet” timeout state that offers “Force fresh QR pairing” and shows the last WhatsApp-specific log lines, not the whole gateway log.
-- Prevent the auto-start effect from repeatedly launching pairing if prerequisites are ready but a stale session/reset confirmation is pending.
+All changes are in `src/lib/systemAPI/hermes.ts`, with small UX tweaks in `ChannelWizard.tsx` and `Channels.tsx`.
 
-7. Channel card status
-- Adjust the WhatsApp channel card attention reason to distinguish:
-  - “WhatsApp is configured but not listed by Hermes gateway,”
-  - “Gateway running but bridge not connected,”
-  - “Session missing or stale,”
-  - “Gateway not running.”
-- Keep the spinner only during the short post-setup grace window; otherwise show Attention with the reason.
+### 1. Force the gateway to use managed Node v20 for the bridge
 
-Files to update after approval:
-- `src/lib/systemAPI/hermes.ts`
-- `src/components/channels/ChannelWizard.tsx`
-- `src/pages/Channels.tsx`
-- possibly `src/components/channels/ChannelCard.tsx` if the card needs a clearer status label/tooltip.
+Hermes' bridge invocation honors a `NODE` / `NODE_BIN` env var (and otherwise falls back to whatever `node` is first on PATH). We will:
 
-Expected result:
-- Starting WhatsApp setup reliably displays a QR code from the official Hermes bridge pair-only flow.
-- Scanning the QR saves credentials into `~/.hermes/platforms/whatsapp/session`, the exact path the gateway uses.
-- After setup, `hermes gateway status` should list WhatsApp, the bridge health should become connected, and the agent should be reachable on WhatsApp without the user asking the agent to configure anything manually.
+- Write a small launcher shim at `~/.hermes/bin/node` that `exec`s the managed `$NODE_RUNTIME_HOME/bin/node "$@"`.
+- Prepend `~/.hermes/bin` to PATH inside `~/.hermes/.env` via a new `PATH=...` line *and* via the gateway service environment.
+- Add explicit overrides to `~/.hermes/.env` so Hermes picks the right binary regardless of PATH:
+  - `HERMES_NODE_BIN=$HOME/.hermes/runtime/node-v20.19.2-linux-x64/bin/node`
+  - `WHATSAPP_NODE_BIN=$HOME/.hermes/runtime/node-v20.19.2-linux-x64/bin/node`
+  - `NODE=$HOME/.hermes/runtime/node-v20.19.2-linux-x64/bin/node`
+- After writing `.env`, run `hermes gateway install` again so the service unit re-snapshots PATH with `~/.hermes/bin` first, then `hermes gateway start`.
+
+### 2. Self-heal: detect and replace bad system Node at runtime
+
+Before starting the gateway, run a probe:
+
+```bash
+node -e "process.exit(globalThis.crypto && globalThis.crypto.subtle ? 0 : 42)"
+```
+
+against whatever Node is first on the gateway's effective PATH. If it returns 42 (or the binary reports < v20), abort the wizard with a clear actionable error and offer to reinstall the managed runtime via the existing `ensureManagedNodeRuntime` flow before retrying. This means the user will never reach the crash loop again.
+
+### 3. Stop the existing crash loop cleanly before restart
+
+The current `terminateWhatsAppPairingProcesses` deliberately leaves the gateway-managed `bridge.js` running. With a v18 crash loop in flight, we must:
+
+- `hermes gateway stop`
+- `pkill -f "whatsapp-bridge/bridge.js"` (any mode, not just `--pair-only`)
+- wait for port 3000 to free, then `hermes gateway start`
+- poll `hermes gateway status` until WhatsApp shows as connected (existing helper).
+
+### 4. Surface the real reason in the wizard
+
+Right now the wizard shows a wall of repeated stack traces under "Channel setup needs attention." Replace that with a structured `ActionableError`:
+
+- Title: "WhatsApp bridge crashed (Node version too old)"
+- Summary: "Hermes is spawning the bridge with Node 18.19.1, which doesn't expose `globalThis.crypto.subtle`. Baileys requires Node 20+."
+- "Show details" reveals the raw stack.
+- "Fix Automatically" button runs steps 1–3 above.
+
+Also extend `getWhatsAppGatewayHealth` to detect the specific signature `Cannot destructure property 'subtle'` in the bridge log tail and tag the channel card attention reason as **"Bridge running on wrong Node version — click to repair"**.
+
+### 5. Verify pairing flow still passes the right Node
+
+The pair-only call already uses `$NODE_RUNTIME_HOME/bin/node`. We will assert at the top of the script that `"$NODE_BIN" -p "process.versions.node"` starts with `20.` and abort with a clear message otherwise (instead of silently falling back to system node).
+
+### 6. Other things found while investigating
+
+- Email IMAP authentication failures in your gateway log are unrelated to WhatsApp (Gmail rejecting the password — likely needs an App Password). We will not change the email flow, but we will stop showing email log noise inside the WhatsApp wizard's "Show details" panel; only WhatsApp-tagged log lines will be displayed.
+- Slack "missing scope" log lines are also unrelated and will be filtered out of the WhatsApp diagnostics view.
+
+## Files touched
+
+- `src/lib/systemAPI/hermes.ts` — managed-Node shim creation, `.env` overrides, Node version probe, crash-loop-aware restart sequence, gateway log filter for WhatsApp-only lines, bridge crash detection.
+- `src/components/channels/ChannelWizard.tsx` — replace raw error dump with `ActionableError` + Auto-Fix button that re-runs the repair sequence.
+- `src/pages/Channels.tsx` — new attention reason `"node-version-too-old"` mapped to a clear tooltip and Repair action on the WhatsApp channel card.
+
+## Expected result
+
+After approval and implementation:
+
+1. Wizard re-runs cleanly, pairs WhatsApp, writes `.env` with the managed-Node overrides.
+2. Gateway restarts and spawns the bridge with **Node v20.19.2**, so Baileys loads without crashing.
+3. `hermes gateway status` lists WhatsApp as connected, the channel card shows **Active**, and messages sent to your bot number are delivered to the agent without any "set up WhatsApp first" reply.
+4. If the system ever regresses (e.g. user reinstalls Hermes and the snapshot PATH changes), the wizard's preflight Node probe catches it and offers a one-click repair instead of looping on the cryptic Baileys stack trace.

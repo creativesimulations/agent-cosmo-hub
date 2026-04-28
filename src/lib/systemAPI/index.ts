@@ -82,6 +82,8 @@ export const systemAPI = {
   clearWhatsAppSession: hermesAPI.clearWhatsAppSession.bind(hermesAPI),
   terminateWhatsAppPairingProcesses: hermesAPI.terminateWhatsAppPairingProcesses.bind(hermesAPI),
   resetWhatsAppChannel: hermesAPI.resetWhatsAppChannel.bind(hermesAPI),
+  ensureWhatsAppManagedNode: hermesAPI.ensureWhatsAppManagedNode.bind(hermesAPI),
+  classifyWhatsAppBridgeFailure: hermesAPI.classifyWhatsAppBridgeFailure.bind(hermesAPI),
   removeChannelEnvKeys: hermesAPI.removeChannelEnvKeys.bind(hermesAPI),
   runWhatsAppPairing: hermesAPI.runWhatsAppPairing.bind(hermesAPI),
   checkNpmForMessaging: hermesAPI.checkNpmForMessaging.bind(hermesAPI),
