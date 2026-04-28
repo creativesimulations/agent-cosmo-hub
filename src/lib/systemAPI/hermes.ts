@@ -2209,9 +2209,10 @@ export const hermesAPI = {
         'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
         'if command -v script >/dev/null 2>&1; then',
         '  if script --version 2>&1 | grep -qF util-linux; then',
-        "    script -q -e -c 'hermes whatsapp' /dev/null",
+        // `-f` flushes output continuously; without it, QR output can stay buffered.
+        "    script -q -e -f -c 'hermes whatsapp' /dev/null",
         '  else',
-        "    script -q /dev/null bash -lc 'hermes whatsapp'",
+        "    script -q -f /dev/null bash -lc 'hermes whatsapp'",
         '  fi',
         '  PAIR_RC=$?',
         'else',
