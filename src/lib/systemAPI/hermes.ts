@@ -2770,6 +2770,9 @@ export const hermesAPI = {
     const ok = steps.every((s) => s.ok || s.name === 'verify-gateway-path' && !verify.error);
     return { ok, steps, diagnostics };
   },
+
+  /**
+   * Run WhatsApp pairing in the official Baileys bridge `--pair-only` mode.
    *
    * Why bridge.js --pair-only instead of `hermes whatsapp`:
    *  - It prints the QR straight to stdout (qrcode-terminal), so the renderer
