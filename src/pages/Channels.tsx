@@ -377,7 +377,7 @@ const ChannelsPage = () => {
           channel={activeWizard}
           open={!!activeWizard}
           onClose={() => setActiveWizard(null)}
-          onComplete={refresh}
+          onComplete={() => handleWizardComplete(activeWizard.id)}
         />
       )}
     </div>
