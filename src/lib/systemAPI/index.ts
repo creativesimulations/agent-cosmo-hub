@@ -78,6 +78,7 @@ export const systemAPI = {
   isWhatsAppPaired: hermesAPI.isWhatsAppPaired.bind(hermesAPI),
   getWhatsAppSessionFileCount: hermesAPI.getWhatsAppSessionFileCount.bind(hermesAPI),
   clearWhatsAppSession: hermesAPI.clearWhatsAppSession.bind(hermesAPI),
+  resetWhatsAppChannel: hermesAPI.resetWhatsAppChannel.bind(hermesAPI),
   removeChannelEnvKeys: hermesAPI.removeChannelEnvKeys.bind(hermesAPI),
   runWhatsAppPairing: hermesAPI.runWhatsAppPairing.bind(hermesAPI),
   checkNpmForMessaging: hermesAPI.checkNpmForMessaging.bind(hermesAPI),

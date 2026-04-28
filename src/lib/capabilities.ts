@@ -179,7 +179,14 @@ export const BUILTIN_CAPABILITIES: CapabilityDefinition[] = [
     description: "Send messages on Telegram / Discord / Slack / WhatsApp via bot tokens.",
     risk: "medium",
     icon: "MessageCircle",
-    candidateSecrets: ["TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "SLACK_BOT_TOKEN", "WHATSAPP_ACCESS_TOKEN"],
+    candidateSecrets: [
+      "TELEGRAM_BOT_TOKEN",
+      "DISCORD_BOT_TOKEN",
+      "SLACK_BOT_TOKEN",
+      "WHATSAPP_ALLOWED_USERS",
+      "WHATSAPP_MODE",
+      "WHATSAPP_ENABLED",
+    ],
     candidateSkills: ["telegram", "discord", "slack", "whatsapp", "messaging"],
     extrasPackage: "messaging",
     source: "builtin",
@@ -347,6 +354,17 @@ export const assessReadiness = (
     installedSkills.some((s) =>
       cap.candidateSkills.some((cs) => cs.toLowerCase() === s.name.toLowerCase()),
     );
+
+  // Hermes WhatsApp is configured via Ronbot secrets + gateway, not a ~/.hermes/skills entry.
+  if (cap.id === "messaging" && hasSecret) {
+    const whatsappSecrets =
+      storedSecretKeys.includes("WHATSAPP_ALLOWED_USERS") ||
+      storedSecretKeys.includes("WHATSAPP_MODE") ||
+      storedSecretKeys.includes("WHATSAPP_ENABLED");
+    if (whatsappSecrets && !hasSkill) {
+      return { ready: true, missingSecret: false, missingSkill: false };
+    }
+  }
 
   if (!hasSkill && cap.candidateSkills.length > 0) {
     return {

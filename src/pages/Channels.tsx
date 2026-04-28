@@ -5,19 +5,34 @@ import ChannelWizard from "@/components/channels/ChannelWizard";
 import UpgradeCard from "@/components/channels/UpgradeCard";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
-import ActionableError from "@/components/ui/ActionableError";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { CHANNELS, Channel } from "@/lib/channels";
 import { UPGRADES, getUpgrade, isUpgradeUnlocked } from "@/lib/licenses";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
+import { useCapabilities } from "@/contexts/CapabilitiesContext";
+import { invalidateCapabilityProbeCache } from "@/lib/capabilityProbe";
 
 const ChannelsPage = () => {
+  const { refreshProbes } = useCapabilities();
   const [statuses, setStatuses] = useState<Record<string, ChannelStatus>>(() =>
     Object.fromEntries(CHANNELS.map((c) => [c.id, { state: "loading" } as ChannelStatus])),
   );
   const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
   const [unlocksLoading, setUnlocksLoading] = useState(true);
   const [activeWizard, setActiveWizard] = useState<Channel | null>(null);
+  const [whatsappResetOpen, setWhatsappResetOpen] = useState(false);
+  const [whatsappResetBusy, setWhatsappResetBusy] = useState(false);
+  const [gatewayRestartBusy, setGatewayRestartBusy] = useState(false);
   const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
   const channelsDebugRunRef = useRef("");
   // Tracks channels in a brief post-wizard "starting" grace window so the
@@ -87,6 +102,11 @@ const ChannelsPage = () => {
       }
     }
   };
+
+  const bumpCapabilityProbes = useCallback(() => {
+    invalidateCapabilityProbeCache();
+    void refreshProbes();
+  }, [refreshProbes]);
 
   const refresh = useCallback(async () => {
     channelsDebugRunRef.current = `channels-${Date.now()}`;
@@ -221,17 +241,59 @@ const ChannelsPage = () => {
 
   const handleWizardComplete = useCallback(
     (channelId: string) => {
+      bumpCapabilityProbes();
       pollStartRef.current.set(channelId, Date.now());
       void refresh();
     },
-    [refresh],
+    [refresh, bumpCapabilityProbes],
   );
+
+  const handleRestartGateway = useCallback(async () => {
+    setGatewayRestartBusy(true);
+    try {
+      await systemAPI.stopGateway().catch(() => undefined);
+      await systemAPI.refreshGatewayInstall().catch(() => undefined);
+      const r = await systemAPI.startGateway();
+      if (!r.success) {
+        toast.error("Could not restart messaging gateway", {
+          description: r.stderr?.split("\n")[0] || r.stdout?.split("\n")[0] || "Check Logs and try again.",
+        });
+        return;
+      }
+      bumpCapabilityProbes();
+      toast.success("Messaging gateway restarted");
+    } finally {
+      setGatewayRestartBusy(false);
+      void refresh();
+    }
+  }, [refresh, bumpCapabilityProbes]);
+
+  const confirmWhatsAppReset = async () => {
+    setWhatsappResetBusy(true);
+    try {
+      const r = await systemAPI.resetWhatsAppChannel();
+      if (!r.success) {
+        toast.error("Could not reset WhatsApp", { description: r.error || "Try again." });
+        return;
+      }
+      bumpCapabilityProbes();
+      toast.success("WhatsApp reset", { description: "You can run Set up again whenever you are ready." });
+      setWhatsappResetOpen(false);
+      void refresh();
+    } finally {
+      setWhatsappResetBusy(false);
+    }
+  };
 
   const handleSetUp = (channel: Channel) => {
     if (channel.tier === "paid" && !unlocks[channel.upgradeId!]) {
       toast.info(`${channel.name} requires the ${channel.name} upgrade`, {
         description: "Scroll down to the Premium upgrades section to unlock it.",
       });
+      return;
+    }
+    if (channel.id === "whatsapp" && statuses[channel.id]?.state === "configured") {
+      setWhatsappResetOpen(true);
       return;
     }
     setActiveWizard(channel);
@@ -286,6 +348,10 @@ const ChannelsPage = () => {
               channel={c}
               status={statuses[c.id] ?? { state: "loading" }}
               onSetUp={() => handleSetUp(c)}
+              whatsappResetOnly={c.id === "whatsapp" && statuses[c.id]?.state === "configured"}
+              onResetWhatsApp={() => setWhatsappResetOpen(true)}
+              onRestartGateway={() => void handleRestartGateway()}
+              gatewayRestartBusy={c.id === "whatsapp" ? gatewayRestartBusy : false}
             />
           ))}
           {googleWorkspaceUnlocked && googleWorkspaceUpgrade && (
@@ -338,6 +404,10 @@ const ChannelsPage = () => {
                 channel={c}
                 status={statuses[c.id] ?? { state: "loading" }}
                 onSetUp={() => handleSetUp(c)}
+                whatsappResetOnly={c.id === "whatsapp" && statuses[c.id]?.state === "configured"}
+                onResetWhatsApp={() => setWhatsappResetOpen(true)}
+                onRestartGateway={() => void handleRestartGateway()}
+                gatewayRestartBusy={c.id === "whatsapp" ? gatewayRestartBusy : false}
               />
             ))}
           </div>
@@ -380,6 +450,38 @@ const ChannelsPage = () => {
           onComplete={() => handleWizardComplete(activeWizard.id)}
         />
       )}
+
+      <AlertDialog open={whatsappResetOpen} onOpenChange={(v) => !whatsappResetBusy && setWhatsappResetOpen(v)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset WhatsApp?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This stops the messaging gateway, removes WhatsApp keys from your Ronbot secrets and{" "}
+              <code className="text-xs font-mono">~/.hermes/.env</code>, and wipes the local WhatsApp session so the next
+              setup starts with a fresh QR code.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={whatsappResetBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={whatsappResetBusy}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmWhatsAppReset();
+              }}
+            >
+              {whatsappResetBusy ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 inline animate-spin" /> Resetting…
+                </>
+              ) : (
+                "Reset WhatsApp"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

@@ -2088,6 +2088,35 @@ export const hermesAPI = {
   },
 
   /**
+   * Full WhatsApp channel reset (shared by Channels and the wizard): stop gateway,
+   * clear session/auth dirs, strip WhatsApp env keys, delete matching secrets, re-materialize .env.
+   */
+  async resetWhatsAppChannel(): Promise<{ success: boolean; error?: string }> {
+    const keys = [
+      'WHATSAPP_ENABLED',
+      'WHATSAPP_MODE',
+      'WHATSAPP_ALLOWED_USERS',
+      'WHATSAPP_ALLOW_ALL_USERS',
+    ] as const;
+    agentLogs.push({ source: 'system', level: 'info', summary: 'Resetting WhatsApp channel…' });
+    await this.stopGateway().catch(() => undefined);
+    const cleared = await this.clearWhatsAppSession();
+    if (!cleared.success) {
+      return { success: false, error: cleared.stderr || 'Could not clear WhatsApp session files' };
+    }
+    const stripped = await this.removeChannelEnvKeys([...keys]);
+    if (!stripped.success) {
+      return { success: false, error: stripped.error || 'Could not remove env keys' };
+    }
+    for (const k of keys) {
+      await secretsStore.delete(k).catch(() => false);
+    }
+    await materializeHermesEnv().catch(() => undefined);
+    agentLogs.push({ source: 'system', level: 'info', summary: 'WhatsApp reset complete' });
+    return { success: true };
+  },
+
+  /**
    * Stream `hermes whatsapp` (QR + logs) for in-app pairing. Uses `timeout: 0`
    * so the child is not killed while the user scans. Call `killStream` from
    * the UI if the user cancels.

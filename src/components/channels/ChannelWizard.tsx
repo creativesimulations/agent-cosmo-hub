@@ -16,6 +16,8 @@ import { toast } from "sonner";
 import type { Channel } from "@/lib/channels";
 import ActionableError from "@/components/ui/ActionableError";
 import { useSudoPrompt } from "@/contexts/SudoPromptContext";
+import { useCapabilities } from "@/contexts/CapabilitiesContext";
+import { invalidateCapabilityProbeCache } from "@/lib/capabilityProbe";
 import WhatsAppTerminal from "@/components/channels/WhatsAppTerminal";
 
 type Step = 0 | 1 | 2 | 3;
@@ -82,6 +84,12 @@ const stripAnsiLike = (value: string): string => {
 };
 
 const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProps) => {
+  const { refreshProbes } = useCapabilities();
+  const bumpMessagingProbe = useCallback(() => {
+    invalidateCapabilityProbeCache();
+    void refreshProbes();
+  }, [refreshProbes]);
+
   const [step, setStep] = useState<Step>(0);
   const [values, setValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -116,8 +124,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [setupToolsOk, setSetupToolsOk] = useState(false);
   const [setupToolsDetail, setSetupToolsDetail] = useState("");
   const [gatewayRefreshBusy, setGatewayRefreshBusy] = useState(false);
+  const [wizardGatewayRestartBusy, setWizardGatewayRestartBusy] = useState(false);
   const waLogBuffer = useRef("");
   const waStreamIdRef = useRef<string | null>(null);
+  /** Prevents auto "Enable" from racing the mid-pairing gateway restart path. */
+  const waWhatsAppFinalizeInFlightRef = useRef(false);
+  /** One automatic QR start per wizard open while on the WhatsApp test step. */
+  const waAutoPairAttemptedForSessionRef = useRef(false);
+  const prevWhatsAppTestResultRef = useRef<"idle" | "ok" | "fail">("idle");
   const waLogEndRef = useRef<HTMLDivElement | null>(null);
   const { requestSudoPassword } = useSudoPrompt();
 
@@ -134,6 +148,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     if (!open) return;
     setStep(0);
     setTestResult("idle");
+    prevWhatsAppTestResultRef.current = "idle";
     setTestError("");
     setFormError("");
     setWaPairedChecked(false);
@@ -471,6 +486,49 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   }, [channel]);
 
+  /** Stop/start gateway so a new WhatsApp session is picked up (shared by pairing completion + manual button). */
+  const restartWhatsAppGatewayWithNewSession = useCallback(async (): Promise<"live" | "soft" | "fail"> => {
+    setWaStatusHint("Restarting messaging gateway with new session…");
+    await systemAPI.stopGateway().catch(() => undefined);
+    await systemAPI.refreshGatewayInstall().catch(() => undefined);
+    const r = await systemAPI.startGateway();
+    if (!r.success) {
+      const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
+      setFormError(detail);
+      setWaStatusHint("");
+      toast.error("Failed to start gateway", { description: detail });
+      return "fail";
+    }
+    setWaStatusHint("Verifying WhatsApp bridge connection…");
+    const deadline = Date.now() + 30000;
+    let lastHealth: Awaited<ReturnType<typeof systemAPI.getWhatsAppGatewayHealth>> | null = null;
+    while (Date.now() < deadline) {
+      const h = await systemAPI.getWhatsAppGatewayHealth();
+      lastHealth = h;
+      if (h.running && h.whatsappActive) break;
+      await new Promise((res) => setTimeout(res, 2500));
+    }
+    setWaStatusHint("");
+    if (lastHealth?.running && lastHealth.whatsappActive) {
+      setFormError("");
+      return "live";
+    }
+    const pairedNow = await systemAPI.isWhatsAppPaired();
+    if (r.success && pairedNow.success && pairedNow.paired) {
+      setFormError("");
+      return "soft";
+    }
+    const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
+    const detail = tail
+      ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
+      : "Could not confirm WhatsApp after starting the gateway. Try pairing again, then enable.";
+    setFormError(detail);
+    toast.error("WhatsApp bridge not confirmed", {
+      description: "Session may be missing — re-run QR pairing if this persists.",
+    });
+    return "fail";
+  }, []);
+
   /** Final step: tools for credential tests + WhatsApp pairing prereqs (npm, script) + session */
   useEffect(() => {
     if (!open || step !== testStep) return;
@@ -512,6 +570,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   /** Stop Hermes pairing if the user closes the wizard mid-stream */
   useEffect(() => {
     if (open) return;
+    waAutoPairAttemptedForSessionRef.current = false;
+    prevWhatsAppTestResultRef.current = "idle";
+    waWhatsAppFinalizeInFlightRef.current = false;
     const id = waStreamIdRef.current;
     if (id) {
       void systemAPI.killStream(id);
@@ -711,7 +772,28 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         allowedUsers: waAllowedUsersCurrent,
       });
       toast.success("WhatsApp linked");
-      void runTest();
+      waWhatsAppFinalizeInFlightRef.current = true;
+      try {
+        const testOk = await runTest();
+        if (!testOk) return;
+        const outcome = await restartWhatsAppGatewayWithNewSession();
+        if (outcome === "fail") return;
+        bumpMessagingProbe();
+        if (outcome === "live") {
+          toast.success(`${channel.name} channel enabled`, {
+            description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
+          });
+        } else {
+          toast.success(`${channel.name} channel enabled`, {
+            description:
+              "WhatsApp is linked and the gateway was restarted. Use “Restart messaging gateway” below if messages are slow to arrive.",
+          });
+        }
+        onComplete();
+        onClose();
+      } finally {
+        waWhatsAppFinalizeInFlightRef.current = false;
+      }
     } else if (!paired.success) {
       setWaPairingError(paired.error || "Could not verify WhatsApp pairing.");
       setWaRetryReady(true);
@@ -831,70 +913,47 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         toast.success("WhatsApp linked");
         setTestResult("idle");
         void (async () => {
-          const ok = await runTest();
-          if (!ok) return;
-          setWaStatusHint("Restarting messaging gateway with new session…");
-          // Force a clean restart so the gateway re-reads ~/.hermes/.env and
-          // the WhatsApp session directory we just populated. Without the
-          // stop, an already-running gateway keeps the old (empty) auth state
-          // and the WhatsApp adapter stays disconnected.
-          await systemAPI.stopGateway().catch(() => undefined);
-          await systemAPI.refreshGatewayInstall().catch(() => undefined);
-          const r = await systemAPI.startGateway();
-          if (!r.success) {
-            const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
-            setFormError(detail);
-            setWaStatusHint("");
-            toast.error("Failed to start gateway", { description: detail });
-            return;
-          }
-          // Verify the WhatsApp adapter is actually live before declaring success.
-          setWaStatusHint("Verifying WhatsApp bridge connection…");
-          const deadline = Date.now() + 30000;
-          let lastHealth: Awaited<ReturnType<typeof systemAPI.getWhatsAppGatewayHealth>> | null = null;
-          while (Date.now() < deadline) {
-            const h = await systemAPI.getWhatsAppGatewayHealth();
-            lastHealth = h;
-            if (h.running && h.whatsappActive) break;
-            await new Promise((res) => setTimeout(res, 2500));
-          }
-          setWaStatusHint("");
-          if (lastHealth?.running && lastHealth.whatsappActive) {
-            setFormError("");
-            toast.success(`${channel.name} channel enabled`, {
-              description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
-            });
+          waWhatsAppFinalizeInFlightRef.current = true;
+          try {
+            const ok = await runTest();
+            if (!ok) return;
+            const outcome = await restartWhatsAppGatewayWithNewSession();
+            if (outcome === "fail") return;
+            bumpMessagingProbe();
+            if (outcome === "live") {
+              toast.success(`${channel.name} channel enabled`, {
+                description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
+              });
+            } else {
+              toast.success(`${channel.name} channel enabled`, {
+                description:
+                  "WhatsApp is linked and the gateway was restarted. Use “Restart messaging gateway” below if messages are slow to arrive.",
+              });
+            }
             onComplete();
             onClose();
-            return;
+          } finally {
+            waWhatsAppFinalizeInFlightRef.current = false;
           }
-          // Gateway start already succeeded; pgrep often misses `python … gateway`.
-          const pairedNow = await systemAPI.isWhatsAppPaired();
-          if (r.success && pairedNow.success && pairedNow.paired) {
-            setFormError("");
-            toast.success(`${channel.name} channel enabled`, {
-              description:
-                "WhatsApp is linked and the gateway was started. If messages do not arrive, open Channels and restart the gateway once.",
-            });
-            onComplete();
-            onClose();
-            return;
-          }
-          const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
-          const detail = tail
-            ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
-            : "Could not confirm WhatsApp after starting the gateway. Try pairing again, then enable.";
-          setFormError(detail);
-          toast.error("WhatsApp bridge not confirmed", {
-            description: "Session may be missing — re-run QR pairing if this persists.",
-          });
         })();
       })();
     }, 2000);
     return () => {
       window.clearInterval(timer);
     };
-  }, [open, step, channel.id, channel.name, waPairingActive, runTest, onClose, onComplete, testStep]);
+  }, [
+    open,
+    step,
+    channel.id,
+    channel.name,
+    waPairingActive,
+    runTest,
+    onClose,
+    onComplete,
+    testStep,
+    restartWhatsAppGatewayWithNewSession,
+    bumpMessagingProbe,
+  ]);
 
   useEffect(() => {
     if (!waPairingActive) return;
@@ -918,7 +977,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const r = await systemAPI.refreshGatewayInstall();
       if (r.success) {
         toast.success("Gateway service refreshed", {
-          description: "Ronbot re-saved your PATH for the messaging gateway. Start the gateway from Channels if needed.",
+          description:
+            "Ronbot re-saved your PATH for the messaging gateway. Use “Restart messaging gateway” in this wizard or on the WhatsApp card if the bridge needs a fresh start.",
         });
         if (channel.id === "whatsapp") {
           const pr = await systemAPI.checkWhatsAppPairingPrereqs();
@@ -954,6 +1014,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       }
       if (lastHealth?.running && lastHealth.whatsappActive) {
         setFormError("");
+        bumpMessagingProbe();
         toast.success(`${channel.name} channel enabled`, {
           description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
         });
@@ -967,9 +1028,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const pairedNow = await systemAPI.isWhatsAppPaired();
       if (r.success && pairedNow.success && pairedNow.paired) {
         setFormError("");
+        bumpMessagingProbe();
         toast.success(`${channel.name} channel enabled`, {
           description:
-            "WhatsApp is linked and the gateway was started. If messages do not arrive, open Channels and restart the gateway once.",
+            "WhatsApp is linked and the gateway was started. Use “Restart messaging gateway” in this wizard or on the WhatsApp card if messages are slow to arrive.",
         });
         onComplete();
         onClose();
@@ -993,6 +1055,59 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     onClose();
   };
 
+  const handleWizardRestartGateway = async () => {
+    if (channel.id !== "whatsapp") return;
+    setWizardGatewayRestartBusy(true);
+    try {
+      const outcome = await restartWhatsAppGatewayWithNewSession();
+      if (outcome === "fail") return;
+      bumpMessagingProbe();
+      toast.success("Messaging gateway restarted", {
+        description: "WhatsApp picked up your latest session and gateway settings.",
+      });
+    } finally {
+      setWizardGatewayRestartBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!open || channel.id !== "whatsapp" || step !== testStep) return;
+    if (!waPairPrereqChecked || !waPairPrereqOk || !setupToolsChecked || !setupToolsOk) return;
+    if (waPaired) return;
+    if (waRequiresSessionReset || waAwaitingResetConfirm) return;
+    if (waPairingActive) return;
+    if (waAutoPairAttemptedForSessionRef.current) return;
+    waAutoPairAttemptedForSessionRef.current = true;
+    void startWaPairing(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- startWaPairing is recreated each render; ref prevents repeat pairing loops
+  }, [
+    open,
+    channel.id,
+    step,
+    testStep,
+    waPairPrereqChecked,
+    waPairPrereqOk,
+    setupToolsChecked,
+    setupToolsOk,
+    waPaired,
+    waRequiresSessionReset,
+    waAwaitingResetConfirm,
+    waPairingActive,
+  ]);
+
+  /** When the channel test flips to ok (e.g. already linked), run enable without an extra click. */
+  useEffect(() => {
+    if (channel.id !== "whatsapp") return;
+    const prev = prevWhatsAppTestResultRef.current;
+    prevWhatsAppTestResultRef.current = testResult;
+    const becameOk = prev !== "ok" && testResult === "ok";
+    if (!becameOk) return;
+    if (!open || step !== testStep) return;
+    if (waWhatsAppFinalizeInFlightRef.current) return;
+    void enableGateway();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- enableGateway closes the wizard on success; omit from deps to avoid stale closures re-firing
+  }, [testResult, open, channel.id, step, testStep]);
+
   /**
    * Wipe a channel's leftover state so the user can start clean.
    * Stops the gateway, removes env keys (env file + secrets store), and for
@@ -1006,32 +1121,33 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         ? channel.resetEnvVars
         : channel.credentials.map((c) => c.envVar);
 
-      // Stop any running gateway so it doesn't recreate state mid-reset.
-      await systemAPI.stopGateway().catch(() => undefined);
-
-      // WhatsApp: nuke local session + bridge auth dirs first.
       if (channel.id === "whatsapp") {
-        const cleared = await systemAPI.clearWhatsAppSession();
-        if (!cleared.success) {
-          toast.error("Could not clear WhatsApp session files", {
-            description: cleared.stderr?.split("\n")[0] || "Try again or close any running Hermes WhatsApp session.",
+        const rr = await systemAPI.resetWhatsAppChannel();
+        if (!rr.success) {
+          toast.error("Could not reset WhatsApp", {
+            description: rr.error || "Try again or check file permissions.",
           });
+          return;
         }
+      } else {
+        // Stop any running gateway so it doesn't recreate state mid-reset.
+        await systemAPI.stopGateway().catch(() => undefined);
+
+        // Strip env keys from ~/.hermes/.env and from secure secrets storage.
+        const stripped = await systemAPI.removeChannelEnvKeys(keys);
+        if (!stripped.success) {
+          toast.error("Could not remove env keys", {
+            description: stripped.error || "Check ~/.hermes/.env permissions and try again.",
+          });
+          return;
+        }
+        for (const k of keys) {
+          await systemAPI.secrets.delete(k).catch(() => false);
+        }
+        await systemAPI.materializeEnv().catch(() => undefined);
       }
 
-      // Strip env keys from ~/.hermes/.env and from secure secrets storage.
-      const stripped = await systemAPI.removeChannelEnvKeys(keys);
-      if (!stripped.success) {
-        toast.error("Could not remove env keys", {
-          description: stripped.error || "Check ~/.hermes/.env permissions and try again.",
-        });
-        return;
-      }
-      for (const k of keys) {
-        await systemAPI.secrets.delete(k).catch(() => false);
-      }
-      // Re-materialize so anything still managed gets a clean .env back.
-      await systemAPI.materializeEnv().catch(() => undefined);
+      bumpMessagingProbe();
 
       // Reset wizard local state.
       setHadExistingConfig(false);
@@ -1653,8 +1769,29 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 </Button>
               ) : null}
               {testResult === "ok" && (
-                <div className="flex items-center gap-2 text-sm text-success">
-                  <CheckCircle2 className="w-4 h-4" /> Credentials look good. Ready to enable.
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm text-success">
+                    <CheckCircle2 className="w-4 h-4" /> Credentials look good. Ready to enable.
+                  </div>
+                  {channel.id === "whatsapp" && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      disabled={wizardGatewayRestartBusy || waPairingActive || testing}
+                      onClick={() => void handleWizardRestartGateway()}
+                    >
+                      {wizardGatewayRestartBusy ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                          Restarting gateway…
+                        </>
+                      ) : (
+                        "Restart messaging gateway"
+                      )}
+                    </Button>
+                  )}
                 </div>
               )}
               {testResult === "fail" && (

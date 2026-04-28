@@ -1,4 +1,4 @@
-import { CheckCircle2, Lock, Loader2, AlertCircle } from "lucide-react";
+import { CheckCircle2, Lock, Loader2, AlertCircle, RotateCcw } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -14,9 +14,22 @@ interface ChannelCardProps {
   channel: Channel;
   status: ChannelStatus;
   onSetUp: () => void;
+  /** WhatsApp: when fully configured, only reset + gateway restart (no full reconfigure wizard). */
+  whatsappResetOnly?: boolean;
+  onResetWhatsApp?: () => void;
+  onRestartGateway?: () => void;
+  gatewayRestartBusy?: boolean;
 }
 
-const ChannelCard = ({ channel, status, onSetUp }: ChannelCardProps) => {
+const ChannelCard = ({
+  channel,
+  status,
+  onSetUp,
+  whatsappResetOnly,
+  onResetWhatsApp,
+  onRestartGateway,
+  gatewayRestartBusy,
+}: ChannelCardProps) => {
   const Icon = channel.icon;
 
   const statusBadge = () => {
@@ -87,6 +100,33 @@ const ChannelCard = ({ channel, status, onSetUp }: ChannelCardProps) => {
           <Button variant="outline" size="sm" onClick={onSetUp} className="w-full">
             <Lock className="w-3.5 h-3.5 mr-1.5" /> Unlock
           </Button>
+        ) : whatsappResetOnly && onResetWhatsApp && onRestartGateway ? (
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full border-destructive/50 text-destructive hover:bg-destructive/10"
+              onClick={onResetWhatsApp}
+              disabled={status.state === "loading" || gatewayRestartBusy}
+            >
+              <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reset WhatsApp…
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRestartGateway}
+              className="w-full"
+              disabled={status.state === "loading" || !!gatewayRestartBusy}
+            >
+              {gatewayRestartBusy ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Restarting gateway…
+                </>
+              ) : (
+                "Restart messaging gateway"
+              )}
+            </Button>
+          </>
         ) : (
           <Button
             variant={status.state === "not-configured" ? "default" : "outline"}

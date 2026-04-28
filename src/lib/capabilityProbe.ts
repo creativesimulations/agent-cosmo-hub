@@ -132,6 +132,15 @@ const EXTRA_IMPORT: Record<string, string> = {
   messaging: "telegram",
 };
 
+/** Hermes WhatsApp env gate — mirrors Channels page logic. */
+const isWhatsAppEnvConfigured = (env: Record<string, string>): boolean => {
+  const enabled = (env.WHATSAPP_ENABLED || "").trim().toLowerCase() === "true";
+  const mode = (env.WHATSAPP_MODE || "").trim();
+  const allow = (env.WHATSAPP_ALLOWED_USERS || "").trim();
+  const allowAll = (env.WHATSAPP_ALLOW_ALL_USERS || "").trim().toLowerCase() === "true";
+  return enabled && ["self-chat", "bot"].includes(mode) && (allow.length > 0 || allowAll);
+};
+
 /**
  * Probe a capability. Returns a precise, user-facing diagnosis.
  */
@@ -210,6 +219,16 @@ export const capabilityProbe = async (
     const fc = ctx.storedSecrets.has("FIRECRAWL_API_KEY");
     hasSecret = bbase || buse || cam || fc;
   }
+  if (capabilityId === "messaging") {
+    let env: Record<string, string> = {};
+    try {
+      env = await systemAPI.readEnvFile();
+    } catch {
+      /* ignore */
+    }
+    const fromEnv = isWhatsAppEnvConfigured(env);
+    hasSecret = hasSecret || fromEnv;
+  }
   if (!hasSecret) {
     const message =
       capabilityId === "webBrowser"
@@ -228,22 +247,37 @@ export const capabilityProbe = async (
   }
 
   // 4. Python extras (best-effort, only checked when an extra is declared).
+  // Hermes WhatsApp uses the Node/Baileys bridge — do not require `telegram` PyPI extra.
   if (cap.extrasPackage) {
-    const importName = EXTRA_IMPORT[cap.extrasPackage];
-    if (importName) {
-      const ok = await checkPythonExtra(importName);
-      if (!ok) {
-        const result: CapabilityProbeResult = {
-          capabilityId,
-          ready: false,
-          reason: "noExtras",
-          message: `Ron is missing the Python extras for ${cap.label.toLowerCase()}.`,
-          installHint: `pip install hermes-agent[${cap.extrasPackage}]`,
-          candidateSkills: cap.candidateSkills,
-          candidateSecrets: cap.candidateSecrets,
-        };
-        cache.set(capabilityId, { at: Date.now(), result });
-        return result;
+    let skipExtras = false;
+    if (capabilityId === "messaging") {
+      try {
+        const env = await systemAPI.readEnvFile();
+        const paired = await systemAPI.isWhatsAppPaired();
+        if (isWhatsAppEnvConfigured(env) && paired.success && paired.paired) {
+          skipExtras = true;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!skipExtras) {
+      const importName = EXTRA_IMPORT[cap.extrasPackage];
+      if (importName) {
+        const ok = await checkPythonExtra(importName);
+        if (!ok) {
+          const result: CapabilityProbeResult = {
+            capabilityId,
+            ready: false,
+            reason: "noExtras",
+            message: `Ron is missing the Python extras for ${cap.label.toLowerCase()}.`,
+            installHint: `pip install hermes-agent[${cap.extrasPackage}]`,
+            candidateSkills: cap.candidateSkills,
+            candidateSecrets: cap.candidateSecrets,
+          };
+          cache.set(capabilityId, { at: Date.now(), result });
+          return result;
+        }
       }
     }
   }
