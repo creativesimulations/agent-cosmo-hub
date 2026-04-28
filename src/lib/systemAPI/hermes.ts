@@ -2126,10 +2126,28 @@ export const hermesAPI = {
         '  else',
         "    script -q /dev/null bash -lc 'hermes whatsapp'",
         '  fi',
+        '  PAIR_RC=$?',
         'else',
         '  echo "[ronbot] script(1) not found — cannot allocate a TTY for Hermes. Install util-linux (Linux) or use macOS /usr/bin/script, then retry." >&2',
         '  exit 1',
         'fi',
+        // After pairing, mirror creds.json into the gateway-preferred path
+        // (~/.hermes/platforms/whatsapp/session) so the running gateway
+        // adapter actually sees the new auth state. Hermes' interactive
+        // `hermes whatsapp` historically writes to ~/.hermes/whatsapp/session.
+        'GATEWAY_DIR="$HOME/.hermes/platforms/whatsapp/session"',
+        'mkdir -p "$GATEWAY_DIR" 2>/dev/null || true',
+        'BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
+        'SRC_FOUND=""',
+        'for d in "$HOME/.hermes/whatsapp/session" "$HOME/.hermes/whatsapp" "$HOME/.hermes/.whatsapp" "$BRIDGE_DIR"/auth_info* "$BRIDGE_DIR"/baileys_auth* "$BRIDGE_DIR"/session*; do',
+        '  [ -d "$d" ] || continue',
+        '  if [ -f "$d/creds.json" ]; then SRC_FOUND="$d"; break; fi',
+        'done',
+        'if [ -n "$SRC_FOUND" ] && [ ! -f "$GATEWAY_DIR/creds.json" ]; then',
+        '  echo "[ronbot] mirroring WhatsApp session from $SRC_FOUND to $GATEWAY_DIR"',
+        '  cp -a "$SRC_FOUND"/. "$GATEWAY_DIR"/ 2>/dev/null || true',
+        'fi',
+        'exit ${PAIR_RC:-0}',
       ].join('\n'),
       streamOpts,
       onOutput,
