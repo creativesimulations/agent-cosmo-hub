@@ -206,6 +206,19 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     [channel.credentials],
   );
 
+  /** WhatsApp skips the generic “get credentials” checklist step (old step 1). */
+  const { waShortWizard, maxStep, totalSteps, credStep, testStep } = useMemo(() => {
+    const wa = channel.id === "whatsapp";
+    const ms = wa ? 2 : 3;
+    return {
+      waShortWizard: wa,
+      maxStep: ms,
+      totalSteps: ms + 1,
+      credStep: wa ? 1 : 2,
+      testStep: wa ? 2 : 3,
+    };
+  }, [channel.id]);
+
   const emitWaDebugLog = useCallback((hypothesisId: string, location: string, message: string, data: Record<string, unknown>) => {
     // #region agent log
     fetch("http://127.0.0.1:7544/ingest/13d5d95c-e042-47dd-9c7b-02723faafae2", {
@@ -458,9 +471,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   }, [channel]);
 
-  /** Step 3: tools for credential tests + WhatsApp pairing prereqs (npm, script) + session */
+  /** Final step: tools for credential tests + WhatsApp pairing prereqs (npm, script) + session */
   useEffect(() => {
-    if (!open || step !== 3) return;
+    if (!open || step !== testStep) return;
     let cancelled = false;
     setSetupToolsChecked(false);
     setSetupToolsOk(false);
@@ -490,7 +503,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     return () => {
       cancelled = true;
     };
-  }, [open, step, channel.id]);
+  }, [open, step, channel.id, testStep]);
 
   useEffect(() => {
     waLogEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -507,7 +520,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   }, [open]);
 
   useEffect(() => {
-    if (!open || step !== 3 || testing) return;
+    if (!open || step !== testStep || testing) return;
     if (!setupToolsChecked || !setupToolsOk) return;
     if (channel.id === "whatsapp") {
       if (!waPairedChecked) return;
@@ -529,6 +542,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     testResult,
     testing,
     runTest,
+    testStep,
   ]);
 
   const startWaPairing = async (resetSessionFirst: boolean) => {
@@ -799,7 +813,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   };
 
   useEffect(() => {
-    if (!open || step !== 3 || channel.id !== "whatsapp" || !waPairingActive) return;
+    if (!open || step !== testStep || channel.id !== "whatsapp" || !waPairingActive) return;
     const timer = window.setInterval(() => {
       void (async () => {
         const paired = await systemAPI.isWhatsAppPaired();
@@ -874,7 +888,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     return () => {
       window.clearInterval(timer);
     };
-  }, [open, step, channel.id, channel.name, waPairingActive, runTest, onClose, onComplete]);
+  }, [open, step, channel.id, channel.name, waPairingActive, runTest, onClose, onComplete, testStep]);
 
   useEffect(() => {
     if (!waPairingActive) return;
@@ -1078,11 +1092,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   };
 
   const next = async () => {
-    if (step === 2) {
+    if (step === credStep) {
       const ok = await saveCredentials();
       if (!ok) return;
     }
-    setStep((s) => Math.min(3, s + 1) as Step);
+    setStep((s) => Math.min(maxStep, s + 1) as Step);
   };
   const back = () => setStep((s) => Math.max(0, s - 1) as Step);
 
@@ -1096,7 +1110,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         <DialogHeader>
           <DialogTitle>Set up {channel.name}</DialogTitle>
           <DialogDescription>
-            Step {step + 1} of 4 · {channel.difficulty} setup
+            Step {step + 1} of {totalSteps} · {channel.difficulty} setup
           </DialogDescription>
         </DialogHeader>
 
@@ -1112,7 +1126,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
         {/* Progress bar */}
         <div className="flex gap-1.5 mb-2">
-          {[0, 1, 2, 3].map((i) => (
+          {Array.from({ length: totalSteps }, (_, i) => i).map((i) => (
             <div
               key={i}
               className={`h-1 flex-1 rounded-full transition-colors ${i <= step ? "bg-primary" : "bg-muted"}`}
@@ -1121,7 +1135,35 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         </div>
 
         {/* Step 0 — what this does */}
-        {step === 0 && (
+        {step === 0 && channel.id === "whatsapp" && (
+          <div className="space-y-3 py-2">
+            <h3 className="text-sm font-semibold text-foreground">Connect WhatsApp to your agent</h3>
+            <p className="text-sm text-muted-foreground">{channel.tagline}</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Hermes links WhatsApp through the official <code className="text-xs font-mono">hermes whatsapp</code>{" "}
+              flow inside the same environment as your agent (on Windows, that is your WSL Linux distro). Ronbot runs
+              pairing here with a live QR — no terminal.
+            </p>
+            <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1.5 pl-0.5">
+              <li>A phone with WhatsApp installed and camera access for “Link a device”.</li>
+              <li>On the next step you choose self-chat vs a dedicated number, then who may message the agent.</li>
+              <li>After that, you scan one QR code; Ronbot saves the session and can start the messaging gateway.</li>
+            </ul>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() =>
+                openExternal("https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp/")
+              }
+            >
+              <ExternalLink className="w-3 h-3 mr-1.5" /> Hermes WhatsApp documentation
+            </Button>
+          </div>
+        )}
+
+        {step === 0 && channel.id !== "whatsapp" && (
           <div className="space-y-3 py-2">
             <h3 className="text-sm font-semibold text-foreground">What you're about to enable</h3>
             <p className="text-sm text-muted-foreground">{channel.tagline}</p>
@@ -1140,8 +1182,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           </div>
         )}
 
-        {/* Step 1 — get credentials */}
-        {step === 1 && (
+        {/* Step 1 — get credentials (non–WhatsApp only) */}
+        {!waShortWizard && step === 1 && (
           <div className="space-y-4 py-2">
             <h3 className="text-sm font-semibold text-foreground">Get your credentials</h3>
             <ol className="space-y-3">
@@ -1172,13 +1214,29 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           </div>
         )}
 
-        {/* Step 2 — paste credentials */}
-        {step === 2 && (
+        {/* Credentials step (WhatsApp: step 1; other channels: step 2) */}
+        {step === credStep && (
           <div className="space-y-3 py-2">
-            <h3 className="text-sm font-semibold text-foreground">Paste your credentials</h3>
-            <p className="text-xs text-muted-foreground">
-              These are stored in your OS keychain — never in plain text.
-            </p>
+            <h3 className="text-sm font-semibold text-foreground">
+              {channel.id === "whatsapp" ? "WhatsApp settings" : "Paste your credentials"}
+            </h3>
+            {channel.id === "whatsapp" ? (
+              <div className="space-y-2 text-xs text-muted-foreground leading-relaxed">
+                <p>
+                  These values are written to your OS keychain and mirrored into{" "}
+                  <code className="font-mono text-[11px]">~/.hermes/.env</code> when you continue, so the messaging
+                  gateway can enforce access control.
+                </p>
+                <p>
+                  <strong className="text-foreground">Next step:</strong> QR pairing in Ronbot. If you change mode or
+                  allowed numbers later, you may need to relink WhatsApp when Ronbot asks.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                These are stored in your OS keychain — never in plain text.
+              </p>
+            )}
             {hadExistingConfig && (
               <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
                 <div className="flex items-start gap-2">
@@ -1277,8 +1335,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           </div>
         )}
 
-        {/* Step 3 — test & enable */}
-        {step === 3 && (
+        {/* Test & enable (WhatsApp: step 2; other channels: step 3) */}
+        {step === testStep && (
           <div className="space-y-4 py-2">
             <h3 className="text-sm font-semibold text-foreground">Test &amp; enable</h3>
             <p className="text-sm text-muted-foreground">{channel.testHint}</p>
@@ -1306,7 +1364,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               </div>
             )}
 
-            {step === 3 &&
+            {step === testStep &&
               setupToolsChecked &&
               setupToolsOk &&
               channel.id !== "whatsapp" &&
@@ -1333,7 +1391,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 </div>
               )}
 
-            {step === 3 && setupToolsChecked && !setupToolsOk && (
+            {step === testStep && setupToolsChecked && !setupToolsOk && (
               <ActionableError
                 title="A system tool is missing for the connection test"
                 summary={
@@ -1612,15 +1670,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
         <DialogFooter className="gap-2 sm:gap-2">
           {step > 0 && (
-            <Button variant="ghost" onClick={back} disabled={saving || (channel.id === "whatsapp" && step === 3 && waPairingActive)}>
+            <Button variant="ghost" onClick={back} disabled={saving || (channel.id === "whatsapp" && step === testStep && waPairingActive)}>
               <ArrowLeft className="w-4 h-4 mr-1" /> Back
             </Button>
           )}
           <div className="flex-1" />
-          {step < 3 ? (
+          {step < maxStep ? (
             <Button
               onClick={next}
-              disabled={saving || (step === 2 && !requiredFilled)}
+              disabled={saving || (step === credStep && !requiredFilled)}
               className="gradient-primary text-primary-foreground"
             >
               {saving ? (

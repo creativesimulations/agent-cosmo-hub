@@ -213,30 +213,9 @@ export const CHANNELS: Channel[] = [
     tier: 'free',
     icon: Phone,
     difficulty: 'Medium',
-    setupSteps: [
-      {
-        title: 'Ronbot prepares WhatsApp runtime dependencies',
-        body: "Ronbot prepares a managed Node runtime for WhatsApp bridge dependencies before pairing, so you do not need to manually install npm for this flow. On Windows, it runs in the same WSL/Linux environment Hermes uses.",
-        link: { label: 'Hermes WhatsApp docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp/' },
-      },
-      {
-        title: 'Pick a phone number',
-        body: "Two options: dedicate a separate phone number to the bot (recommended — cleanest UX, lower ban risk), or use your personal WhatsApp and message yourself. A second SIM, Google Voice, or a prepaid number all work.",
-      },
-      {
-        title: 'Link WhatsApp on the next screen',
-        body: "On the last step, Ronbot runs Hermes WhatsApp pairing here in the app. It allocates a PTY so Hermes can render the QR code properly, then saves the linked session. If you relink later, Ronbot warns you first and then replaces the current local session with a fresh one.",
-        link: { label: 'Hermes WhatsApp docs', url: 'https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp/' },
-      },
-      {
-        title: 'Scan the QR code from your phone',
-        body: "When the QR appears in Ronbot's terminal-style viewer, open WhatsApp on your phone → Settings → Linked Devices → Link a Device, and scan it. Ronbot preserves terminal cell geometry so the QR stays aligned and scannable, then continues automatically when linking completes. If you relink later, Ronbot warns first and replaces the current local session before generating a fresh QR.",
-      },
-      {
-        title: 'Pick the allowed phone numbers',
-        body: "Enter the phone numbers (with country code, no `+` or spaces) that are allowed to message the bot — usually just yours. Use `*` to allow everyone (not recommended).",
-      },
-    ],
+    // Wizard no longer shows a separate “setup checklist” step for WhatsApp;
+    // intro + Hermes docs link live in ChannelWizard. Keep empty for type consistency.
+    setupSteps: [],
     credentials: [
       {
         envVar: 'WHATSAPP_ENABLED',
@@ -247,27 +226,29 @@ export const CHANNELS: Channel[] = [
       },
       {
         envVar: 'WHATSAPP_MODE',
-        label: 'Mode',
-        hint: 'Pick how the bot uses WhatsApp.',
+        label: 'How this WhatsApp number is used',
+        hint: 'Must match the phone number you will link in the next step.',
         kind: 'choice',
         defaultValue: 'self-chat',
         choices: [
           {
             value: 'self-chat',
-            label: 'Self-chat (default)',
-            description: 'Use your own WhatsApp account and message yourself.',
+            label: 'Personal number (self-chat)',
+            description:
+              'You link your own WhatsApp. You usually chat with yourself in WhatsApp to talk to the agent. Simplest for solo use.',
           },
           {
             value: 'bot',
-            label: 'Bot',
-            description: 'Use a dedicated bot phone number — recommended for shared use.',
+            label: 'Dedicated number (bot)',
+            description:
+              'A separate phone/SIM used only for the agent. Better if others will message this number. Same Hermes flow; you still scan a QR once.',
           },
         ],
       },
       {
         envVar: 'WHATSAPP_ALLOWED_USERS',
-        label: 'Allowed phone numbers',
-        hint: 'e.g. 15551234567 (country code, no +). Comma-separated. Or `*` for all.',
+        label: 'Who may message the agent',
+        hint: 'E.164 digits only, no + or spaces (e.g. 15551234567). Comma-separated. Use * only if you accept anyone (not recommended).',
         inputType: 'text',
       },
     ],
