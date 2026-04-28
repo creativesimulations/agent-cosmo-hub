@@ -2172,9 +2172,18 @@ export const hermesAPI = {
   },
 
   /**
-   * Stream `hermes whatsapp` (QR + logs) for in-app pairing. Uses `timeout: 0`
-   * so the child is not killed while the user scans. Call `killStream` from
-   * the UI if the user cancels.
+   * Run WhatsApp pairing in the official Baileys bridge `--pair-only` mode.
+   *
+   * Why bridge.js --pair-only instead of `hermes whatsapp`:
+   *  - It prints the QR straight to stdout (qrcode-terminal), so the renderer
+   *    sees the QR within seconds without a PTY/script dance.
+   *  - It writes credentials to the canonical `~/.hermes/platforms/whatsapp/session`
+   *    directory the gateway-managed bridge will reuse — no path mismatch.
+   *  - It exits cleanly after pairing succeeds, so the wizard doesn't have
+   *    to babysit an interactive prompt forest.
+   *
+   * Falls back to `hermes whatsapp` only when bridge.js is unavailable.
+   * Uses `timeout: 0` so the child is not killed while the user scans.
    */
   async runWhatsAppPairing(
     onOutput?: CommandOutputHandler,
@@ -2196,21 +2205,61 @@ export const hermesAPI = {
       };
     }
     const streamOpts = { ...(options ?? {}), timeout: 0 };
-    // Hermes refuses a non-TTY. Export PATH in this shell, then run `hermes whatsapp`
-    // inside script(1) so it sees a pseudo-terminal (GNU + BSD/macOS).
     return runHermesShell(
       [
         'set +e',
         HERMES_PATH_EXPORT,
         getHermesNodeEnvExport(),
-        // Clean up orphaned interactive sessions from previous attempts.
+        // Surface QR cleanly without ANSI/TTY weirdness.
+        'export TERM="xterm-256color"',
+        'export FORCE_COLOR=1',
+        'export COLUMNS=120 LINES=40',
+        // Make sure WHATSAPP_MODE/ALLOWED_USERS/DEBUG from .env are visible
+        // to the bridge subprocess so QR + access control match what the
+        // user picked in the wizard.
+        'if [ -f "$HOME/.hermes/.env" ]; then',
+        '  set -a',
+        '  # shellcheck disable=SC1091',
+        '  . "$HOME/.hermes/.env"',
+        '  set +a',
+        'fi',
+        ': "${WHATSAPP_MODE:=self-chat}"',
+        'export WHATSAPP_MODE',
+        'export WHATSAPP_DEBUG="${WHATSAPP_DEBUG:-true}"',
+        // Sweep stale pair attempts. We deliberately do NOT kill a healthy
+        // gateway-managed bridge (it runs without --pair-only).
         'pkill -f "script -q -e -c hermes whatsapp" >/dev/null 2>&1 || true',
         'pkill -f "script -q /dev/null bash -lc hermes whatsapp" >/dev/null 2>&1 || true',
         'pkill -f "hermes whatsapp" >/dev/null 2>&1 || true',
+        'pkill -f "whatsapp-bridge/bridge.js --pair-only" >/dev/null 2>&1 || true',
+        // Canonical session directory used by the gateway adapter.
+        'SESSION_DIR="$HOME/.hermes/platforms/whatsapp/session"',
+        'mkdir -p "$SESSION_DIR"',
+        'BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
+        'BRIDGE_JS="$BRIDGE_DIR/bridge.js"',
+        'NODE_BIN="$NODE_RUNTIME_HOME/bin/node"',
+        '[ -x "$NODE_BIN" ] || NODE_BIN="$(command -v node 2>/dev/null || true)"',
+        'if [ -f "$BRIDGE_JS" ] && [ -n "$NODE_BIN" ] && [ -x "$NODE_BIN" ]; then',
+        '  echo "[ronbot] Starting Hermes WhatsApp bridge in pair-only mode"',
+        '  echo "[ronbot] Session: $SESSION_DIR"',
+        '  echo "[ronbot] Mode:    $WHATSAPP_MODE"',
+        '  cd "$BRIDGE_DIR" || exit 1',
+        '  "$NODE_BIN" "$BRIDGE_JS" --pair-only --session "$SESSION_DIR" --mode "$WHATSAPP_MODE" 2>&1',
+        '  PAIR_RC=$?',
+        '  # Mirror credentials into the canonical path if the bridge wrote them',
+        '  # to the legacy ~/.hermes/whatsapp/session directory for any reason.',
+        '  if [ ! -f "$SESSION_DIR/creds.json" ] && [ -f "$HOME/.hermes/whatsapp/session/creds.json" ]; then',
+        '    echo "[ronbot] Mirroring legacy session into canonical path"',
+        '    mkdir -p "$SESSION_DIR"',
+        '    cp -R "$HOME/.hermes/whatsapp/session/." "$SESSION_DIR/" 2>/dev/null || true',
+        '  fi',
+        '  exit ${PAIR_RC:-0}',
+        'fi',
+        // Fallback path: legacy `hermes whatsapp` flow (requires PTY).
+        'echo "[ronbot] bridge.js not found — falling back to legacy hermes whatsapp flow" >&2',
         'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
         'if command -v script >/dev/null 2>&1; then',
         '  if script --version 2>&1 | grep -qF util-linux; then',
-        // `-f` flushes output continuously; without it, QR output can stay buffered.
         "    script -q -e -f -c 'hermes whatsapp' /dev/null",
         '  else',
         "    script -q -f /dev/null bash -lc 'hermes whatsapp'",
@@ -2220,7 +2269,6 @@ export const hermesAPI = {
         '  echo "[ronbot] script(1) not found — cannot allocate a TTY for Hermes. Install util-linux (Linux) or use macOS /usr/bin/script, then retry." >&2',
         '  exit 1',
         'fi',
-        // Hermes stores the Baileys session under ~/.hermes/platforms/whatsapp/session (official docs).
         'exit ${PAIR_RC:-0}',
       ].join('\n'),
       streamOpts,
