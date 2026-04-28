@@ -1580,7 +1580,9 @@ export const hermesAPI = {
         'echo "PROC_OK=$PROC_OK"',
         // 2) bridge log markers — Baileys writes "open" / "Connected" once linked
         'BRIDGE_LOG=""',
-        'for f in "$HOME/.hermes/logs/bridge.log" "$HOME/.hermes/logs/whatsapp-bridge.log" "$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log" "$HOME/.hermes/platforms/whatsapp/bridge.log"; do',
+        // Prefer WhatsApp-specific logs first; generic bridge.log often contains
+        // unrelated Slack/Email noise that can hide a healthy WhatsApp session.
+        'for f in "$HOME/.hermes/logs/whatsapp-bridge.log" "$HOME/.hermes/platforms/whatsapp/bridge.log" "$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log" "$HOME/.hermes/logs/bridge.log"; do',
         '  [ -f "$f" ] || continue',
         '  BRIDGE_LOG="$f"',
         '  break',
@@ -1588,8 +1590,8 @@ export const hermesAPI = {
         'BRIDGE_TAIL=""',
         'WA_OK=0',
         'if [ -n "$BRIDGE_LOG" ]; then',
-        '  BRIDGE_TAIL="$(tail -n 50 "$BRIDGE_LOG" 2>/dev/null || true)"',
-        '  if printf "%s" "$BRIDGE_TAIL" | grep -E -i "(connection.*open|connected to whatsapp|ws connection open|baileys.*ready|whatsapp.*ready)" >/dev/null 2>&1; then',
+        '  BRIDGE_TAIL="$(tail -n 200 "$BRIDGE_LOG" 2>/dev/null || true)"',
+        '  if printf "%s" "$BRIDGE_TAIL" | grep -E -i "(connection.*open|connected to whatsapp|ws connection open|baileys.*ready|whatsapp.*ready|whatsapp.*connected|whatsapp.*active|session.*restored|auth.*ok)" >/dev/null 2>&1; then',
         '    WA_OK=1',
         '  fi',
         'fi',

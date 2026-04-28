@@ -640,28 +640,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         setWaPairingPhase("idle");
         return;
       }
-      const pathProbe = await systemAPI.runCommand(
-        [
-          "set +e",
-          "for d in \"$HOME/.hermes/platforms/whatsapp\" \"$HOME/.hermes/platforms/whatsapp/session\" \"$HOME/.hermes/whatsapp\" \"$HOME/.hermes/.whatsapp\" \"$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge\" \"$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/auth_info_baileys\"; do",
-          "  if [ -d \"$d\" ]; then",
-          "    c=\"$(ls -A \"$d\" 2>/dev/null | wc -l | tr -d ' ')\"",
-          "    echo \"$d=$c\"",
-          "  else",
-          "    echo \"$d=NA\"",
-          "  fi",
-          "done",
-          "exit 0",
-        ].join('\n'),
-        { timeout: 10000 },
-      );
-      // #region agent log
-      emitWaDebugLog("H10", "ChannelWizard.tsx:startWaPairing:pathProbe", "whatsapp session path probe", {
-        success: pathProbe.success,
-        stdout: (pathProbe.stdout || "").slice(0, 1200),
-        stderr: (pathProbe.stderr || "").slice(0, 400),
-      });
-      // #endregion
       if (!resetSessionFirst && sessionState.count > 0) {
         setWaRelinkRequested(true);
         setWaAwaitingResetConfirm(true);
@@ -870,6 +848,19 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             onClose();
             return;
           }
+          // Hermes can take longer to emit "ready" markers even when pairing
+          // already succeeded. If session files exist and gateway is running,
+          // accept enable and show a softer warning.
+          const pairedNow = await systemAPI.isWhatsAppPaired();
+          if (lastHealth?.running && pairedNow.success && pairedNow.paired) {
+            setFormError("");
+            toast.success(`${channel.name} channel enabled`, {
+              description: "WhatsApp is paired and gateway is running. Bridge readiness logs may appear with delay.",
+            });
+            onComplete();
+            onClose();
+            return;
+          }
           // Gateway started but WhatsApp bridge isn't confirmed connected.
           const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
           const detail = tail
@@ -944,6 +935,16 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         await new Promise((res) => setTimeout(res, 2500));
       }
       if (!lastHealth?.running || !lastHealth.whatsappActive) {
+        const pairedNow = await systemAPI.isWhatsAppPaired();
+        if (lastHealth?.running && pairedNow.success && pairedNow.paired) {
+          setFormError("");
+          toast.success(`${channel.name} channel enabled`, {
+            description: "WhatsApp is paired and gateway is running. Bridge readiness logs may appear with delay.",
+          });
+          onComplete();
+          onClose();
+          return;
+        }
         const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
         const detail = tail
           ? `Gateway is running but WhatsApp bridge didn't confirm a connection within 30s. Last bridge output:\n${tail.split("\n").slice(-6).join("\n")}`
