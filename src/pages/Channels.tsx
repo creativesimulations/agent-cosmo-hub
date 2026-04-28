@@ -179,10 +179,16 @@ const ChannelsPage = () => {
       }
       const configured = isChannelConfigured(channel, env, whatsappPaired);
       if (!configured) {
+        pollStartRef.current.delete(channel.id);
         next[channel.id] = { state: "not-configured" };
       } else {
         const running = runningChannels.includes(channel.id);
-        const starting = !running && pollStartRef.current.has(channel.id);
+        const startedAt = pollStartRef.current.get(channel.id);
+        const withinGrace = !!startedAt && Date.now() - startedAt < 30000;
+        if (running || !withinGrace) {
+          pollStartRef.current.delete(channel.id);
+        }
+        const starting = !running && withinGrace;
         const attentionReason = channel.id === "whatsapp" ? waAttention : undefined;
         next[channel.id] = { state: "configured", running, starting, attentionReason };
       }
