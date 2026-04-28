@@ -1311,6 +1311,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         className={
           channel.id === "whatsapp" ? "w-[94vw] max-w-5xl max-h-[88vh] overflow-y-auto" : "max-w-xl max-h-[85vh] overflow-y-auto"
         }
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
       >
         <DialogHeader>
           <DialogTitle>Set up {channel.name}</DialogTitle>

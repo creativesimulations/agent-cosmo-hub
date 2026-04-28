@@ -26,7 +26,8 @@ const WhatsAppTerminal = ({ content, resetKey, className, onReadyChange }: Whats
       cursorBlink: false,
       disableStdin: true,
       fontFamily: '"JetBrains Mono", "Cascadia Mono", "Consolas", "Menlo", monospace',
-      fontSize: 12,
+      // Smaller glyphs make dense QR blocks easier to fit/scannably render.
+      fontSize: 6,
       lineHeight: 1,
       letterSpacing: 0,
       rows: 30,
@@ -75,14 +76,12 @@ const WhatsAppTerminal = ({ content, resetKey, className, onReadyChange }: Whats
       term.reset();
       term.write(content);
       renderedLenRef.current = content.length;
-      fitRef.current?.fit();
       return;
     }
     const nextChunk = content.slice(renderedLenRef.current);
     if (!nextChunk) return;
     term.write(nextChunk);
     renderedLenRef.current = content.length;
-    fitRef.current?.fit();
   }, [content]);
 
   useEffect(() => {
@@ -94,7 +93,6 @@ const WhatsAppTerminal = ({ content, resetKey, className, onReadyChange }: Whats
     term.reset();
     term.write(trimmed);
     renderedLenRef.current = trimmed.length;
-    fitRef.current?.fit();
   }, [content]);
 
   return (
