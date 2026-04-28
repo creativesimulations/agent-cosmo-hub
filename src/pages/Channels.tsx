@@ -206,6 +206,27 @@ const ChannelsPage = () => {
     void refresh();
   }, [refresh]);
 
+  // Re-poll while any channel is in its post-setup grace window so the card
+  // converges from "Starting…" → "Active" without waiting for a manual reload.
+  useEffect(() => {
+    const anyStarting = Object.values(statuses).some(
+      (s) => s.state === "configured" && s.starting,
+    );
+    if (!anyStarting) return;
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [statuses, refresh]);
+
+  const handleWizardComplete = useCallback(
+    (channelId: string) => {
+      pollStartRef.current.set(channelId, Date.now());
+      void refresh();
+    },
+    [refresh],
+  );
+
   const handleSetUp = (channel: Channel) => {
     if (channel.tier === "paid" && !unlocks[channel.upgradeId!]) {
       toast.info(`${channel.name} requires the ${channel.name} upgrade`, {
