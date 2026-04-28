@@ -143,12 +143,14 @@ const ChannelsPage = () => {
     // Hermes gateway status output can be inconsistent across versions.
     // For WhatsApp specifically, use dedicated health checks so we only
     // report "running" when the bridge is truly connected.
+    let waAttention: string | undefined;
     if (configuredChannels.includes("whatsapp")) {
       const waHealth = await systemAPI.getWhatsAppGatewayHealth();
       emitChannelsDebugLog("C5", "Channels.tsx:refresh:waHealth", "whatsapp bridge health", {
         success: waHealth.success,
         running: waHealth.running,
         whatsappActive: waHealth.whatsappActive,
+        source: waHealth.source,
       });
       const waRunning = !!(waHealth.success && waHealth.running && waHealth.whatsappActive);
       if (waRunning && !runningChannels.includes("whatsapp")) {
@@ -156,6 +158,12 @@ const ChannelsPage = () => {
       }
       if (!waRunning && runningChannels.includes("whatsapp")) {
         runningChannels = runningChannels.filter((id) => id !== "whatsapp");
+      }
+      if (!waRunning) {
+        const tail = (waHealth.bridgeLogTail || waHealth.statusOutput || "").split("\n").slice(-4).join("\n").trim();
+        waAttention = waHealth.running
+          ? `Gateway is running but the WhatsApp bridge isn't connected (source=${waHealth.source}). ${tail ? "Last log: " + tail : "Reconfigure to re-pair."}`
+          : "Messaging gateway isn't running. Open the wizard to restart it.";
       }
     }
 
@@ -169,7 +177,10 @@ const ChannelsPage = () => {
       if (!configured) {
         next[channel.id] = { state: "not-configured" };
       } else {
-        next[channel.id] = { state: "configured", running: runningChannels.includes(channel.id) };
+        const running = runningChannels.includes(channel.id);
+        const starting = !running && pollStartRef.current.has(channel.id);
+        const attentionReason = channel.id === "whatsapp" ? waAttention : undefined;
+        next[channel.id] = { state: "configured", running, starting, attentionReason };
       }
     }
     // #region agent log
