@@ -1636,11 +1636,11 @@ export const hermesAPI = {
         'WA_FILES="$HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log $HOME/.hermes/logs/bridge.log $HOME/.hermes/logs/gateway.log"',
         'for f in $WA_FILES; do',
         '  [ -f "$f" ] || continue',
-        '  chunk="$(tail -n 50 "$f" 2>/dev/null || true)"',
+        '  chunk="$(tail -n 120 "$f" 2>/dev/null || true)"',
         '  BRIDGE_TAIL="$BRIDGE_TAIL\n--- $f ---\n$chunk"',
         'done',
         'if [ "$WA_OK" -eq 0 ] && [ -n "$BRIDGE_TAIL" ]; then',
-        '  if printf "%s" "$BRIDGE_TAIL" | grep -E -i "(connection.*open|connected to whatsapp|whatsapp.*connected|whatsapp.*ready|baileys.*ready|gateway\\.platforms\\.whatsapp.*connected)" >/dev/null 2>&1; then',
+        '  if printf "%s" "$BRIDGE_TAIL" | grep -E -i "(connection.*open|connected to whatsapp|whatsapp.*(connected|ready|online)|baileys|@whiskeysockets|logged in|authenticated|pairing.*success|gateway\\.platforms\\.whatsapp)" >/dev/null 2>&1; then',
         '    WA_OK=1; WA_SOURCE="log_tail"',
         '  fi',
         'fi',
@@ -1689,6 +1689,36 @@ export const hermesAPI = {
       gatewayStateJson,
       error: r.success ? undefined : (r.stderr || '').split('\n')[0] || undefined,
     };
+  },
+
+  /**
+   * Runtime WhatsApp bridge status (`hermes gateway status` + gateway_state +
+   * bridge logs). Same implementation as {@link getWhatsAppGatewayHealth}.
+   */
+  async getWhatsAppBridgeStatus() {
+    return this.getWhatsAppGatewayHealth();
+  },
+
+  /** Last lines of official bridge logs (~/.hermes/platforms/whatsapp/bridge.log, etc.). */
+  async readWhatsAppBridgeLogTail(maxLines = 120): Promise<{ success: boolean; content: string; error?: string }> {
+    const n = Math.min(400, Math.max(20, Math.floor(maxLines)));
+    const r = await runHermesShell(
+      [
+        'set +e',
+        'OUT=""',
+        'WA_FILES="$HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log $HOME/.hermes/logs/bridge.log $HOME/.hermes/logs/gateway.log"',
+        'for f in $WA_FILES; do',
+        '  [ -f "$f" ] || continue',
+        '  chunk="$(tail -n ' + String(n) + ' "$f" 2>/dev/null || true)"',
+        '  OUT="$OUT\n--- $f ---\n$chunk"',
+        'done',
+        'printf "%s" "$OUT"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 15000 },
+    );
+    const content = [r.stdout, r.stderr].filter(Boolean).join('\n').trim();
+    return { success: r.success, content: content || '(no bridge log files found yet)', error: r.success ? undefined : r.stderr };
   },
 
   /** Stop the messaging gateway */
@@ -2097,6 +2127,7 @@ export const hermesAPI = {
       'WHATSAPP_MODE',
       'WHATSAPP_ALLOWED_USERS',
       'WHATSAPP_ALLOW_ALL_USERS',
+      'WHATSAPP_DEBUG',
     ] as const;
     agentLogs.push({ source: 'system', level: 'info', summary: 'Resetting WhatsApp channel…' });
     await this.stopGateway().catch(() => undefined);
@@ -2160,22 +2191,7 @@ export const hermesAPI = {
         '  echo "[ronbot] script(1) not found — cannot allocate a TTY for Hermes. Install util-linux (Linux) or use macOS /usr/bin/script, then retry." >&2',
         '  exit 1',
         'fi',
-        // After pairing, mirror creds.json into the gateway-preferred path
-        // (~/.hermes/platforms/whatsapp/session) so the running gateway
-        // adapter actually sees the new auth state. Hermes' interactive
-        // `hermes whatsapp` historically writes to ~/.hermes/whatsapp/session.
-        'GATEWAY_DIR="$HOME/.hermes/platforms/whatsapp/session"',
-        'mkdir -p "$GATEWAY_DIR" 2>/dev/null || true',
-        'BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
-        'SRC_FOUND=""',
-        'for d in "$HOME/.hermes/whatsapp/session" "$HOME/.hermes/whatsapp" "$HOME/.hermes/.whatsapp" "$BRIDGE_DIR"/auth_info* "$BRIDGE_DIR"/baileys_auth* "$BRIDGE_DIR"/session*; do',
-        '  [ -d "$d" ] || continue',
-        '  if [ -f "$d/creds.json" ]; then SRC_FOUND="$d"; break; fi',
-        'done',
-        'if [ -n "$SRC_FOUND" ] && [ ! -f "$GATEWAY_DIR/creds.json" ]; then',
-        '  echo "[ronbot] mirroring WhatsApp session from $SRC_FOUND to $GATEWAY_DIR"',
-        '  cp -a "$SRC_FOUND"/. "$GATEWAY_DIR"/ 2>/dev/null || true',
-        'fi',
+        // Hermes stores the Baileys session under ~/.hermes/platforms/whatsapp/session (official docs).
         'exit ${PAIR_RC:-0}',
       ].join('\n'),
       streamOpts,

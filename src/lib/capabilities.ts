@@ -184,6 +184,7 @@ export const BUILTIN_CAPABILITIES: CapabilityDefinition[] = [
       "DISCORD_BOT_TOKEN",
       "SLACK_BOT_TOKEN",
       "WHATSAPP_ALLOWED_USERS",
+      "WHATSAPP_ALLOW_ALL_USERS",
       "WHATSAPP_MODE",
       "WHATSAPP_ENABLED",
     ],
@@ -359,6 +360,7 @@ export const assessReadiness = (
   if (cap.id === "messaging" && hasSecret) {
     const whatsappSecrets =
       storedSecretKeys.includes("WHATSAPP_ALLOWED_USERS") ||
+      storedSecretKeys.includes("WHATSAPP_ALLOW_ALL_USERS") ||
       storedSecretKeys.includes("WHATSAPP_MODE") ||
       storedSecretKeys.includes("WHATSAPP_ENABLED");
     if (whatsappSecrets && !hasSkill) {

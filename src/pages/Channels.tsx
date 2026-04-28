@@ -80,7 +80,8 @@ const ChannelsPage = () => {
   const isChannelConfigured = (
     channel: Channel,
     env: Record<string, string>,
-    whatsappPaired: boolean,
+    /** Session file present and/or live Baileys bridge (Hermes runtime). */
+    whatsappSessionReady: boolean,
   ): boolean => {
     switch (channel.id) {
       case "slack":
@@ -94,7 +95,7 @@ const ChannelsPage = () => {
           (env.WHATSAPP_ENABLED || "").trim().toLowerCase() === "true" &&
           ["self-chat", "bot"].includes((env.WHATSAPP_MODE || "").trim()) &&
           isWhatsAppAccessConfigured(env) &&
-          whatsappPaired
+          whatsappSessionReady
         );
       default: {
         const required = channel.credentials.filter((c) => !c.optional);
@@ -123,7 +124,17 @@ const ChannelsPage = () => {
     //    readEnvFile() returns a parsed Record<string, string>.
     const env = await systemAPI.readEnvFile();
     const waPairState = await systemAPI.isWhatsAppPaired();
-    const whatsappPaired = !!(waPairState.success && waPairState.paired);
+    const filePaired = !!(waPairState.success && waPairState.paired);
+    let bridgeLive = false;
+    if (
+      (env.WHATSAPP_ENABLED || "").trim().toLowerCase() === "true" &&
+      ["self-chat", "bot"].includes((env.WHATSAPP_MODE || "").trim()) &&
+      isWhatsAppAccessConfigured(env)
+    ) {
+      const br = await systemAPI.getWhatsAppBridgeStatus();
+      bridgeLive = !!(br.success && br.running && br.whatsappActive);
+    }
+    const whatsappSessionReady = filePaired || bridgeLive;
     // #region agent log
     emitChannelsDebugLog("C1", "Channels.tsx:refresh:env", "env-derived channel config keys", {
       hasWhatsappEnabled: !!(env.WHATSAPP_ENABLED && env.WHATSAPP_ENABLED.trim().length > 0),
@@ -138,7 +149,7 @@ const ChannelsPage = () => {
 
     const configuredChannels = CHANNELS.filter((channel) => {
       if (channel.tier === "paid" && !unlockMap[channel.upgradeId!]) return false;
-      return isChannelConfigured(channel, env, whatsappPaired);
+      return isChannelConfigured(channel, env, whatsappSessionReady);
     }).map((c) => c.id);
     // #region agent log
     emitChannelsDebugLog("C2", "Channels.tsx:refresh:configuredChannels", "configured channels derived from env", {
@@ -197,7 +208,7 @@ const ChannelsPage = () => {
         next[channel.id] = { state: "locked" };
         continue;
       }
-      const configured = isChannelConfigured(channel, env, whatsappPaired);
+      const configured = isChannelConfigured(channel, env, whatsappSessionReady);
       if (!configured) {
         pollStartRef.current.delete(channel.id);
         next[channel.id] = { state: "not-configured" };
@@ -251,7 +262,9 @@ const ChannelsPage = () => {
   const handleRestartGateway = useCallback(async () => {
     setGatewayRestartBusy(true);
     try {
+      await systemAPI.materializeEnv().catch(() => undefined);
       await systemAPI.stopGateway().catch(() => undefined);
+      await systemAPI.materializeEnv().catch(() => undefined);
       await systemAPI.refreshGatewayInstall().catch(() => undefined);
       const r = await systemAPI.startGateway();
       if (!r.success) {

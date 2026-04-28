@@ -143,6 +143,7 @@ const TOOL_PATTERNS: PatternDef[] = [
       "DISCORD_BOT_TOKEN",
       "SLACK_BOT_TOKEN",
       "WHATSAPP_ALLOWED_USERS",
+      "WHATSAPP_ALLOW_ALL_USERS",
       "WHATSAPP_MODE",
       "WHATSAPP_ENABLED",
     ],

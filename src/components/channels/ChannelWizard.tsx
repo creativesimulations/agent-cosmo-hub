@@ -10,7 +10,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle, RotateCcw, Trash2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle, RotateCcw, Trash2, ScrollText } from "lucide-react";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
 import type { Channel } from "@/lib/channels";
@@ -42,6 +43,9 @@ const normalizeAllowedUsers = (value: string): string =>
     .filter(Boolean)
     .sort()
     .join(",");
+
+/** E.164: country code first, 7–15 digits total, no +. */
+const E164_PHONE_ONLY = /^[1-9]\d{6,14}$/;
 
 const stripAnsiLike = (value: string): string => {
   const ESC = String.fromCharCode(27);
@@ -142,10 +146,20 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   /** Stale-session escape hatch for WhatsApp: surface "Force fresh QR pairing". */
   const [waStaleSessionDetected, setWaStaleSessionDetected] = useState(false);
   const [waForceFreshBusy, setWaForceFreshBusy] = useState(false);
+  const [waRePairRestartBusy, setWaRePairRestartBusy] = useState(false);
+  /** Open testing = WHATSAPP_ALLOWED_USERS=* (Hermes docs). Default on for novices. */
+  const [waOpenTesting, setWaOpenTesting] = useState(true);
+  /** If false, WHATSAPP_DEBUG is cleared when the wizard closes. */
+  const [waKeepDebugLogs, setWaKeepDebugLogs] = useState(false);
+  const [waBridgeLogDialogOpen, setWaBridgeLogDialogOpen] = useState(false);
+  const [waBridgeLogText, setWaBridgeLogText] = useState("");
+  const [waBridgeLogLoading, setWaBridgeLogLoading] = useState(false);
+  const [waBridgeInactiveHint, setWaBridgeInactiveHint] = useState("");
 
   // Pre-load any already-stored credentials so reconfiguring is friction-free.
   useEffect(() => {
     if (!open) return;
+    setWaBridgeInactiveHint("");
     setStep(0);
     setTestResult("idle");
     prevWhatsAppTestResultRef.current = "idle";
@@ -195,15 +209,22 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         if (cred.kind === "hidden") {
           next[cred.envVar] = cred.defaultValue ?? "";
         } else if (cred.kind === "choice") {
-          next[cred.envVar] = existing || cred.defaultValue || cred.choices?.[0]?.value || "";
+          const fromEnvChoice = (env[cred.envVar] || "").trim();
+          next[cred.envVar] = existing || fromEnvChoice || cred.defaultValue || cred.choices?.[0]?.value || "";
         } else {
-          next[cred.envVar] = existing || "";
+          const fromEnv = (env[cred.envVar] || "").trim();
+          next[cred.envVar] = existing || fromEnv || cred.defaultValue || "";
         }
       }
       if (!cancelled) {
         setValues(next);
         setHadExistingConfig(wasConfigured);
         if (channel.id === "whatsapp") {
+          const au = (next.WHATSAPP_ALLOWED_USERS || "").trim();
+          const allowAllFlag = (env.WHATSAPP_ALLOW_ALL_USERS || "").trim().toLowerCase() === "true";
+          setWaOpenTesting(au === "*" || allowAllFlag);
+          const dbg = ((await systemAPI.secrets.get("WHATSAPP_DEBUG")) || "").trim().toLowerCase();
+          setWaKeepDebugLogs(dbg === "true");
           setWaBaseline({
             mode: (next.WHATSAPP_MODE || "").trim(),
             allowedUsers: normalizeAllowedUsers(next.WHATSAPP_ALLOWED_USERS || ""),
@@ -216,10 +237,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     };
   }, [open, channel]);
 
-  const visibleCredentials = useMemo(
-    () => channel.credentials.filter((c) => c.kind !== "hidden"),
-    [channel.credentials],
-  );
+  const visibleCredentials = useMemo(() => {
+    const v = channel.credentials.filter((c) => c.kind !== "hidden");
+    if (channel.id === "whatsapp") {
+      return v.filter((c) => c.envVar !== "WHATSAPP_ALLOWED_USERS");
+    }
+    return v;
+  }, [channel.credentials, channel.id]);
 
   /** WhatsApp skips the generic “get credentials” checklist step (old step 1). */
   const { waShortWizard, maxStep, totalSteps, credStep, testStep } = useMemo(() => {
@@ -255,10 +279,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     // #endregion
   }, []);
 
-  const requiredFilled = useMemo(
-    () => channel.credentials.every((c) => c.optional || (values[c.envVar] || "").trim().length > 0),
-    [channel.credentials, values],
-  );
+  const requiredFilled = useMemo(() => {
+    const base = channel.credentials.every((c) => c.optional || (values[c.envVar] || "").trim().length > 0);
+    if (channel.id !== "whatsapp") return base;
+    if (waOpenTesting) return base;
+    const digits = (values.WHATSAPP_ALLOWED_USERS || "").trim().replace(/\D/g, "");
+    return base && E164_PHONE_ONLY.test(digits);
+  }, [channel.credentials, channel.id, values, waOpenTesting]);
   const waModeCurrent = (values.WHATSAPP_MODE || "").trim();
   const waAllowedUsersCurrent = normalizeAllowedUsers(values.WHATSAPP_ALLOWED_USERS || "");
   const waHasModeChange = !!waBaseline && waBaseline.mode !== waModeCurrent;
@@ -415,7 +442,40 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const saveCredentials = async (): Promise<boolean> => {
     setSaving(true);
     try {
+      if (channel.id === "whatsapp") {
+        if (waOpenTesting) {
+          await systemAPI.secrets.delete("WHATSAPP_ALLOW_ALL_USERS").catch(() => false);
+          const okStar = await systemAPI.secrets.set("WHATSAPP_ALLOWED_USERS", "*");
+          if (!okStar) {
+            setFormError("Failed to save access control");
+            toast.error("Failed to save access control");
+            return false;
+          }
+        } else {
+          const digits = (values.WHATSAPP_ALLOWED_USERS || "").trim().replace(/\D/g, "");
+          if (!E164_PHONE_ONLY.test(digits)) {
+            const msg =
+              "Enter your full phone number in E.164 format (digits only, country code first, e.g. 15551234567), or turn on open testing.";
+            setFormError(msg);
+            toast.error("Phone number required", { description: msg });
+            return false;
+          }
+          await systemAPI.secrets.delete("WHATSAPP_ALLOW_ALL_USERS").catch(() => false);
+          const okPhone = await systemAPI.secrets.set("WHATSAPP_ALLOWED_USERS", digits);
+          if (!okPhone) {
+            setFormError("Failed to save phone number");
+            toast.error("Failed to save phone number");
+            return false;
+          }
+        }
+        await systemAPI.secrets.set("WHATSAPP_DEBUG", "true").catch(() => false);
+      }
+
+      const skipInLoop =
+        channel.id === "whatsapp" ? new Set<string>(["WHATSAPP_ALLOWED_USERS"]) : new Set<string>();
+
       for (const cred of channel.credentials) {
+        if (skipInLoop.has(cred.envVar)) continue;
         const v = (values[cred.envVar] || "").trim();
         if (!v && cred.optional) continue;
         if (!v) {
@@ -430,7 +490,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           return false;
         }
       }
-      // Push secrets into ~/.hermes/.env so the gateway can read them.
+      // Push secrets into ~/.hermes/.env so the gateway can read them (Hermes-managed keys).
       await systemAPI.materializeEnv();
       setFormError("");
       return true;
@@ -447,15 +507,18 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       await systemAPI.materializeEnv();
       if (channel.id === "whatsapp") {
         const paired = await systemAPI.isWhatsAppPaired();
-        if (!paired.success) {
-          setTestResult("fail");
-          setTestError(paired.error || "Couldn't verify WhatsApp pairing.");
-          return;
-        }
-        if (!paired.paired) {
+        const bridge = await systemAPI.getWhatsAppBridgeStatus();
+        const sessionOk = !!(paired.success && paired.paired);
+        const bridgeOk = !!(bridge.success && bridge.running && bridge.whatsappActive);
+        if (!sessionOk && !bridgeOk) {
+          if (!paired.success) {
+            setTestResult("fail");
+            setTestError(paired.error || "Couldn't verify WhatsApp pairing.");
+            return;
+          }
           setTestResult("fail");
           setTestError(
-            "WhatsApp is not linked yet. Use “Start QR pairing” above, scan with your phone, then try the test again.",
+            "WhatsApp is not linked yet, or the bridge is not connected. Use “Start QR pairing” above, scan with your phone, then try again.",
           );
           return;
         }
@@ -488,8 +551,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
 
   /** Stop/start gateway so a new WhatsApp session is picked up (shared by pairing completion + manual button). */
   const restartWhatsAppGatewayWithNewSession = useCallback(async (): Promise<"live" | "soft" | "fail"> => {
+    setWaBridgeInactiveHint("");
+    await systemAPI.materializeEnv().catch(() => undefined);
     setWaStatusHint("Restarting messaging gateway with new session…");
     await systemAPI.stopGateway().catch(() => undefined);
+    await systemAPI.materializeEnv().catch(() => undefined);
     await systemAPI.refreshGatewayInstall().catch(() => undefined);
     const r = await systemAPI.startGateway();
     if (!r.success) {
@@ -500,10 +566,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       return "fail";
     }
     setWaStatusHint("Verifying WhatsApp bridge connection…");
-    const deadline = Date.now() + 30000;
-    let lastHealth: Awaited<ReturnType<typeof systemAPI.getWhatsAppGatewayHealth>> | null = null;
+    const deadline = Date.now() + 90000;
+    let lastHealth: Awaited<ReturnType<typeof systemAPI.getWhatsAppBridgeStatus>> | null = null;
     while (Date.now() < deadline) {
-      const h = await systemAPI.getWhatsAppGatewayHealth();
+      const h = await systemAPI.getWhatsAppBridgeStatus();
       lastHealth = h;
       if (h.running && h.whatsappActive) break;
       await new Promise((res) => setTimeout(res, 2500));
@@ -519,12 +585,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       return "soft";
     }
     const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
+    const logR = await systemAPI.readWhatsAppBridgeLogTail(100);
+    const hint = (logR.content || tail).split("\n").slice(-20).join("\n").trim();
+    setWaBridgeInactiveHint(hint);
     const detail = tail
       ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
       : "Could not confirm WhatsApp after starting the gateway. Try pairing again, then enable.";
-    setFormError(detail);
+    setFormError(detail + (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""));
     toast.error("WhatsApp bridge not confirmed", {
-      description: "Session may be missing — re-run QR pairing if this persists.",
+      description: "Try Re-pair + Restart or open bridge logs.",
     });
     return "fail";
   }, []);
@@ -579,6 +648,16 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       waStreamIdRef.current = null;
     }
   }, [open]);
+
+  /** Clear wizard-only WHATSAPP_DEBUG unless the user opted to keep it. */
+  useEffect(() => {
+    if (open || channel.id !== "whatsapp") return;
+    if (waKeepDebugLogs) return;
+    void (async () => {
+      await systemAPI.secrets.delete("WHATSAPP_DEBUG").catch(() => false);
+      await systemAPI.materializeEnv().catch(() => undefined);
+    })();
+  }, [open, channel.id, waKeepDebugLogs]);
 
   useEffect(() => {
     if (!open || step !== testStep || testing) return;
@@ -779,6 +858,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         const outcome = await restartWhatsAppGatewayWithNewSession();
         if (outcome === "fail") return;
         bumpMessagingProbe();
+        setWaBridgeInactiveHint("");
         if (outcome === "live") {
           toast.success(`${channel.name} channel enabled`, {
             description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
@@ -894,6 +974,45 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   };
 
+  const handleViewBridgeLogs = async () => {
+    setWaBridgeLogLoading(true);
+    try {
+      const r = await systemAPI.readWhatsAppBridgeLogTail(200);
+      setWaBridgeLogText(r.content || "(empty)");
+      setWaBridgeLogDialogOpen(true);
+    } finally {
+      setWaBridgeLogLoading(false);
+    }
+  };
+
+  const handleRePairAndRestart = async () => {
+    if (channel.id !== "whatsapp") return;
+    setWaRePairRestartBusy(true);
+    setWaBridgeInactiveHint("");
+    try {
+      await systemAPI.materializeEnv().catch(() => undefined);
+      await systemAPI.stopGateway().catch(() => undefined);
+      const cleared = await systemAPI.clearWhatsAppSession();
+      if (!cleared.success) {
+        toast.error("Could not clear WhatsApp session", {
+          description: cleared.stderr?.split("\n")[0] || "Try again.",
+        });
+        return;
+      }
+      await systemAPI.materializeEnv().catch(() => undefined);
+      await systemAPI.refreshGatewayInstall().catch(() => undefined);
+      await systemAPI.startGateway().catch(() => undefined);
+      setWaPaired(false);
+      setWaPairedChecked(true);
+      setTestResult("idle");
+      setFormError("");
+      waAutoPairAttemptedForSessionRef.current = false;
+      await startWaPairing(false);
+    } finally {
+      setWaRePairRestartBusy(false);
+    }
+  };
+
   useEffect(() => {
     if (!open || step !== testStep || channel.id !== "whatsapp" || !waPairingActive) return;
     const timer = window.setInterval(() => {
@@ -920,6 +1039,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             const outcome = await restartWhatsAppGatewayWithNewSession();
             if (outcome === "fail") return;
             bumpMessagingProbe();
+            setWaBridgeInactiveHint("");
             if (outcome === "live") {
               toast.success(`${channel.name} channel enabled`, {
                 description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
@@ -974,6 +1094,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const handleRefreshGatewayInstall = async () => {
     setGatewayRefreshBusy(true);
     try {
+      if (channel.id === "whatsapp") {
+        await systemAPI.materializeEnv().catch(() => undefined);
+      }
       const r = await systemAPI.refreshGatewayInstall();
       if (r.success) {
         toast.success("Gateway service refreshed", {
@@ -996,6 +1119,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   };
 
   const enableGateway = async () => {
+    await systemAPI.materializeEnv().catch(() => undefined);
     const r = await systemAPI.startGateway();
     if (!r.success) {
       const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
@@ -1004,16 +1128,17 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       return;
     }
     if (channel.id === "whatsapp") {
-      const deadline = Date.now() + 30000;
-      let lastHealth: Awaited<ReturnType<typeof systemAPI.getWhatsAppGatewayHealth>> | null = null;
+      const deadline = Date.now() + 90000;
+      let lastHealth: Awaited<ReturnType<typeof systemAPI.getWhatsAppBridgeStatus>> | null = null;
       while (Date.now() < deadline) {
-        const h = await systemAPI.getWhatsAppGatewayHealth();
+        const h = await systemAPI.getWhatsAppBridgeStatus();
         lastHealth = h;
         if (h.running && h.whatsappActive) break;
         await new Promise((res) => setTimeout(res, 2500));
       }
       if (lastHealth?.running && lastHealth.whatsappActive) {
         setFormError("");
+        setWaBridgeInactiveHint("");
         bumpMessagingProbe();
         toast.success(`${channel.name} channel enabled`, {
           description: "WhatsApp bridge is live — your agent will reply to incoming messages.",
@@ -1028,6 +1153,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       const pairedNow = await systemAPI.isWhatsAppPaired();
       if (r.success && pairedNow.success && pairedNow.paired) {
         setFormError("");
+        setWaBridgeInactiveHint("");
         bumpMessagingProbe();
         toast.success(`${channel.name} channel enabled`, {
           description:
@@ -1038,12 +1164,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         return;
       }
       const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
+      const logR = await systemAPI.readWhatsAppBridgeLogTail(100);
+      const extra = logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : "";
       const detail = tail
         ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
         : "Could not confirm WhatsApp after starting the gateway. Try pairing again from step 3, then enable.";
-      setFormError(detail);
+      setFormError(detail + extra);
+      setWaBridgeInactiveHint((logR.content || tail).split("\n").slice(-16).join("\n").trim());
       toast.error("WhatsApp bridge not confirmed", {
-        description: "Session may be missing — re-run QR pairing if this persists.",
+        description: "Use Re-pair + Restart or view bridge logs below.",
       });
       return;
     }
@@ -1268,8 +1397,16 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             </p>
             <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1.5 pl-0.5">
               <li>A phone with WhatsApp installed and camera access for “Link a device”.</li>
-              <li>On the next step you choose self-chat vs a dedicated number, then who may message the agent.</li>
-              <li>After that, you scan one QR code; Ronbot saves the session and can start the messaging gateway.</li>
+              <li>
+                Default is <strong className="text-foreground">self-chat</strong> (your own number): in WhatsApp,{" "}
+                <strong className="text-foreground">message yourself</strong> to talk to the agent — that is how Hermes
+                routes your thread.
+              </li>
+              <li>
+                Access control defaults to <strong className="text-foreground">open testing (*)</strong>; tighten to
+                your E.164 number on the next step when you are ready for production.
+              </li>
+              <li>After that, you scan one QR code; Hermes saves the session under ~/.hermes/platforms/whatsapp/session.</li>
             </ul>
             <Button
               type="button"
@@ -1343,17 +1480,89 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               {channel.id === "whatsapp" ? "WhatsApp settings" : "Paste your credentials"}
             </h3>
             {channel.id === "whatsapp" ? (
-              <div className="space-y-2 text-xs text-muted-foreground leading-relaxed">
-                <p>
-                  These values are written to your OS keychain and mirrored into{" "}
-                  <code className="font-mono text-[11px]">~/.hermes/.env</code> when you continue, so the messaging
-                  gateway can enforce access control.
-                </p>
-                <p>
-                  <strong className="text-foreground">Next step:</strong> QR pairing in Ronbot. If you change mode or
-                  allowed numbers later, you may need to relink WhatsApp when Ronbot asks.
-                </p>
-              </div>
+              <>
+                <div className="space-y-2 text-xs text-muted-foreground leading-relaxed">
+                  <p>
+                    Ronbot writes the exact keys Hermes expects (
+                    <code className="font-mono text-[11px]">WHATSAPP_ENABLED</code>,{" "}
+                    <code className="font-mono text-[11px]">WHATSAPP_MODE</code>,{" "}
+                    <code className="font-mono text-[11px]">WHATSAPP_ALLOWED_USERS</code> and/or{" "}
+                    <code className="font-mono text-[11px]">WHATSAPP_ALLOW_ALL_USERS</code>
+                    ) into your OS keychain and mirrors them into{" "}
+                    <code className="font-mono text-[11px]">~/.hermes/.env</code> when you continue.
+                  </p>
+                  <p>
+                    <strong className="text-foreground">Next step:</strong> QR pairing here (no terminal). Changing
+                    mode or access rules later may require a quick re-link when Ronbot prompts you.
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border/60 bg-background/30 p-4 space-y-4">
+                  <div className="flex items-start gap-3 space-y-0">
+                    <Checkbox
+                      id="wa-open-testing"
+                      checked={waOpenTesting}
+                      onCheckedChange={(c) => {
+                        const on = c === true;
+                        setWaOpenTesting(on);
+                        setValues((v) => ({
+                          ...v,
+                          WHATSAPP_ALLOWED_USERS: on ? "*" : v.WHATSAPP_ALLOWED_USERS === "*" ? "" : v.WHATSAPP_ALLOWED_USERS,
+                        }));
+                      }}
+                    />
+                    <div className="space-y-1">
+                      <Label htmlFor="wa-open-testing" className="text-sm font-medium cursor-pointer">
+                        Open testing — allow any WhatsApp number (<code className="font-mono text-xs">*</code>)
+                      </Label>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        Hermes treats <code className="font-mono">WHATSAPP_ALLOWED_USERS=*</code> like everyone can DM
+                        the bot. Turn this off and enter your number for production.
+                      </p>
+                    </div>
+                  </div>
+                  {!waOpenTesting && (
+                    <div className="space-y-1">
+                      <Label htmlFor="wa-phone-e164" className="text-xs">
+                        Your WhatsApp number (E.164) <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        id="wa-phone-e164"
+                        type="text"
+                        inputMode="numeric"
+                        value={values.WHATSAPP_ALLOWED_USERS || ""}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/\D/g, "");
+                          setValues((v) => ({ ...v, WHATSAPP_ALLOWED_USERS: raw }));
+                        }}
+                        placeholder="15551234567 — country code first, no + sign"
+                        autoComplete="off"
+                        spellCheck={false}
+                        className="bg-background/50 font-mono text-sm"
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        Digits only (7–15 after country code). In self-chat, this should be the same number as the
+                        WhatsApp account you will link.
+                      </p>
+                    </div>
+                  )}
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      id="wa-keep-debug"
+                      checked={waKeepDebugLogs}
+                      onCheckedChange={(c) => setWaKeepDebugLogs(c === true)}
+                    />
+                    <div className="space-y-1">
+                      <Label htmlFor="wa-keep-debug" className="text-sm font-medium cursor-pointer">
+                        Keep <code className="font-mono text-xs">WHATSAPP_DEBUG=true</code> after this wizard
+                      </Label>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        While the wizard runs, Ronbot sets debug so Hermes writes richer events to bridge logs. Leave
+                        this on if you are diagnosing issues.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </>
             ) : (
               <p className="text-xs text-muted-foreground">
                 These are stored in your OS keychain — never in plain text.
@@ -1454,6 +1663,12 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 </div>
               ))}
             </div>
+            {channel.id === "whatsapp" && step === credStep && (
+              <p className="text-[11px] text-muted-foreground border-t border-border/40 pt-3">
+                Defaults match the Hermes docs: <code className="font-mono">WHATSAPP_MODE=self-chat</code> and open
+                access for the quickest first run.
+              </p>
+            )}
           </div>
         )}
 
@@ -1671,6 +1886,43 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 {waStatusHint && (
                   <p className="text-[11px] text-muted-foreground">{waStatusHint}</p>
                 )}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs"
+                    disabled={waBridgeLogLoading}
+                    onClick={() => void handleViewBridgeLogs()}
+                  >
+                    {waBridgeLogLoading ? (
+                      <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
+                    ) : (
+                      <ScrollText className="w-3 h-3 mr-1.5" />
+                    )}
+                    View WhatsApp bridge logs
+                  </Button>
+                  {waBridgeInactiveHint ? (
+                    <Button
+                      type="button"
+                      variant="default"
+                      size="sm"
+                      className="h-8 text-xs"
+                      disabled={waRePairRestartBusy || waPairingActive}
+                      onClick={() => void handleRePairAndRestart()}
+                    >
+                      {waRePairRestartBusy ? (
+                        <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
+                      ) : null}
+                      Re-pair + Restart
+                    </Button>
+                  ) : null}
+                </div>
+                {waBridgeInactiveHint ? (
+                  <pre className="text-[10px] leading-snug font-mono text-muted-foreground max-h-32 overflow-y-auto rounded border border-border/50 bg-background/50 p-2 whitespace-pre-wrap">
+                    {waBridgeInactiveHint}
+                  </pre>
+                ) : null}
                 <div className="rounded-md border border-border/50 bg-background/50 h-[62vh] min-h-[26rem] overflow-hidden p-2">
                   <WhatsAppTerminal
                     content={waTerminalRaw}
@@ -1890,6 +2142,26 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
               ) : (
                 <><Trash2 className="w-4 h-4 mr-1.5" /> Reset {channel.name}</>
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={waBridgeLogDialogOpen} onOpenChange={setWaBridgeLogDialogOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>WhatsApp bridge logs</DialogTitle>
+            <DialogDescription>
+              Tail of <code className="font-mono text-xs">bridge.log</code> / gateway logs from your Hermes home. Use
+              with WHATSAPP_DEBUG for maximum detail.
+            </DialogDescription>
+          </DialogHeader>
+          <pre className="text-[11px] leading-snug font-mono whitespace-pre-wrap break-all max-h-[60vh] overflow-y-auto rounded border border-border/50 bg-background/50 p-3">
+            {waBridgeLogText}
+          </pre>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setWaBridgeLogDialogOpen(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

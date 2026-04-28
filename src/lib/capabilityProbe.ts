@@ -254,7 +254,9 @@ export const capabilityProbe = async (
       try {
         const env = await systemAPI.readEnvFile();
         const paired = await systemAPI.isWhatsAppPaired();
-        if (isWhatsAppEnvConfigured(env) && paired.success && paired.paired) {
+        const bridge = await systemAPI.getWhatsAppBridgeStatus();
+        const bridgeOk = !!(bridge.success && bridge.running && bridge.whatsappActive);
+        if (isWhatsAppEnvConfigured(env) && ((paired.success && paired.paired) || bridgeOk)) {
           skipExtras = true;
         }
       } catch {
@@ -272,6 +274,54 @@ export const capabilityProbe = async (
             reason: "noExtras",
             message: `Ron is missing the Python extras for ${cap.label.toLowerCase()}.`,
             installHint: `pip install hermes-agent[${cap.extrasPackage}]`,
+            candidateSkills: cap.candidateSkills,
+            candidateSecrets: cap.candidateSecrets,
+          };
+          cache.set(capabilityId, { at: Date.now(), result });
+          return result;
+        }
+      }
+    }
+  }
+
+  // 5. Hermes WhatsApp only: require a live bridge when .env is WhatsApp-ready and no other bot token path is in use.
+  if (capabilityId === "messaging") {
+    let envW: Record<string, string> = {};
+    try {
+      envW = await systemAPI.readEnvFile();
+    } catch {
+      /* ignore */
+    }
+    if (isWhatsAppEnvConfigured(envW)) {
+      const otherMessaging =
+        ctx.storedSecrets.has("TELEGRAM_BOT_TOKEN") ||
+        ctx.storedSecrets.has("DISCORD_BOT_TOKEN") ||
+        ctx.storedSecrets.has("SLACK_BOT_TOKEN") ||
+        !!(envW.TELEGRAM_BOT_TOKEN || "").trim() ||
+        !!(envW.DISCORD_BOT_TOKEN || "").trim() ||
+        !!(envW.SLACK_BOT_TOKEN || "").trim();
+      if (!otherMessaging) {
+        const br = await systemAPI.getWhatsAppBridgeStatus();
+        if (!br.running) {
+          const result: CapabilityProbeResult = {
+            capabilityId,
+            ready: false,
+            reason: "unknown",
+            message:
+              "WhatsApp is configured in ~/.hermes/.env but the messaging gateway is not running. Open Channels (Ronbot starts it when needed) or use Restart messaging gateway on the WhatsApp card.",
+            candidateSkills: cap.candidateSkills,
+            candidateSecrets: cap.candidateSecrets,
+          };
+          cache.set(capabilityId, { at: Date.now(), result });
+          return result;
+        }
+        if (!br.whatsappActive) {
+          const snippet = (br.bridgeLogTail || br.statusOutput || "").split("\n").slice(-6).join("\n").trim();
+          const result: CapabilityProbeResult = {
+            capabilityId,
+            ready: false,
+            reason: "unknown",
+            message: `WhatsApp bridge is not connected yet.${snippet ? ` Recent log: ${snippet}` : " Re-pair with hermes whatsapp or restart the gateway."}`,
             candidateSkills: cap.candidateSkills,
             candidateSecrets: cap.candidateSecrets,
           };

@@ -10,10 +10,10 @@
  * writes secrets to the OS keychain and materialises them into
  * `~/.hermes/.env` so `hermes gateway` can pick them up.
  *
- * Security: every Hermes platform denies all users by default unless an
- * `*_ALLOWED_USERS` env var is set or the user is approved via DM
- * pairing. We always collect the allowlist credential up-front so the
- * agent works on first message instead of silently dropping everything.
+ * Security: Hermes denies unknown senders unless `WHATSAPP_ALLOWED_USERS`,
+ * `*`, or `WHATSAPP_ALLOW_ALL_USERS=true` is set (see official WhatsApp docs).
+ * Defaults favour novice self-chat + open testing (`*`), with an optional
+ * strict E.164 allowlist in the wizard.
  */
 
 import type { LucideIcon } from 'lucide-react';
@@ -248,13 +248,15 @@ export const CHANNELS: Channel[] = [
       {
         envVar: 'WHATSAPP_ALLOWED_USERS',
         label: 'Who may message the agent',
-        hint: 'E.164 digits only, no + or spaces (e.g. 15551234567). Comma-separated. Use * only if you accept anyone (not recommended).',
+        hint: 'Hermes format: E.164 digits only (country code first, no +), comma-separated, or * for everyone. Optional `WHATSAPP_ALLOW_ALL_USERS=true` is equivalent to *.',
         inputType: 'text',
+        /** Novice default per Hermes docs — restrict later in the wizard. */
+        defaultValue: '*',
       },
     ],
     testHint:
       "First link WhatsApp using the QR code in this window. After your phone shows the device as linked, we verify the saved session and run a quick gateway check.",
-    resetEnvVars: ['WHATSAPP_ENABLED', 'WHATSAPP_MODE', 'WHATSAPP_ALLOWED_USERS'],
+    resetEnvVars: ['WHATSAPP_ENABLED', 'WHATSAPP_MODE', 'WHATSAPP_ALLOWED_USERS', 'WHATSAPP_ALLOW_ALL_USERS', 'WHATSAPP_DEBUG'],
     resetCaveat:
       "Reset also wipes the local WhatsApp session and bridge auth files so the next pairing starts with a fresh QR code. Your phone may keep the linked-device entry until you remove it from WhatsApp → Settings → Linked Devices.",
   },
