@@ -114,7 +114,9 @@ const checkPythonExtra = async (importName: string): Promise<boolean> => {
   try {
     const platform = await systemAPI.getPlatform();
     const inner = `export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"; python3 -c "import ${importName}" 2>/dev/null && echo OK || (python -c "import ${importName}" 2>/dev/null && echo OK)`;
-    const cmd = platform.isWindows ? `wsl bash -lc '${inner}'` : `bash -lc '${inner}'`;
+    const innerB64 = btoa(unescape(encodeURIComponent(inner)));
+    const decode = `echo ${innerB64} | base64 -d | bash`;
+    const cmd = platform.isWindows ? `wsl bash -lc "${decode}"` : `bash -lc "${decode}"`;
     const r = await systemAPI.runCommand?.(cmd, {
       timeoutMs: 8000,
       displayCommand: `python import probe: ${importName}`,

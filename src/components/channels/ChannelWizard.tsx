@@ -454,6 +454,16 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           toast.error("Failed to save WhatsApp allowed users");
           return false;
         }
+        // Hard-set required WhatsApp runtime keys so materializeEnv cannot
+        // produce an incomplete channel config if hidden/choice fields drift.
+        const mode = (values.WHATSAPP_MODE || "self-chat").trim() || "self-chat";
+        const okEnabled = await systemAPI.secrets.set("WHATSAPP_ENABLED", "true");
+        const okMode = await systemAPI.secrets.set("WHATSAPP_MODE", mode);
+        if (!okEnabled || !okMode) {
+          setFormError("Failed to save WhatsApp runtime mode");
+          toast.error("Failed to save WhatsApp runtime mode");
+          return false;
+        }
         await systemAPI.secrets.set("WHATSAPP_DEBUG", "true").catch(() => false);
       }
 
@@ -478,6 +488,17 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       }
       // Push secrets into ~/.hermes/.env so the gateway can read them (Hermes-managed keys).
       await systemAPI.materializeEnv();
+      if (channel.id === "whatsapp") {
+        const verifyEnabled = (await systemAPI.secrets.get("WHATSAPP_ENABLED")).trim().toLowerCase();
+        const verifyMode = (await systemAPI.secrets.get("WHATSAPP_MODE")).trim();
+        const verifyAllow = (await systemAPI.secrets.get("WHATSAPP_ALLOWED_USERS")).trim();
+        if (verifyEnabled !== "true" || !verifyMode || !verifyAllow) {
+          const msg = "WhatsApp credentials were not persisted to secure storage. Please retry setup.";
+          setFormError(msg);
+          toast.error("WhatsApp secrets missing", { description: msg });
+          return false;
+        }
+      }
       setFormError("");
       return true;
     } finally {
