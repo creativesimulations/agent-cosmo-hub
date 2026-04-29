@@ -1,5 +1,6 @@
 import { coreAPI } from './core';
 import { secretsStore } from './secretsStore';
+import { sudoAPI } from './sudo';
 import { isElectron } from './types';
 import type { CommandResult } from './types';
 import { agentLogs, truncateForLog } from '../diagnostics';
@@ -27,6 +28,29 @@ export const buildInstallerRunScript = (): string => INSTALLER_ENTRYPOINT;
 const INLINE_SCRIPT_LIMIT = 4096;
 
 type CommandOutputHandler = (chunk: { type: string; data?: string; code?: number }) => void;
+
+export type StartupIssueSeverity = 'info' | 'warn' | 'error';
+export interface StartupIssue {
+  id: string;
+  severity: StartupIssueSeverity;
+  title: string;
+  detail: string;
+  fixable: boolean;
+  fixAction?: 'sync-secrets' | 'init-skills-hub' | 'repair-config' | 'refresh-gateway';
+}
+
+export interface StartupBootstrapStep {
+  id: string;
+  ok: boolean;
+  detail: string;
+  durationMs: number;
+}
+
+export interface StartupBootstrapReport {
+  success: boolean;
+  steps: StartupBootstrapStep[];
+  issues: StartupIssue[];
+}
 
 const encodeScript = (value: string) => btoa(unescape(encodeURIComponent(value)));
 
@@ -666,6 +690,50 @@ const materializeHermesEnv = async (): Promise<{ success: boolean; count?: numbe
     summary: `materializeHermesEnv: ✓ wrote ${secretEntries.length} key(s) to ~/.hermes/.env`,
   });
   return { success: true, count: secretEntries.length };
+};
+
+const normalizeDoctorIssues = (
+  doctorOutput: string,
+  platform: Awaited<ReturnType<typeof coreAPI.getPlatform>>,
+): StartupIssue[] => {
+  const out = (doctorOutput || '').toLowerCase();
+  const issues: StartupIssue[] = [];
+
+  if (out.includes('loginctl not found')) {
+    issues.push({
+      id: 'doctor-loginctl-wsl',
+      severity: platform.isWindows || platform.isWSL ? 'info' : 'warn',
+      title: 'Systemd linger check unavailable',
+      detail: platform.isWindows || platform.isWSL
+        ? 'WSL often has no loginctl; foreground gateway mode is expected and supported.'
+        : 'Could not verify systemd linger. Gateway persistence may be degraded.',
+      fixable: false,
+    });
+  }
+
+  if (out.includes("run 'hermes setup'") || out.includes('missing api keys')) {
+    issues.push({
+      id: 'doctor-missing-api-keys',
+      severity: 'warn',
+      title: 'Missing API keys for full tool access',
+      detail: 'Some providers are not configured yet. Add keys in the Secrets tab, then sync them.',
+      fixable: true,
+      fixAction: 'sync-secrets',
+    });
+  }
+
+  if (out.includes('skills hub directory not initialized')) {
+    issues.push({
+      id: 'doctor-skills-hub-not-initialized',
+      severity: 'warn',
+      title: 'Skills Hub not initialized',
+      detail: 'Skills index has not been initialized yet. Running a skills list command bootstraps it.',
+      fixable: true,
+      fixAction: 'init-skills-hub',
+    });
+  }
+
+  return issues;
 };
 
 // ─── Permissions YAML mirror ──────────────────────────────────────
@@ -1324,6 +1392,102 @@ export const hermesAPI = {
       durationMs: Date.now() - start,
     });
     return r;
+  },
+
+  async analyzeDoctorIssues(rawDoctorOutput?: string): Promise<{ success: boolean; issues: StartupIssue[]; doctorOutput: string }> {
+    const platform = await coreAPI.getPlatform();
+    if (rawDoctorOutput != null) {
+      return { success: true, issues: normalizeDoctorIssues(rawDoctorOutput, platform), doctorOutput: rawDoctorOutput };
+    }
+    const r = await this.doctor();
+    const combined = [r.stdout, r.stderr].filter(Boolean).join('\n');
+    return { success: r.success, issues: normalizeDoctorIssues(combined, platform), doctorOutput: combined };
+  },
+
+  async bootstrapStartupHealth(): Promise<StartupBootstrapReport> {
+    const steps: StartupBootstrapStep[] = [];
+    const timed = async (id: string, fn: () => Promise<{ ok: boolean; detail: string }>) => {
+      const start = Date.now();
+      const res = await fn();
+      steps.push({ id, ok: res.ok, detail: res.detail, durationMs: Date.now() - start });
+      return res.ok;
+    };
+
+    await timed('status-warmup', async () => {
+      const r = await this.status();
+      return { ok: r.success, detail: r.success ? 'hermes status responded' : (r.stderr || r.stdout || 'status failed').split('\n')[0] };
+    });
+
+    await timed('skills-bootstrap', async () => {
+      const r = await this.listSkills();
+      return { ok: r.success, detail: r.success ? `skills listed (${r.skills.length})` : (r.error || 'skills list failed') };
+    });
+
+    const env = await this.readEnvFile().catch(() => ({} as Record<string, string>));
+    const hasMessagingConfigured = Boolean(
+      ((env.WHATSAPP_ENABLED || '').trim().toLowerCase() === 'true' && (env.WHATSAPP_ALLOWED_USERS || '').trim().length > 0) ||
+      (env.TELEGRAM_BOT_TOKEN || '').trim() ||
+      (env.SLACK_BOT_TOKEN || '').trim() ||
+      (env.DISCORD_BOT_TOKEN || '').trim(),
+    );
+
+    if (hasMessagingConfigured) {
+      await timed('gateway-refresh-install', async () => {
+        const r = await this.refreshGatewayInstall();
+        return { ok: r.success, detail: r.success ? 'gateway install refreshed' : (r.stderr || r.stdout || 'refresh failed').split('\n')[0] };
+      });
+      await timed('gateway-start', async () => {
+        const r = await this.startGateway();
+        return { ok: r.success, detail: r.success ? 'gateway started/verified' : (r.stderr || r.stdout || 'start failed').split('\n')[0] };
+      });
+    }
+
+    const doctor = await this.doctor();
+    const doctorText = [doctor.stdout, doctor.stderr].filter(Boolean).join('\n');
+    const platform = await coreAPI.getPlatform();
+    const issues = normalizeDoctorIssues(doctorText, platform);
+
+    const success = steps.every((s) => s.ok) && !issues.some((i) => i.severity === 'error');
+    return { success, steps, issues };
+  },
+
+  async runStartupAutoFix(options?: { sudoPassword?: string | null }): Promise<{ success: boolean; actions: string[]; issues: StartupIssue[]; error?: string }> {
+    const actions: string[] = [];
+    const doctor = await this.doctor();
+    const doctorText = [doctor.stdout, doctor.stderr].filter(Boolean).join('\n');
+    const platform = await coreAPI.getPlatform();
+    const issues = normalizeDoctorIssues(doctorText, platform);
+
+    for (const issue of issues) {
+      if (!issue.fixable) continue;
+      if (issue.fixAction === 'sync-secrets') {
+        const r = await this.materializeEnv();
+        actions.push(r.success ? 'synced secrets to ~/.hermes/.env' : `failed syncing secrets: ${r.error || 'unknown'}`);
+      } else if (issue.fixAction === 'init-skills-hub') {
+        const r = await this.listSkills();
+        actions.push(r.success ? 'initialized skills hub' : `failed skills hub init: ${r.error || 'unknown'}`);
+      } else if (issue.fixAction === 'repair-config') {
+        const r = await this.repairConfig();
+        actions.push(r.success ? 'repaired config' : `failed config repair: ${r.error || 'unknown'}`);
+      } else if (issue.fixAction === 'refresh-gateway') {
+        const r = await this.refreshGatewayInstall();
+        actions.push(r.success ? 'refreshed gateway install' : `failed gateway refresh: ${(r.stderr || r.stdout || '').split('\n')[0] || 'unknown'}`);
+      }
+    }
+
+    if (options?.sudoPassword !== undefined && options.sudoPassword !== null) {
+      const pwd = options.sudoPassword;
+      const apt = await sudoAPI.aptInstall(['curl'], pwd);
+      actions.push(apt.success ? 'validated elevated apt execution' : 'elevated apt execution unavailable');
+    }
+
+    const post = await this.bootstrapStartupHealth();
+    return {
+      success: post.success,
+      actions,
+      issues: post.issues,
+      error: post.success ? undefined : 'Some startup issues remain after auto-fix',
+    };
   },
 
   /** Get agent status */

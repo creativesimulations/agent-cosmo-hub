@@ -27,6 +27,7 @@ import { ShieldCheck } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import ActionableError from "@/components/ui/ActionableError";
+import { useSudoPrompt } from "@/contexts/SudoPromptContext";
 
 interface EnvSummary {
   loaded: boolean;
@@ -49,6 +50,14 @@ interface StoreSummary {
   error?: string;
 }
 
+interface StartupIssue {
+  id: string;
+  severity: "info" | "warn" | "error";
+  title: string;
+  detail: string;
+  fixable: boolean;
+}
+
 const Diagnostics = () => {
   const [entries, setEntries] = useState<DiagEntry[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -68,6 +77,9 @@ const Diagnostics = () => {
   const [showAllCommands, setShowAllCommands] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
   const [commandScope, setCommandScope] = useState<"all" | "gateway" | "whatsapp" | "hermes" | "system">("all");
+  const [startupIssues, setStartupIssues] = useState<StartupIssue[]>([]);
+  const [fixingStartup, setFixingStartup] = useState(false);
+  const { requestSudoPassword } = useSudoPrompt();
 
   useEffect(() => {
     const unsub = diagnostics.subscribe((all) => {
@@ -123,6 +135,12 @@ const Diagnostics = () => {
       setBrowserDiag(diag);
     } catch {
       setBrowserDiag(null);
+    }
+    try {
+      const doctor = await systemAPI.analyzeDoctorIssues();
+      setStartupIssues(doctor.issues || []);
+    } catch {
+      setStartupIssues([]);
     }
   };
 
@@ -196,8 +214,33 @@ const Diagnostics = () => {
     try {
       const r = await systemAPI.hermesDoctor();
       setLastResult(`hermes doctor (exit=${r.code}):\n${r.stdout || r.stderr || "(no output)"}`);
+      const parsed = await systemAPI.analyzeDoctorIssues([r.stdout, r.stderr].filter(Boolean).join("\n"));
+      setStartupIssues(parsed.issues || []);
     } finally {
       setRunning(null);
+    }
+  };
+
+  const handleFixStartupIssues = async () => {
+    setFixingStartup(true);
+    try {
+      const pw = await requestSudoPassword("fix startup reliability issues for Hermes");
+      if (pw === null) {
+        toast({ title: "Startup fix cancelled" });
+        return;
+      }
+      const result = await systemAPI.runStartupAutoFix({ sudoPassword: pw });
+      const detail = result.actions.length > 0 ? result.actions.join("\n") : "No automatic actions were needed.";
+      setLastResult(`Startup auto-fix:\n${detail}`);
+      setStartupIssues(result.issues || []);
+      if (result.success) {
+        toast({ title: "Startup issues fixed", description: "Core startup checks now look healthy." });
+      } else {
+        toast({ title: "Startup issues remain", description: result.error || "Review details below.", variant: "destructive" });
+      }
+      await refreshSummaries();
+    } finally {
+      setFixingStartup(false);
     }
   };
 
@@ -417,16 +460,37 @@ const Diagnostics = () => {
 
       <GlassCard className="p-4 space-y-3">
         <h2 className="text-sm font-semibold">Actionable issues</h2>
-        {actionableIssues.length === 0 ? (
+        {actionableIssues.length === 0 && startupIssues.length === 0 ? (
           <p className="text-xs text-muted-foreground">No obvious configuration issues detected.</p>
         ) : (
-          <ul className="space-y-2">
+          <div className="space-y-3">
+            {startupIssues.length > 0 && (
+              <div className="space-y-2">
+                {startupIssues.map((issue) => (
+                  <div key={issue.id} className="text-xs text-foreground rounded-md border border-border/60 bg-background/30 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{issue.title}</span>
+                      <Badge variant={issue.severity === "error" ? "destructive" : "outline"} className="text-[10px]">
+                        {issue.severity}
+                      </Badge>
+                    </div>
+                    <p className="text-muted-foreground mt-1">{issue.detail}</p>
+                  </div>
+                ))}
+                <Button onClick={handleFixStartupIssues} disabled={fixingStartup} variant="secondary" size="sm">
+                  <Wrench className={cn("w-3.5 h-3.5 mr-1.5", fixingStartup && "animate-spin")} />
+                  {fixingStartup ? "Fixing startup issues…" : "Fix startup issues"}
+                </Button>
+              </div>
+            )}
+            <ul className="space-y-2">
             {actionableIssues.map((issue) => (
               <li key={issue} className="text-xs text-foreground rounded-md border border-border/60 bg-background/30 px-3 py-2">
                 {issue}
               </li>
             ))}
-          </ul>
+            </ul>
+          </div>
         )}
       </GlassCard>
 

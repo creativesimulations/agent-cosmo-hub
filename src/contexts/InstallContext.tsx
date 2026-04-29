@@ -428,6 +428,15 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       });
 
       flushBufferedLine();
+      const parsed = await systemAPI.analyzeDoctorIssues([result.stdout, result.stderr].filter(Boolean).join("\n")).catch(() => null);
+      if (parsed?.issues?.length) {
+        setDoctorOutput((prev) => [
+          ...prev,
+          "",
+          "── Normalized startup issues ─────────────────",
+          ...parsed.issues.map((i: { severity: string; title: string; detail: string }) => `${i.severity.toUpperCase()}: ${i.title} — ${i.detail}`),
+        ]);
+      }
 
       // Post-doctor verification per Hermes docs:
       //   1. `hermes config check` — schema validation

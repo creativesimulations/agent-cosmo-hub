@@ -57,6 +57,7 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
   });
   const inFlight = useRef(false);
   const autoStartedRef = useRef(false);
+  const startupBootstrapRef = useRef(false);
 
   // Stamp / clear the uptime start time. The timer should only run while
   // BOTH the agent is connected (configured) AND the user hasn't switched
@@ -141,6 +142,16 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
     autoStartedRef.current = true;
     void systemAPI.hermesStatus().catch(() => {});
   }, [settings.autoStartAgent, connected]);
+
+  // Global one-time startup bootstrap to reduce "works only after visiting Channels"
+  // failures. Safe/idempotent and guarded so it runs once per app session.
+  useEffect(() => {
+    if (!connected || startupBootstrapRef.current) return;
+    startupBootstrapRef.current = true;
+    void systemAPI.bootstrapStartupHealth().catch(() => {
+      // Keep startup resilient; diagnostics page exposes details and fixes.
+    });
+  }, [connected]);
 
   // Listen for tray-menu toggles so the Dashboard switch stays in sync.
   useEffect(() => {
