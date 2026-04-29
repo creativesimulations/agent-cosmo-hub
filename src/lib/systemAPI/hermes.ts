@@ -1657,7 +1657,7 @@ export const hermesAPI = {
         'hermes gateway start 2>&1',
         'RC=$?',
         'if [ "$RC" -ne 0 ]; then',
-        '  hermes gateway install 2>&1 || hermes gateway enable 2>&1 || true',
+        '  hermes gateway install 2>&1 || hermes gateway setup 2>&1 || true',
         '  hermes gateway start 2>&1',
         '  RC=$?',
         'fi',
@@ -1880,7 +1880,7 @@ export const hermesAPI = {
   async stopGateway(): Promise<CommandResult> {
     agentLogs.push({ source: 'gateway', level: 'info', summary: 'Stopping messaging gateway…' });
     const r = await runHermesCli(
-      'hermes gateway stop 2>&1 || hermes gateway disable 2>&1 || hermes gateway status 2>&1',
+      'hermes gateway stop 2>&1 || hermes gateway status 2>&1',
       { timeout: 30000 },
     );
     agentLogs.push({
