@@ -86,31 +86,6 @@ const stripAnsiLike = (value: string): string => {
   return out;
 };
 
-// #region agent log
-/** NDJSON debug ingest — session `691c96`; no secrets / no PII in payloads. */
-function waSetupDebugLog(
-  location: string,
-  message: string,
-  hypothesisId: string,
-  data: Record<string, unknown>,
-  runId = "pre-fix",
-) {
-  void fetch("http://127.0.0.1:7544/ingest/13d5d95c-e042-47dd-9c7b-02723faafae2", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "691c96" },
-    body: JSON.stringify({
-      sessionId: "691c96",
-      runId,
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-}
-// #endregion
-
 const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProps) => {
   const { refreshProbes } = useCapabilities();
   const bumpMessagingProbe = useCallback(() => {
@@ -521,24 +496,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         const bridge = await systemAPI.getWhatsAppBridgeStatus();
         const sessionOk = !!(paired.success && paired.paired);
         const bridgeOk = !!(bridge.success && bridge.running && bridge.whatsappActive);
-        // #region agent log
-        waSetupDebugLog(
-          "ChannelWizard.tsx:runTest:whatsapp",
-          "session vs bridge before gate",
-          "F",
-          {
-            sessionOk,
-            bridgeOk,
-            pairedSuccess: paired.success,
-            bridgeRunning: bridge.running,
-            bridgeWhatsappActive: bridge.whatsappActive,
-            bridgeSource: bridge.source,
-            stateLen: (bridge.gatewayStateJson || "").length,
-            statusLen: (bridge.statusOutput || "").length,
-            healthLen: (bridge.bridgeHealthJson || "").length,
-          },
-        );
-        // #endregion
         if (!sessionOk && !bridgeOk) {
           if (!paired.success) {
             setTestResult("fail");
@@ -626,49 +583,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaStatusHint("Verifying WhatsApp bridge connection…");
     const deadline = Date.now() + 90000;
     let lastHealth: Awaited<ReturnType<typeof systemAPI.getWhatsAppBridgeStatus>> | null = null;
-    // #region agent log
-    waSetupDebugLog(
-      "ChannelWizard.tsx:restartWa:pollWindow",
-      "health poll started after startGateway",
-      "D",
-      { windowMs: 90000 },
-    );
-    // #endregion
-    let pollI = 0;
     while (Date.now() < deadline) {
-      pollI += 1;
       const h = await systemAPI.getWhatsAppBridgeStatus();
       lastHealth = h;
-      // #region agent log
-      waSetupDebugLog(
-        "ChannelWizard.tsx:restartWa:pollTick",
-        "getWhatsAppBridgeStatus",
-        "A,B,C,D,E",
-        {
-          pollI,
-          msLeft: Math.max(0, deadline - Date.now()),
-          running: h.running,
-          whatsappActive: h.whatsappActive,
-          source: h.source,
-          bridgeTailLen: (h.bridgeLogTail || "").length,
-          statusLen: (h.statusOutput || "").length,
-          stateLen: (h.gatewayStateJson || "").length,
-        },
-      );
-      // #endregion
       if (h.running && h.whatsappActive) break;
       await new Promise((res) => setTimeout(res, 2500));
     }
     setWaStatusHint("");
     if (lastHealth?.running && lastHealth.whatsappActive) {
-      // #region agent log
-      waSetupDebugLog(
-        "ChannelWizard.tsx:restartWa:success",
-        "finalize live",
-        "A,B,C",
-        { pollI, source: lastHealth.source },
-      );
-      // #endregion
       setFormError("");
       return "live";
     }
@@ -680,23 +602,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     const diag = await systemAPI
       .getWhatsAppRuntimeDiagnostic()
       .catch(() => null);
-    // #region agent log
-    waSetupDebugLog(
-      "ChannelWizard.tsx:restartWa:timeoutFail",
-      "finalize failed after poll window",
-      "A,B,C,D,F",
-      {
-        pollI,
-        lastRunning: lastHealth?.running,
-        lastWhatsappActive: lastHealth?.whatsappActive,
-        lastSource: lastHealth?.source,
-        failureKind: failure.kind,
-        diagShim: diag?.shimVersion ?? "n/a",
-        diagAdapterPatched: diag?.adapterPatched ?? null,
-        diagBridgeLogNode18: diag?.bridgeLogShowsNode18 ?? null,
-      },
-    );
-    // #endregion
     const tail = (lastHealth?.bridgeLogTail || lastHealth?.statusOutput || "").trim();
     const logR = await systemAPI.readWhatsAppBridgeLogTail(100);
     const hint = (logR.content || tail).split("\n").slice(-20).join("\n").trim();

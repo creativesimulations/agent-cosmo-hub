@@ -13,6 +13,7 @@ import {
   Clock,
   Globe,
   Wrench,
+  Search,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -65,6 +66,8 @@ const Diagnostics = () => {
   const [selfTest, setSelfTest] = useState<Awaited<ReturnType<typeof systemAPI.runBrowserSelfTest>> | null>(null);
   const [selfTestBusy, setSelfTestBusy] = useState(false);
   const [showAllCommands, setShowAllCommands] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [commandScope, setCommandScope] = useState<"all" | "gateway" | "whatsapp" | "hermes" | "system">("all");
 
   useEffect(() => {
     const unsub = diagnostics.subscribe((all) => {
@@ -241,6 +244,51 @@ const Diagnostics = () => {
     toast({ title: "Copied", description: `${entries.length} log entries copied` });
   };
 
+  const copyLatestFailureBundle = async () => {
+    const firstFail = entries.find((e) => !e.success);
+    if (!firstFail) {
+      toast({ title: "No failures", description: "There are no failing command entries to copy." });
+      return;
+    }
+    const payload = [
+      `label=${firstFail.label}`,
+      `time=${new Date(firstFail.timestamp).toISOString()}`,
+      `cwd=${firstFail.cwd || "(unknown)"}`,
+      `phase=${firstFail.phase}`,
+      `exit=${firstFail.exitCode ?? "—"}`,
+      `status=${firstFail.status}`,
+      "",
+      "$ " + firstFail.command,
+      firstFail.stdout ? `\n--- stdout ---\n${firstFail.stdout}` : "",
+      firstFail.stderr ? `\n--- stderr ---\n${firstFail.stderr}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    await navigator.clipboard.writeText(payload);
+    toast({ title: "Copied latest failure bundle", description: "Redacted command details copied." });
+  };
+
+  const downloadFiltered = () => {
+    const body = visibleEntries.map((e) =>
+      [
+        `time=${new Date(e.timestamp).toISOString()} label=${e.label} phase=${e.phase} status=${e.status} exit=${e.exitCode ?? "—"} duration=${e.durationMs}ms`,
+        `cwd=${e.cwd || "(unknown)"}`,
+        `$ ${e.command}`,
+        e.stdout ? `--- stdout ---\n${e.stdout.trimEnd()}` : "",
+        e.stderr ? `--- stderr ---\n${e.stderr.trimEnd()}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    ).join("\n\n");
+    const blob = new Blob([body], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ronbot-app-diagnostics-filtered-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const downloadAll = () => {
     const blob = new Blob([diagnostics.toText()], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
@@ -280,19 +328,30 @@ const Diagnostics = () => {
     if (browserDiag.internetPermission !== "allow") actionableIssues.push("Internet permission is not set to allow.");
   }
 
-  const visibleEntries = showAllCommands ? entries : entries.filter((e) => !e.success);
+  const visibleEntries = (showAllCommands ? entries : entries.filter((e) => !e.success)).filter((e) => {
+    const scopeMatch =
+      commandScope === "all" ||
+      (commandScope === "gateway" && /gateway/i.test(e.command)) ||
+      (commandScope === "whatsapp" && /whatsapp|baileys/i.test(e.command + e.stdout + e.stderr)) ||
+      (commandScope === "hermes" && /hermes/i.test(e.command)) ||
+      (commandScope === "system" && !/hermes|gateway|whatsapp|baileys/i.test(e.command));
+    if (!scopeMatch) return false;
+    const q = commandQuery.trim().toLowerCase();
+    if (!q) return true;
+    return [e.command, e.stdout, e.stderr, e.cwd || "", e.label].join("\n").toLowerCase().includes(q);
+  });
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
       <div>
         <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
           <Activity className="w-6 h-6 text-primary" />
-          Diagnostics
+          App Diagnostics
         </h1>
         <p className="text-sm text-muted-foreground">
           View current state and fixable errors first. Technical command logs are available below when needed.{" "}
           <a href="#/logs" className="text-primary hover:underline">
-            Looking for chat history or agent activity? See Logs →
+            Looking for chat history or agent activity? See Agent Logs →
           </a>
         </p>
       </div>
@@ -687,7 +746,7 @@ const Diagnostics = () => {
       <GlassCard className="p-4 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold">
-            Shell command log <span className="text-muted-foreground font-normal">({visibleEntries.length} shown / {entries.length} total)</span>
+            Runtime command telemetry <span className="text-muted-foreground font-normal">({visibleEntries.length} shown / {entries.length} total)</span>
           </h2>
           <div className="flex gap-1">
             <Button
@@ -697,10 +756,33 @@ const Diagnostics = () => {
             >
               {showAllCommands ? "Hide successful" : "Show all"}
             </Button>
+            <Button size="sm" variant="ghost" onClick={copyLatestFailureBundle}>Copy latest failure</Button>
+            <Button size="sm" variant="ghost" onClick={downloadFiltered}>Download filtered</Button>
             <Button size="sm" variant="ghost" onClick={copyAll}><Copy className="w-3 h-3 mr-1" /> Copy</Button>
             <Button size="sm" variant="ghost" onClick={downloadAll}><Download className="w-3 h-3 mr-1" /> Download</Button>
             <Button size="sm" variant="ghost" onClick={() => diagnostics.clear()}><Trash2 className="w-3 h-3 mr-1" /> Clear</Button>
           </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[280px] flex-1">
+            <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              value={commandQuery}
+              onChange={(e) => setCommandQuery(e.target.value)}
+              placeholder="Search command, output, cwd..."
+              className="w-full h-8 pl-8 pr-2 rounded-md border border-border/60 bg-background/50 text-xs"
+            />
+          </div>
+          {(["all", "gateway", "whatsapp", "hermes", "system"] as const).map((scope) => (
+            <Button
+              key={scope}
+              size="sm"
+              variant={commandScope === scope ? "default" : "ghost"}
+              onClick={() => setCommandScope(scope)}
+            >
+              {scope}
+            </Button>
+          ))}
         </div>
 
         {visibleEntries.length === 0 ? (
@@ -736,11 +818,21 @@ const Diagnostics = () => {
                       {e.command}
                     </span>
                     <span className="text-[10px] text-muted-foreground shrink-0 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />{e.durationMs}ms · exit={e.exitCode ?? "—"}
+                      <Clock className="w-3 h-3" />{e.durationMs}ms · {e.phase} · exit={e.exitCode ?? "—"}
                     </span>
                   </button>
                   {isOpen && (
                     <div className="px-3 pb-3 space-y-2 text-[11px] font-mono">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <div className="p-2 rounded bg-background/40 border border-white/5">
+                          <p className="text-muted-foreground mb-1">cwd</p>
+                          <p className="break-all">{e.cwd || "(unknown)"}</p>
+                        </div>
+                        <div className="p-2 rounded bg-background/40 border border-white/5">
+                          <p className="text-muted-foreground mb-1">status</p>
+                          <p>{e.status}{e.redacted ? " · redacted" : ""}</p>
+                        </div>
+                      </div>
                       <div>
                         <p className="text-muted-foreground mb-1">Command</p>
                         <pre className="p-2 rounded bg-background/40 border border-white/5 whitespace-pre-wrap break-all">{e.command}</pre>

@@ -36,10 +36,10 @@ const advancedNavItems = [
   { path: "/models", icon: Cpu, label: "LLM Config" },
   { path: "/secrets", icon: KeyRound, label: "Secrets" },
   { path: "/agents", icon: Bot, label: "Sub-Agents" },
-  { path: "/logs", icon: FileText, label: "Logs" },
+  { path: "/logs", icon: FileText, label: "Agent Logs" },
   { path: "/updates", icon: RefreshCw, label: "Updates" },
   { path: "/backups", icon: Archive, label: "Backups" },
-  { path: "/diagnostics", icon: Activity, label: "Diagnostics" },
+  { path: "/diagnostics", icon: Activity, label: "App Diagnostics" },
   { path: "/terminal", icon: Terminal, label: "Terminal" },
 ];
 

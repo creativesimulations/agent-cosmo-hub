@@ -1,6 +1,7 @@
 import { isElectron } from './types';
 import type { CommandResult, PlatformInfo, DiskSpaceInfo } from './types';
 import { diagnostics, truncateForLog } from '@/lib/diagnostics';
+import { redactLogText } from '@/lib/logRedaction';
 
 const labelForCommand = (cmd: string): string => {
   const trimmed = cmd.trim();
@@ -43,17 +44,22 @@ export const coreAPI = {
 
   async runCommand(cmd: string, options?: Record<string, unknown>): Promise<CommandResult> {
     const start = Date.now();
+    const cwd = typeof options?.cwd === 'string' ? options.cwd : undefined;
     const result = isElectron()
       ? await window.electronAPI!.runCommand(cmd, options)
       : await simulateCommand(cmd);
     diagnostics.push({
       label: labelForCommand(cmd),
-      command: truncateForLog(cmd, 2000),
+      command: truncateForLog(redactLogText(cmd), 2000),
+      cwd,
+      phase: 'exec',
+      status: result.success ? 'ok' : 'error',
       exitCode: typeof result.code === 'number' ? result.code : null,
       success: result.success,
-      stdout: truncateForLog(result.stdout || ''),
-      stderr: truncateForLog(result.stderr || ''),
+      stdout: truncateForLog(redactLogText(result.stdout || '')),
+      stderr: truncateForLog(redactLogText(result.stderr || '')),
       durationMs: Date.now() - start,
+      redacted: true,
     });
     return result;
   },
@@ -64,15 +70,20 @@ export const coreAPI = {
     onOutput?: (event: Omit<CommandOutputEvent, 'streamId'>) => void,
   ): Promise<CommandResult> {
     const start = Date.now();
+    const cwd = typeof options?.cwd === 'string' ? options.cwd : undefined;
     const finalize = (result: CommandResult) => {
       diagnostics.push({
         label: labelForCommand(cmd),
-        command: truncateForLog(cmd, 2000),
+        command: truncateForLog(redactLogText(cmd), 2000),
+        cwd,
+        phase: 'stream',
+        status: result.success ? 'ok' : 'error',
         exitCode: typeof result.code === 'number' ? result.code : null,
         success: result.success,
-        stdout: truncateForLog(result.stdout || ''),
-        stderr: truncateForLog(result.stderr || ''),
+        stdout: truncateForLog(redactLogText(result.stdout || '')),
+        stderr: truncateForLog(redactLogText(result.stderr || '')),
         durationMs: Date.now() - start,
+        redacted: true,
       });
       return result;
     };

@@ -319,7 +319,7 @@ const AgentChat = () => {
                       onClick={() => { window.location.hash = "#/diagnostics"; }}
                     >
                       <AlertCircle className="w-3 h-3 mr-1" />
-                      Open Diagnostics
+                      Open App Diagnostics
                     </Button>
                   )}
                   {msg.permissionMismatch && (() => {
@@ -347,7 +347,7 @@ const AgentChat = () => {
                               <span className="font-semibold">{m.agentSetting}</span>, but the agent acted without prompting you.
                               {m.detail ? ` ${m.detail}` : ""}{" "}
                               The agent may not honor per-action approval for this category. Switch the setting to{" "}
-                              <span className="font-semibold">Deny</span> to block it entirely, or check Diagnostics for the active permissions block.
+                              <span className="font-semibold">Deny</span> to block it entirely, or check App Diagnostics for the active permissions block.
                             </p>
                           ) : (
                             <p className="text-foreground/90">
@@ -364,7 +364,7 @@ const AgentChat = () => {
                               className="text-warning hover:underline"
                               onClick={() => { window.location.hash = "#/diagnostics"; }}
                             >
-                              Open Diagnostics →
+                              Open App Diagnostics →
                             </button>
                           </div>
                         </div>

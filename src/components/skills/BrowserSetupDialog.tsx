@@ -267,11 +267,11 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
         log("⚠ hermes-cli toolset missing from config.yaml — running repair…");
         const repair = await systemAPI.repairConfig().catch(() => null);
         if (!repair?.success) {
-          log("✗ Couldn't add hermes-cli toolset automatically. Open Diagnostics → Repair config.");
+          log("✗ Couldn't add hermes-cli toolset automatically. Open App Diagnostics → Repair config.");
           toast.error("Browser tool not registered", {
-            description: "Open Diagnostics and click Repair config, then re-run setup.",
+            description: "Open App Diagnostics and click Repair config, then re-run setup.",
           });
-          setActionError("Browser tool not registered. Open Diagnostics and click Repair config.");
+          setActionError("Browser tool not registered. Open App Diagnostics and click Repair config.");
           return false;
         }
         log("✓ hermes-cli toolset added (browser, web, terminal, file… now registered).");
@@ -594,7 +594,7 @@ const BrowserSetupDialog = ({ open, onOpenChange, onConfigured }: BrowserSetupDi
       toast.success("Local Chrome connected", {
         description: probe.ok
           ? "Real browser navigation verified. Send Ron a new message to use it."
-          : "Connected, but the navigation probe didn't complete. Open Diagnostics → Browser self-test for details.",
+          : "Connected, but the navigation probe didn't complete. Open App Diagnostics → Browser self-test for details.",
       });
       setShowSearchCta(true);
       onConfigured?.();

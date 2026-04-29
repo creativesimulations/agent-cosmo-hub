@@ -479,7 +479,7 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
             "── Browser stack ──────────────────────────────",
             bst.hermesCliToolsetLoaded
               ? "✓ Browser tool registered (hermes-cli toolset loaded)"
-              : "✗ Browser tool NOT registered — run Diagnostics → Repair config",
+              : "✗ Browser tool NOT registered — run App Diagnostics → Repair config",
             bst.cdpUrl
               ? bst.cdpReachable
                 ? `✓ CDP reachable at ${bst.cdpUrl}${bst.cdpVersion ? ` (${bst.cdpVersion})` : ""}`

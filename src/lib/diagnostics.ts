@@ -11,11 +11,15 @@ export interface DiagEntry {
   timestamp: number;
   label: string;
   command: string;
+  cwd?: string;
+  phase: 'exec' | 'stream';
+  status: 'ok' | 'error';
   exitCode: number | null;
   success: boolean;
   stdout: string;
   stderr: string;
   durationMs: number;
+  redacted?: boolean;
 }
 
 const MAX = 200;
@@ -59,7 +63,8 @@ export const diagnostics = {
     return diagnostics.list().map((e) => {
       const ts = new Date(e.timestamp).toISOString();
       return [
-        `── [${ts}] ${e.label} (${e.durationMs}ms, exit=${e.exitCode}, ok=${e.success}) ──`,
+        `── [${ts}] ${e.label} (${e.phase}, ${e.durationMs}ms, exit=${e.exitCode}, ok=${e.success}) ──`,
+        e.cwd ? `cwd: ${e.cwd}` : '',
         `$ ${e.command}`,
         e.stdout ? `--- stdout ---\n${e.stdout.trimEnd()}` : '',
         e.stderr ? `--- stderr ---\n${e.stderr.trimEnd()}` : '',

@@ -38,6 +38,8 @@ const sourceLabels: Record<AgentLogSource, string> = {
 };
 
 const ALL_LEVELS: AgentLogLevel[] = ["debug", "info", "warn", "error"];
+const ALL_SOURCES: AgentLogSource[] = ["chat", "doctor", "install", "update", "start", "gateway", "system"];
+type TimeWindow = "all" | "15m" | "1h" | "24h";
 
 const LogViewer = () => {
   const [search, setSearch] = useState("");
@@ -45,6 +47,8 @@ const LogViewer = () => {
   const [paused, setPaused] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [entries, setEntries] = useState<AgentLogEntry[]>([]);
+  const [activeSources, setActiveSources] = useState<AgentLogSource[]>(ALL_SOURCES);
+  const [timeWindow, setTimeWindow] = useState<TimeWindow>("all");
   const frozenRef = useRef<AgentLogEntry[] | null>(null);
 
   useEffect(() => {
@@ -82,10 +86,21 @@ const LogViewer = () => {
     });
   };
 
+  const toggleSource = (source: AgentLogSource) => {
+    setActiveSources((prev) =>
+      prev.includes(source) ? prev.filter((s) => s !== source) : [...prev, source]
+    );
+  };
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const now = Date.now();
+    const windowMs =
+      timeWindow === "all" ? Infinity : timeWindow === "15m" ? 15 * 60_000 : timeWindow === "1h" ? 60 * 60_000 : 24 * 60 * 60_000;
     return entries.filter((e) => {
       if (!activeLevels.includes(e.level)) return false;
+      if (!activeSources.includes(e.source)) return false;
+      if (now - e.timestamp > windowMs) return false;
       if (!q) return true;
       return (
         e.summary.toLowerCase().includes(q) ||
@@ -93,7 +108,9 @@ const LogViewer = () => {
         (e.detail?.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [entries, search, activeLevels]);
+  }, [entries, search, activeLevels, activeSources, timeWindow]);
+
+  const latestError = useMemo(() => filtered.find((e) => e.level === "error"), [filtered]);
 
   const handleExport = () => {
     const blob = new Blob([agentLogs.toText()], { type: "text/plain" });
@@ -111,16 +128,30 @@ const LogViewer = () => {
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <FileText className="w-6 h-6 text-primary" />
-            Logs
+            Agent Logs
           </h1>
           <p className="text-sm text-muted-foreground">
             Agent activity feed — chat turns, doctor runs, updates, and lifecycle events.{" "}
             <Link to="/diagnostics" className="text-primary hover:underline inline-flex items-center gap-1">
-              <Activity className="w-3 h-3" /> Need raw shell commands? Open Diagnostics
+              <Activity className="w-3 h-3" /> Need runtime commands? Open App Diagnostics
             </Link>
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              if (!latestError) return;
+              setExpanded((prev) => new Set(prev).add(latestError.id));
+              const el = document.getElementById(`agent-log-row-${latestError.id}`);
+              el?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+            disabled={!latestError}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <AlertCircle className="w-4 h-4 mr-1" /> Jump to latest error
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -175,6 +206,36 @@ const LogViewer = () => {
             </button>
           ))}
         </div>
+        <div className="flex items-center gap-1">
+          {ALL_SOURCES.map((source) => (
+            <button
+              key={source}
+              onClick={() => toggleSource(source)}
+              className={cn(
+                "px-2.5 py-1 rounded-md text-xs font-medium transition-all border",
+                activeSources.includes(source)
+                  ? "bg-white/10 text-foreground border-white/20"
+                  : "bg-white/5 text-muted-foreground/40 border-transparent"
+              )}
+            >
+              {sourceLabels[source]}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1">
+          {(["all", "15m", "1h", "24h"] as TimeWindow[]).map((w) => (
+            <button
+              key={w}
+              onClick={() => setTimeWindow(w)}
+              className={cn(
+                "px-2 py-1 rounded-md text-xs font-medium border transition-all",
+                timeWindow === w ? "bg-primary/15 text-primary border-primary/20" : "bg-white/5 text-muted-foreground border-transparent"
+              )}
+            >
+              {w}
+            </button>
+          ))}
+        </div>
       </div>
 
       <GlassCard className="flex-1 overflow-hidden p-0">
@@ -199,6 +260,7 @@ const LogViewer = () => {
                   key={e.id}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
+                  id={`agent-log-row-${e.id}`}
                   className="hover:bg-white/[0.02] transition-colors"
                 >
                   <button

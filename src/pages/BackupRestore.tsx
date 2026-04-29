@@ -199,7 +199,7 @@ const BackupRestore = () => {
       toast.success("Backup created", { description: `${name}.tar.gz` });
       void loadBackups();
     } else {
-      const detail = (result.stderr || result.stdout).split("\n")[0] || "Could not create archive — check Diagnostics.";
+      const detail = (result.stderr || result.stdout).split("\n")[0] || "Could not create archive — check App Diagnostics.";
       setActionError(detail);
       toast.error("Backup failed", {
         description: detail,

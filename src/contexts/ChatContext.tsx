@@ -653,7 +653,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     content: result.success && !result.missingKey
                       ? reply
                       : matFailed
-                        ? `Failed to sync your secrets to the agent. Open Diagnostics for the exact shell error.\n\n${result.stderr || ""}`
+                        ? `Failed to sync your secrets to the agent. Open App Diagnostics for the exact shell error.\n\n${result.stderr || ""}`
                         : result.missingKey
                           ? `No API key found for ${result.missingKey.provider}. Add ${result.missingKey.envVar} in the Secrets tab to start chatting.`
                           : `Error: ${result.stderr || reply}`,
