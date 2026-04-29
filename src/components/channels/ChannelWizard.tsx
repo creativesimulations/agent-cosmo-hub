@@ -602,7 +602,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       return "fail";
     }
     setWaStatusHint("Verifying WhatsApp bridge connection…");
-    const deadline = Date.now() + 90000;
+    const deadline = Date.now() + 150000;
     let lastHealth: Awaited<ReturnType<typeof systemAPI.getWhatsAppBridgeStatus>> | null = null;
     while (Date.now() < deadline) {
       const h = await systemAPI.getWhatsAppBridgeStatus();

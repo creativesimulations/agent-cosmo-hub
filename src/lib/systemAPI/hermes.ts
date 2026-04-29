@@ -221,6 +221,9 @@ const runHermesCli = async (
   );
 };
 
+let listSkillsCache: { at: number; value: { success: boolean; skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string; requiredSecrets?: string[] }>; error?: string } } | null = null;
+const LIST_SKILLS_CACHE_TTL_MS = 10_000;
+
 /** Validate channel credentials with supported HTTP / filesystem checks. */
 const buildChannelCredentialTestScript = (channelId: string): string => {
   const allowed = new Set(['telegram', 'slack', 'whatsapp', 'discord', 'signal']);
@@ -1795,12 +1798,17 @@ export const hermesAPI = {
         'fi',
         // --- 4. bridge log tail (diagnostic only) ---
         'BRIDGE_TAIL=""',
-        'WA_FILES="$HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log"',
+        'WA_FILES="$HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log /tmp/hermes-gateway.log"',
         'for f in $WA_FILES; do',
         '  [ -f "$f" ] || continue',
         '  chunk="$(tail -n 120 "$f" 2>/dev/null || true)"',
         '  BRIDGE_TAIL="$BRIDGE_TAIL\n--- $f ---\n$chunk"',
         'done',
+        'if [ "$WA_OK" -eq 0 ] && [ -n "$BRIDGE_TAIL" ]; then',
+        '  if printf "%s" "$BRIDGE_TAIL" | grep -E -i "whatsapp.*(connected|ready|online)|connection.*open|\\[whatsapp\\].*(connected|ready)|gateway\\.run:.*✓.*whatsapp" >/dev/null 2>&1; then',
+        '    WA_OK=1; WA_SOURCE="log_tail"',
+        '  fi',
+        'fi',
         'echo "PROC_OK=$PROC_OK"',
         'echo "WA_OK=$WA_OK"',
         'echo "WA_SOURCE=$WA_SOURCE"',
@@ -1863,7 +1871,7 @@ export const hermesAPI = {
       [
         'set +e',
         'OUT=""',
-        'WA_FILES="$HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log"',
+        'WA_FILES="$HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log /tmp/hermes-gateway.log"',
         'for f in $WA_FILES; do',
         '  [ -f "$f" ] || continue',
         '  chunk="$(tail -n ' + String(n) + ' "$f" 2>/dev/null || true)"',
@@ -2773,7 +2781,7 @@ export const hermesAPI = {
     const r = await runHermesShell(
       [
         'set +e',
-        'WA_FILES="$HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log"',
+        'WA_FILES="$HOME/.hermes/platforms/whatsapp/bridge.log $HOME/.hermes/logs/whatsapp-bridge.log $HOME/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.log /tmp/hermes-gateway.log"',
         'TAIL=""',
         'for f in $WA_FILES; do',
         '  [ -f "$f" ] || continue',
@@ -3514,6 +3522,13 @@ model: ${options.model || 'openrouter/auto'}
     skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string; requiredSecrets?: string[] }>;
     error?: string;
   }> {
+    if (listSkillsCache && Date.now() - listSkillsCache.at < LIST_SKILLS_CACHE_TTL_MS) {
+      return {
+        success: listSkillsCache.value.success,
+        skills: listSkillsCache.value.skills.map((s) => ({ ...s })),
+        error: listSkillsCache.value.error,
+      };
+    }
     const script = [
       'set +e',
       'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
@@ -3563,7 +3578,8 @@ model: ${options.model || 'openrouter/auto'}
       '  done',
       '}',
       'walk_skills "$USER_SKILLS" user',
-      '[ -n "$BUNDLED_SKILLS" ] && walk_skills "$BUNDLED_SKILLS" bundled',
+      'if [ -n "$BUNDLED_SKILLS" ]; then walk_skills "$BUNDLED_SKILLS" bundled; fi',
+      'exit 0',
     ].join('\n');
 
     const result = await runHermesShell(script, { timeout: 30000 });
@@ -3628,7 +3644,13 @@ model: ${options.model || 'openrouter/auto'}
     skills.sort((a, b) =>
       a.category.localeCompare(b.category) || a.name.localeCompare(b.name),
     );
-    return { success: true, skills };
+    const finalResult = { success: true, skills } as {
+      success: boolean;
+      skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string; requiredSecrets?: string[] }>;
+      error?: string;
+    };
+    listSkillsCache = { at: Date.now(), value: finalResult };
+    return finalResult;
   },
 
   /** Read the `skills:` block from config.yaml and return enabled/disabled lists. */
