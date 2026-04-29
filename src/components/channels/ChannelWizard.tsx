@@ -130,6 +130,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const waStreamIdRef = useRef<string | null>(null);
   /** Prevents auto "Enable" from racing the mid-pairing gateway restart path. */
   const waWhatsAppFinalizeInFlightRef = useRef(false);
+  const waWhatsAppFinalizeCompletedRef = useRef(false);
   /** One automatic QR start per wizard open while on the WhatsApp test step. */
   const waAutoPairAttemptedForSessionRef = useRef(false);
   const prevWhatsAppTestResultRef = useRef<"idle" | "ok" | "fail">("idle");
@@ -158,6 +159,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     if (!open) return;
     setWaBridgeInactiveHint("");
     setStep(0);
+    waWhatsAppFinalizeCompletedRef.current = false;
     setTestResult("idle");
     prevWhatsAppTestResultRef.current = "idle";
     setTestError("");
@@ -556,6 +558,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   }, [channel]);
 
+  const beginWhatsAppFinalize = useCallback((): boolean => {
+    if (channel.id !== "whatsapp") return false;
+    if (!open || step !== testStep) return false;
+    if (waWhatsAppFinalizeCompletedRef.current) return false;
+    if (waWhatsAppFinalizeInFlightRef.current) return false;
+    waWhatsAppFinalizeInFlightRef.current = true;
+    return true;
+  }, [channel.id, open, step, testStep]);
+
   /** Stop/start gateway so a new WhatsApp session is picked up (shared by pairing completion + manual button). */
   const restartWhatsAppGatewayWithNewSession = useCallback(async (): Promise<"live" | "fail"> => {
     setWaBridgeInactiveHint("");
@@ -633,9 +644,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaStatusHint("Verifying WhatsApp bridge connection…");
     const deadline = Date.now() + 150000;
     let lastHealth: Awaited<ReturnType<typeof systemAPI.getWhatsAppBridgeStatus>> | null = null;
+    const otherPlatformWarnings = new Set<string>();
     while (Date.now() < deadline) {
       const h = await systemAPI.getWhatsAppBridgeStatus();
       lastHealth = h;
+      (h.nonWhatsappWarnings || []).forEach((line) => otherPlatformWarnings.add(line));
+      if (h.running && h.nonWhatsappWarnings?.length && !h.whatsappActive) {
+        setWaStatusHint("Gateway started with unrelated platform warnings; waiting for WhatsApp adapter…");
+      }
+      if (h.fatalWhatsappReason) break;
       if (h.running && h.whatsappActive) break;
       await new Promise((res) => setTimeout(res, 2500));
     }
@@ -676,6 +693,11 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         `WhatsApp bridge keeps crashing on Node ${failure.nodeVersion ?? "18.x"} — Baileys needs Node 20+. ` +
         `Click "Re-pair + Restart" to apply the runtime fix.` +
         (reasons.length ? `\n\nDiagnostics:\n${reasons.join("\n")}` : "");
+    } else if (lastHealth?.fatalWhatsappReason === "adapter-missing" || failure.kind === "adapter-missing") {
+      detail = `WhatsApp adapter is missing from the running gateway.\n${lastHealth?.fatalWhatsappSnippet || failure.snippet || "No adapter available for whatsapp."}`;
+    } else if (lastHealth?.fatalWhatsappReason === "bridge-not-configured" || failure.kind === "bridge-not-configured") {
+      detail =
+        `WhatsApp bridge runtime is not configured on this machine.\n${lastHealth?.fatalWhatsappSnippet || failure.snippet || "WhatsApp: Node.js not installed or bridge not configured."}`;
     } else {
       const combinedHint = `${tail}\n${hint}`.toLowerCase();
       if (
@@ -689,12 +711,16 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         detail =
           "Could not confirm WhatsApp because a previous gateway process was still active and blocked replacement. Retry finalization once.";
       } else {
-        detail = tail
-          ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
+        detail = hint
+          ? `Could not confirm WhatsApp after starting the gateway.\nWhatsApp status:\n${hint.split("\n").slice(-10).join("\n")}`
           : "Could not confirm WhatsApp after starting the gateway. Try pairing again.";
       }
     }
-    setFormError(detail + (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""));
+    const nonWhatsapp = Array.from(otherPlatformWarnings).slice(-8);
+    const nonWhatsappBlock = nonWhatsapp.length
+      ? `\n\nOther platform warnings (informational):\n${nonWhatsapp.join("\n")}`
+      : "";
+    setFormError(detail + nonWhatsappBlock + (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""));
     toast.error("WhatsApp bridge not confirmed", {
       description:
         failure.kind === "node-version" || diag?.bridgeLogShowsNode18
@@ -748,6 +774,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     waAutoPairAttemptedForSessionRef.current = false;
     prevWhatsAppTestResultRef.current = "idle";
     waWhatsAppFinalizeInFlightRef.current = false;
+    waWhatsAppFinalizeCompletedRef.current = false;
     const id = waStreamIdRef.current;
     if (id) {
       void systemAPI.killStream(id);
@@ -964,7 +991,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         allowedUsers: waAllowedUsersCurrent,
       });
       toast.success("WhatsApp linked");
-      waWhatsAppFinalizeInFlightRef.current = true;
+      if (!beginWhatsAppFinalize()) return;
       try {
         // Make absolutely sure WHATSAPP_ENABLED=true (and the access keys) are
         // in ~/.hermes/.env BEFORE we ask the gateway to start. Without this
@@ -999,6 +1026,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           }
         }
         bumpMessagingProbe();
+        waWhatsAppFinalizeCompletedRef.current = true;
         setWaBridgeInactiveHint("");
         toast.success(`${channel.name} channel enabled`, {
           description: "WhatsApp is now active. You can communicate with your agent using WhatsApp.",
@@ -1276,9 +1304,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     const becameOk = prev !== "ok" && testResult === "ok";
     if (!becameOk) return;
     if (!open || step !== testStep) return;
-    if (waWhatsAppFinalizeInFlightRef.current) return;
+    if (waWhatsAppFinalizeCompletedRef.current) return;
+    if (!beginWhatsAppFinalize()) return;
     void (async () => {
-      waWhatsAppFinalizeInFlightRef.current = true;
       try {
         const outcome = await restartWhatsAppGatewayWithNewSession();
         if (outcome === "fail") {
@@ -1286,6 +1314,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           return;
         }
         bumpMessagingProbe();
+        waWhatsAppFinalizeCompletedRef.current = true;
         toast.success(`${channel.name} channel enabled`, {
           description: "WhatsApp is now active. You can communicate with your agent using WhatsApp.",
         });
@@ -1296,7 +1325,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run only on first transition to ok
-  }, [testResult, open, channel.id, step, testStep]);
+  }, [testResult, open, channel.id, step, testStep, beginWhatsAppFinalize, restartWhatsAppGatewayWithNewSession, bumpMessagingProbe, channel.name, onComplete, onClose]);
 
   /**
    * Wipe a channel's leftover state so the user can start clean.

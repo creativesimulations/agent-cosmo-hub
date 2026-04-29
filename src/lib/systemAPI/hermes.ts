@@ -28,6 +28,14 @@ export const buildInstallerRunScript = (): string => INSTALLER_ENTRYPOINT;
 const INLINE_SCRIPT_LIMIT = 4096;
 
 type CommandOutputHandler = (chunk: { type: string; data?: string; code?: number }) => void;
+type WhatsAppFatalReason = 'adapter-missing' | 'bridge-not-configured' | 'node-version' | 'unknown';
+
+export interface WhatsAppGatewaySignalReport {
+  fatalWhatsappReason?: WhatsAppFatalReason;
+  fatalWhatsappSnippet?: string;
+  nonWhatsappWarnings: string[];
+  whatsappWarnings: string[];
+}
 
 export type StartupIssueSeverity = 'info' | 'warn' | 'error';
 export interface StartupIssue {
@@ -219,6 +227,41 @@ const runHermesCli = async (
     options,
     onOutput,
   );
+};
+
+const WHATSAPP_FATAL_HINTS: Array<{ reason: WhatsAppFatalReason; regex: RegExp }> = [
+  { reason: 'adapter-missing', regex: /no adapter available for whatsapp/i },
+  { reason: 'bridge-not-configured', regex: /whatsapp: node\.js not installed or bridge not configured/i },
+  { reason: 'node-version', regex: /Cannot destructure property 'subtle'|globalThis\.crypto\.subtle|baileys\/lib\/Utils\/crypto\.js/i },
+];
+
+export const analyzeWhatsAppGatewaySignals = (rawOutput: string): WhatsAppGatewaySignalReport => {
+  const lines = rawOutput
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const report: WhatsAppGatewaySignalReport = {
+    nonWhatsappWarnings: [],
+    whatsappWarnings: [],
+  };
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    if (!(lower.includes('warning') || lower.includes('error') || lower.includes('failed'))) continue;
+    const matchedFatal = WHATSAPP_FATAL_HINTS.find((entry) => entry.regex.test(line));
+    if (matchedFatal && !report.fatalWhatsappReason) {
+      report.fatalWhatsappReason = matchedFatal.reason;
+      report.fatalWhatsappSnippet = line;
+      continue;
+    }
+    if (lower.includes('whatsapp')) {
+      report.whatsappWarnings.push(line);
+      continue;
+    }
+    if (lower.includes('slack') || lower.includes('email') || lower.includes('telegram') || lower.includes('discord') || lower.includes('signal')) {
+      report.nonWhatsappWarnings.push(line);
+    }
+  }
+  return report;
 };
 
 let listSkillsCache: { at: number; value: { success: boolean; skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string; requiredSecrets?: string[] }>; error?: string } } | null = null;
@@ -1785,6 +1828,10 @@ export const hermesAPI = {
     bridgeLogTail: string;
     bridgeHealthJson: string;
     gatewayStateJson: string;
+    nonWhatsappWarnings: string[];
+    whatsappWarnings: string[];
+    fatalWhatsappReason?: WhatsAppFatalReason;
+    fatalWhatsappSnippet?: string;
     error?: string;
   }> {
     // Authoritative signals, in priority order:
@@ -1897,6 +1944,7 @@ export const hermesAPI = {
     const waOk = /WA_OK=1/.test(out);
     const sourceMatch = out.match(/WA_SOURCE=(\w+)/);
     const source = (sourceMatch?.[1] as 'gateway_state' | 'bridge_health' | 'cli_status' | 'log_tail' | 'none') || 'none';
+    const signals = analyzeWhatsAppGatewaySignals([statusOutput, bridgeLogTail, bridgeHealthJson, gatewayStateJson].filter(Boolean).join('\n'));
     return {
       success: r.success,
       running: procOk,
@@ -1906,6 +1954,10 @@ export const hermesAPI = {
       bridgeLogTail,
       bridgeHealthJson,
       gatewayStateJson,
+      nonWhatsappWarnings: signals.nonWhatsappWarnings,
+      whatsappWarnings: signals.whatsappWarnings,
+      fatalWhatsappReason: signals.fatalWhatsappReason,
+      fatalWhatsappSnippet: signals.fatalWhatsappSnippet,
       error: r.success ? undefined : (r.stderr || '').split('\n')[0] || undefined,
     };
   },
@@ -2827,7 +2879,7 @@ export const hermesAPI = {
    * actionable explanation instead of a wall of stack traces.
    */
   async classifyWhatsAppBridgeFailure(): Promise<{
-    kind: 'node-version' | 'unknown' | 'none';
+    kind: 'adapter-missing' | 'bridge-not-configured' | 'node-version' | 'unknown' | 'none';
     nodeVersion?: string;
     snippet?: string;
   }> {
@@ -2850,6 +2902,13 @@ export const hermesAPI = {
     );
     const tail = (r.stdout || '').split('----TAIL----').pop()?.trim() ?? '';
     if (!tail) return { kind: 'none' };
+    const signal = analyzeWhatsAppGatewaySignals(tail);
+    if (signal.fatalWhatsappReason === 'adapter-missing') {
+      return { kind: 'adapter-missing', snippet: signal.fatalWhatsappSnippet };
+    }
+    if (signal.fatalWhatsappReason === 'bridge-not-configured') {
+      return { kind: 'bridge-not-configured', snippet: signal.fatalWhatsappSnippet };
+    }
     if (
       tail.includes("Cannot destructure property 'subtle'") ||
       tail.includes('globalThis.crypto.subtle') ||
