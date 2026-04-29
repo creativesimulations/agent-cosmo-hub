@@ -1647,6 +1647,34 @@ export const hermesAPI = {
   /** Start the messaging gateway */
   async startGateway(): Promise<CommandResult> {
     agentLogs.push({ source: 'gateway', level: 'info', summary: 'Starting messaging gateway…' });
+    const platform = await coreAPI.getPlatform();
+    if (platform.isWindows) {
+      // Desktop app on Windows must route Hermes execution into WSL.
+      // Probe that route up-front so we fail fast with an actionable error
+      // instead of surfacing a generic WhatsApp finalization timeout later.
+      const wslProbe = await coreAPI.runCommand('wsl bash -lc "echo RONBOT_WSL_OK"', {
+        timeout: 10000,
+        displayCommand: 'wsl routing precheck',
+      });
+      const probeOut = `${wslProbe.stdout || ''}\n${wslProbe.stderr || ''}`;
+      if (!wslProbe.success || !/RONBOT_WSL_OK/.test(probeOut)) {
+        const msg =
+          'Windows desktop could not execute Hermes through WSL. Open WSL once, verify `wsl --status` succeeds, then retry WhatsApp setup.';
+        const failed: CommandResult = {
+          success: false,
+          stdout: wslProbe.stdout || '',
+          stderr: `${msg}${wslProbe.stderr ? `\n${wslProbe.stderr}` : ''}`,
+          code: typeof wslProbe.code === 'number' ? wslProbe.code : 1,
+        };
+        agentLogs.push({
+          source: 'gateway',
+          level: 'error',
+          summary: 'Gateway start blocked (WSL routing failed)',
+          detail: truncateForLog([failed.stdout, failed.stderr].filter(Boolean).join('\n')),
+        });
+        return failed;
+      }
+    }
     await materializeHermesEnv();
     // Some Hermes installs don't have the user-service unit registered yet.
     // Install/register the gateway service, then retry start before giving up.
@@ -1661,24 +1689,38 @@ export const hermesAPI = {
         'systemctl --user set-environment PATH="$PATH" 2>/dev/null || true',
         'hermes gateway start 2>&1',
         'RC=$?',
+        'COMBINED_LOG=""',
+        'if [ -f /tmp/hermes-gateway.log ]; then COMBINED_LOG="$(tail -n 120 /tmp/hermes-gateway.log 2>/dev/null || true)"; fi',
         'if [ "$RC" -ne 0 ]; then',
-        '  hermes gateway install 2>&1 || hermes gateway setup 2>&1 || true',
-        '  hermes gateway start 2>&1',
+        '  STATUS_OUT="$(hermes gateway status 2>&1 || true)"',
+        '  printf "%s\\n%s\\n" "$COMBINED_LOG" "$STATUS_OUT" | grep -Eqi "already running|pid [0-9]+" && RC=42',
+        'fi',
+        // First recovery path for stale/running gateway: restart in-place.
+        'if [ "$RC" -eq 42 ]; then',
+        '  echo "[gateway] detected running gateway; attempting restart"',
+        '  hermes gateway restart 2>&1',
         '  RC=$?',
         'fi',
         'if [ "$RC" -ne 0 ]; then',
-        '  hermes gateway status 2>&1 || true',
+        '  hermes gateway install 2>&1 || true',
+        '  hermes gateway start 2>&1',
+        '  RC=$?',
         'fi',
         // Last resort for environments where service units are unavailable:
-        // run gateway in background and verify a live process exists.
+        // force-replace with foreground command in background mode.
         'if [ "$RC" -ne 0 ]; then',
-        '  nohup hermes gateway >/tmp/hermes-gateway.log 2>&1 &',
-        '  sleep 2',
+        '  nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
+        '  sleep 3',
         '  pgrep -f "hermes gateway" >/dev/null 2>&1',
         '  if [ $? -eq 0 ]; then',
-        '    echo "[gateway] service unit missing; started in background mode"',
+        '    echo "[gateway] started in background replace mode"',
         '    RC=0',
+        '  else',
+        '    RC=1',
         '  fi',
+        'fi',
+        'if [ "$RC" -ne 0 ]; then',
+        '  hermes gateway status 2>&1 || true',
         'fi',
         'exit "$RC"',
       ].join('\n'),
@@ -1688,7 +1730,11 @@ export const hermesAPI = {
     const missingGatewayUnit =
       combined.includes('hermes-gateway.service') &&
       (combined.includes('not found') || combined.includes('could not be found'));
-    const startedInBackgroundFallback = combined.includes('[gateway] service unit missing; started in background mode');
+    const startedInBackgroundFallback = combined.includes('[gateway] started in background replace mode');
+    const interactiveGatewaySetupDetected =
+      combined.includes('gateway setup') ||
+      combined.includes('select [1-18]') ||
+      combined.includes('please enter a number');
     const normalized = missingGatewayUnit
       ? startedInBackgroundFallback
         ? { ...r, success: true }
@@ -1699,7 +1745,15 @@ export const hermesAPI = {
               (r.stderr?.trim() ? `${r.stderr.trim()}\n` : '') +
               'Gateway service unit is missing. Run `hermes gateway install` in a terminal, then retry channel setup.',
           }
-      : r;
+      : interactiveGatewaySetupDetected
+        ? {
+            ...r,
+            success: false,
+            stderr:
+              (r.stderr?.trim() ? `${r.stderr.trim()}\n` : '') +
+              'Gateway attempted to open an interactive setup flow. Ronbot only supports non-interactive startup here; retry setup and check App Diagnostics if this repeats.',
+          }
+        : r;
     agentLogs.push({
       source: 'gateway',
       level: normalized.success ? 'info' : 'error',

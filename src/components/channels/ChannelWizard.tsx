@@ -559,6 +559,23 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   /** Stop/start gateway so a new WhatsApp session is picked up (shared by pairing completion + manual button). */
   const restartWhatsAppGatewayWithNewSession = useCallback(async (): Promise<"live" | "fail"> => {
     setWaBridgeInactiveHint("");
+    setWaStatusHint("Checking runtime routing…");
+    const platform = await systemAPI.getPlatform().catch(() => null);
+    if (platform?.isWindows) {
+      const probe = await systemAPI.runCommand('wsl bash -lc "echo RONBOT_WSL_OK"', {
+        timeout: 10000,
+        displayCommand: "wsl routing probe",
+      });
+      const out = `${probe.stdout || ""}\n${probe.stderr || ""}`;
+      if (!probe.success || !/RONBOT_WSL_OK/.test(out)) {
+        const detail =
+          "Windows desktop could not run Hermes through WSL. Open a terminal and run `wsl --status`, then retry WhatsApp setup.";
+        setFormError(detail);
+        setWaStatusHint("");
+        toast.error("WSL routing check failed", { description: detail });
+        return "fail";
+      }
+    }
     await systemAPI.materializeEnv().catch(() => undefined);
     // Make sure the gateway will spawn the Baileys bridge with the managed
     // Node v20 runtime. Without this, systems with system Node 18.x crash
@@ -578,7 +595,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       toast.error("WhatsApp bridge runtime not ready", { description: detail });
       return "fail";
     }
-    setWaStatusHint("Restarting messaging gateway with new session…");
+    setWaStatusHint("Stopping and replacing messaging gateway…");
     // Kill any crash-looping gateway-managed bridge before we stop the
     // service, otherwise systemd/launchd respawns it on the wrong Node.
     await systemAPI
@@ -595,7 +612,19 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     await systemAPI.patchHermesWhatsAppAdapterForNode().catch(() => undefined);
     const r = await systemAPI.startGateway();
     if (!r.success) {
-      const detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
+      const combined = `${r.stdout || ""}\n${r.stderr || ""}`;
+      const lower = combined.toLowerCase();
+      let detail = r.stderr?.split("\n")[0] || "Check Logs for details.";
+      if (lower.includes("gateway setup") || lower.includes("select [1-18]") || lower.includes("please enter a number")) {
+        detail =
+          "Gateway entered an interactive setup screen, which this wizard cannot use. Ronbot now avoids this path; retry once. If it persists, open App Diagnostics.";
+      } else if (lower.includes("already running")) {
+        detail =
+          "Gateway was already running and could not be replaced automatically. Retry finalization; if it repeats, reset WhatsApp and run setup again.";
+      } else if (lower.includes("wsl") && lower.includes("not available")) {
+        detail =
+          "WSL gateway route is unavailable. Verify WSL is installed/running (`wsl --status`), then retry WhatsApp setup.";
+      }
       setFormError(detail);
       setWaStatusHint("");
       toast.error("Failed to start gateway", { description: detail });
@@ -648,9 +677,22 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         `Click "Re-pair + Restart" to apply the runtime fix.` +
         (reasons.length ? `\n\nDiagnostics:\n${reasons.join("\n")}` : "");
     } else {
-      detail = tail
-        ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
-        : "Could not confirm WhatsApp after starting the gateway. Try pairing again.";
+      const combinedHint = `${tail}\n${hint}`.toLowerCase();
+      if (
+        combinedHint.includes("gateway setup") ||
+        combinedHint.includes("select [1-18]") ||
+        combinedHint.includes("please enter a number")
+      ) {
+        detail =
+          "Could not confirm WhatsApp because gateway startup entered interactive setup unexpectedly. Retry once; if it repeats, open App Diagnostics and reset WhatsApp.";
+      } else if (combinedHint.includes("already running")) {
+        detail =
+          "Could not confirm WhatsApp because a previous gateway process was still active and blocked replacement. Retry finalization once.";
+      } else {
+        detail = tail
+          ? `Could not confirm WhatsApp after starting the gateway. Last output:\n${tail.split("\n").slice(-8).join("\n")}`
+          : "Could not confirm WhatsApp after starting the gateway. Try pairing again.";
+      }
     }
     setFormError(detail + (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""));
     toast.error("WhatsApp bridge not confirmed", {
