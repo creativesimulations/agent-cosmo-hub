@@ -2122,6 +2122,18 @@ export const hermesAPI = {
    * snapshotted — Hermes documents this after installing Node or changing PATH on macOS/Linux.
    */
   async refreshGatewayInstall(): Promise<CommandResult> {
+    const platform = await coreAPI.getPlatform();
+    if (platform.isWindows || platform.isWSL) {
+      // In WSL/manual-gateway mode, `hermes gateway install` reports systemd
+      // warnings and is not the right remediation path. Treat refresh as a
+      // no-op success to avoid noisy false failures in diagnostics/bootstrap.
+      return {
+        success: true,
+        stdout: '[gateway] skipped service install refresh in WSL/manual mode',
+        stderr: '',
+        code: 0,
+      };
+    }
     await materializeHermesEnv().catch(() => undefined);
     const r = await runHermesCli(
       [
@@ -2658,7 +2670,7 @@ export const hermesAPI = {
         '# Replace [\\"node\\", ...bridge_path...] with [_ronbot_node_bin(), ...]',
         'src2, n = re.subn(r"\\[\\s*\\\"node\\\"\\s*,", "[_ronbot_node_bin(),", src)',
         'if n == 0:',
-        '    sys.stderr.write(\\"no node literal found\\\\n\\")',
+        '    sys.stderr.write("no node literal found\\n")',
         '    sys.exit(2)',
         'p.write_text(src2)',
         'PY',
