@@ -169,16 +169,18 @@ async function ensureHermesChatCaps(): Promise<void> {
 
 const runHermesShell = async (
   script: string,
-  options?: Record<string, unknown> & { onStreamId?: (id: string) => void },
+  options?: Record<string, unknown> & { onStreamId?: (id: string) => void; displayCommand?: string },
   onOutput?: CommandOutputHandler,
 ): Promise<CommandResult> => {
   const cmd = await buildHermesShellCommand(script);
+  const displayCommand = options?.displayCommand || script;
+  const mergedOptions = { ...(options || {}), displayCommand };
   // If the caller wants a streamId (so it can kill the process later) we
   // must use the streaming path even when there's no onOutput handler.
   const needsStream = !!onOutput || !!options?.onStreamId;
   return needsStream
-    ? coreAPI.runCommandStream(cmd, options, onOutput || (() => { /* sink */ }))
-    : coreAPI.runCommand(cmd, options);
+    ? coreAPI.runCommandStream(cmd, mergedOptions, onOutput || (() => { /* sink */ }))
+    : coreAPI.runCommand(cmd, mergedOptions);
 };
 
 /** Prepended to Hermes CLI invocations so `npm`, Homebrew Node, etc. resolve (WhatsApp bridge). */

@@ -31,7 +31,7 @@ const primaryNavItems = [
 ];
 
 const advancedNavItems = [
-  { path: "/advanced", icon: Bot, label: "Advanced", showCapabilityBadge: true },
+  { path: "/advanced", icon: Bot, label: "Advanced" },
   { path: "/skills", icon: Sparkles, label: "Skills & Tools" },
   { path: "/models", icon: Cpu, label: "LLM Config" },
   { path: "/secrets", icon: KeyRound, label: "Secrets" },

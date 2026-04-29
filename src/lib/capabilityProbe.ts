@@ -112,8 +112,13 @@ const internetIsDenied = (yaml: string | null): boolean => {
 const checkPythonExtra = async (importName: string): Promise<boolean> => {
   if (typeof window === "undefined" || !window.electronAPI) return true; // can't check; assume ok
   try {
-    const cmd = `python3 -c "import ${importName}" 2>/dev/null && echo OK || (python -c "import ${importName}" 2>/dev/null && echo OK)`;
-    const r = await systemAPI.runCommand?.(cmd, { timeoutMs: 8000 });
+    const platform = await systemAPI.getPlatform();
+    const inner = `export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"; python3 -c "import ${importName}" 2>/dev/null && echo OK || (python -c "import ${importName}" 2>/dev/null && echo OK)`;
+    const cmd = platform.isWindows ? `wsl bash -lc '${inner}'` : `bash -lc '${inner}'`;
+    const r = await systemAPI.runCommand?.(cmd, {
+      timeoutMs: 8000,
+      displayCommand: `python import probe: ${importName}`,
+    });
     if (!r) return true;
     return /OK/.test((r.stdout as string) || "");
   } catch {

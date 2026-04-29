@@ -45,12 +45,13 @@ export const coreAPI = {
   async runCommand(cmd: string, options?: Record<string, unknown>): Promise<CommandResult> {
     const start = Date.now();
     const cwd = typeof options?.cwd === 'string' ? options.cwd : undefined;
+    const displayCommand = typeof options?.displayCommand === 'string' ? options.displayCommand : cmd;
     const result = isElectron()
       ? await window.electronAPI!.runCommand(cmd, options)
       : await simulateCommand(cmd);
     diagnostics.push({
       label: labelForCommand(cmd),
-      command: truncateForLog(redactLogText(cmd), 2000),
+      command: truncateForLog(redactLogText(displayCommand), 2000),
       cwd,
       phase: 'exec',
       status: result.success ? 'ok' : 'error',
@@ -71,10 +72,11 @@ export const coreAPI = {
   ): Promise<CommandResult> {
     const start = Date.now();
     const cwd = typeof options?.cwd === 'string' ? options.cwd : undefined;
+    const displayCommand = typeof options?.displayCommand === 'string' ? options.displayCommand : cmd;
     const finalize = (result: CommandResult) => {
       diagnostics.push({
         label: labelForCommand(cmd),
-        command: truncateForLog(redactLogText(cmd), 2000),
+        command: truncateForLog(redactLogText(displayCommand), 2000),
         cwd,
         phase: 'stream',
         status: result.success ? 'ok' : 'error',
