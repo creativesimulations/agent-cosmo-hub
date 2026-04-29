@@ -621,7 +621,30 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     // Re-apply patches AFTER refreshGatewayInstall (which rewrites the unit).
     await systemAPI.patchGatewayServicePathForWhatsApp().catch(() => undefined);
     await systemAPI.patchHermesWhatsAppAdapterForNode().catch(() => undefined);
-    const r = await systemAPI.startGateway();
+    const parseSlackConflictPid = (output: string): { hasConflict: boolean; pid?: number; snippet?: string } => {
+      const lines = output
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      for (const line of lines) {
+        const m = line.match(/slack app token already in use \(pid\s+(\d+)\)/i);
+        if (m) return { hasConflict: true, pid: Number(m[1]), snippet: line };
+        if (/non-retryable startup conflict:\s*slack:/i.test(line)) return { hasConflict: true, snippet: line };
+      }
+      return { hasConflict: false };
+    };
+    let r = await systemAPI.startGateway();
+    if (!r.success) {
+      const combined = `${r.stdout || ""}\n${r.stderr || ""}`;
+      const conflict = parseSlackConflictPid(combined);
+      if (conflict.hasConflict && conflict.pid) {
+        setWaStatusHint("Detected Slack token conflict, stopping old gateway process and retrying…");
+        const terminated = await systemAPI.terminateConflictingGatewayProcess(conflict.pid, "slack-token-lock");
+        if (terminated.terminated) {
+          r = await systemAPI.startGateway();
+        }
+      }
+    }
     if (!r.success) {
       const combined = `${r.stdout || ""}\n${r.stderr || ""}`;
       const lower = combined.toLowerCase();
@@ -632,6 +655,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       } else if (lower.includes("already running")) {
         detail =
           "Gateway was already running and could not be replaced automatically. Retry finalization; if it repeats, reset WhatsApp and run setup again.";
+      } else if (lower.includes("slack app token already in use") || lower.includes("non-retryable startup conflict")) {
+        detail =
+          "Gateway startup is blocked by a Slack token lock from another running process. Ronbot attempted auto-recovery once, but the lock is still active. Stop the other gateway process and retry.";
       } else if (lower.includes("wsl") && lower.includes("not available")) {
         detail =
           "WSL gateway route is unavailable. Verify WSL is installed/running (`wsl --status`), then retry WhatsApp setup.";

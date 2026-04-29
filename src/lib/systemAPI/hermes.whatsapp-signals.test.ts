@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeWhatsAppGatewaySignals } from "./hermes";
+import { analyzeWhatsAppGatewaySignals, parseSlackGatewayConflict } from "./hermes";
 
 describe("analyzeWhatsAppGatewaySignals", () => {
   it("keeps Slack warning informational when WhatsApp is healthy", () => {
@@ -40,5 +40,25 @@ ERROR hermes gateway start failed: service unavailable
 `);
     expect(report.fatalWhatsappReason).toBeUndefined();
     expect(report.nonWhatsappWarnings.length).toBe(0);
+  });
+});
+
+describe("parseSlackGatewayConflict", () => {
+  it("extracts Slack conflict PID from gateway output", () => {
+    const parsed = parseSlackGatewayConflict(`
+ERROR gateway.platforms.base: [Slack] Slack app token already in use (PID 405234). Stop the other gateway first.
+ERROR gateway.run: Gateway hit a non-retryable startup conflict: slack: Slack app token already in use (PID 405234).
+`);
+    expect(parsed.hasConflict).toBe(true);
+    expect(parsed.pid).toBe(405234);
+  });
+
+  it("returns no conflict for unrelated warnings", () => {
+    const parsed = parseSlackGatewayConflict(`
+WARNING gateway.channel_directory: failed to list Slack channels: missing_scope
+ERROR gateway.platforms.email: IMAP connection failed
+`);
+    expect(parsed.hasConflict).toBe(false);
+    expect(parsed.pid).toBeUndefined();
   });
 });

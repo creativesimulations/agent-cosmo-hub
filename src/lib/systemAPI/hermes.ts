@@ -37,6 +37,12 @@ export interface WhatsAppGatewaySignalReport {
   whatsappWarnings: string[];
 }
 
+export interface SlackGatewayConflictInfo {
+  hasConflict: boolean;
+  pid?: number;
+  snippet?: string;
+}
+
 export type StartupIssueSeverity = 'info' | 'warn' | 'error';
 export interface StartupIssue {
   id: string;
@@ -262,6 +268,21 @@ export const analyzeWhatsAppGatewaySignals = (rawOutput: string): WhatsAppGatewa
     }
   }
   return report;
+};
+
+export const parseSlackGatewayConflict = (rawOutput: string): SlackGatewayConflictInfo => {
+  const lines = rawOutput
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const matcher = /(slack app token already in use \(pid\s+(\d+)\)|non-retryable startup conflict:\s*slack:)/i;
+  for (const line of lines) {
+    const m = line.match(matcher);
+    if (!m) continue;
+    const pid = m[2] ? Number(m[2]) : undefined;
+    return { hasConflict: true, pid: Number.isFinite(pid) ? pid : undefined, snippet: line };
+  }
+  return { hasConflict: false };
 };
 
 let listSkillsCache: { at: number; value: { success: boolean; skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string; requiredSecrets?: string[] }>; error?: string } } | null = null;
@@ -2006,6 +2027,57 @@ export const hermesAPI = {
       detail: truncateForLog([r.stdout, r.stderr].filter(Boolean).join('\n')),
     });
     return r;
+  },
+
+  /** Best-effort terminate for stale gateway conflict processes (TERM then KILL). */
+  async terminateConflictingGatewayProcess(
+    pid: number,
+    reason = 'gateway-conflict',
+  ): Promise<{ success: boolean; pid: number; terminated: boolean; forced: boolean; detail: string }> {
+    if (!Number.isFinite(pid) || pid <= 1) {
+      return { success: false, pid, terminated: false, forced: false, detail: 'Invalid PID.' };
+    }
+    const safePid = Math.floor(pid);
+    const r = await runHermesShell(
+      [
+        'set +e',
+        `PID="${safePid}"`,
+        `REASON="${reason.replace(/"/g, '\\"')}"`,
+        'TERMINATED=0',
+        'FORCED=0',
+        'if ! kill -0 "$PID" >/dev/null 2>&1; then',
+        '  echo "STATE=already-gone"',
+        '  TERMINATED=1',
+        'else',
+        '  kill "$PID" >/dev/null 2>&1 || true',
+        '  sleep 1',
+        '  if kill -0 "$PID" >/dev/null 2>&1; then',
+        '    kill -9 "$PID" >/dev/null 2>&1 || true',
+        '    sleep 1',
+        '    FORCED=1',
+        '  fi',
+        '  if ! kill -0 "$PID" >/dev/null 2>&1; then',
+        '    TERMINATED=1',
+        '  fi',
+        'fi',
+        'echo "PID=$PID"',
+        'echo "REASON=$REASON"',
+        'echo "TERMINATED=$TERMINATED"',
+        'echo "FORCED=$FORCED"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 8000 },
+    );
+    const out = [r.stdout || '', r.stderr || ''].join('\n');
+    const terminated = /TERMINATED=1/.test(out);
+    const forced = /FORCED=1/.test(out);
+    return {
+      success: r.success,
+      pid: safePid,
+      terminated,
+      forced,
+      detail: out.trim() || `terminate ${safePid}`,
+    };
   },
 
   /** Verify channel credentials with supported direct HTTP / filesystem checks. */
