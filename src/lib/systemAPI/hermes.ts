@@ -1889,6 +1889,24 @@ export const hermesAPI = {
       [
         'set +e',
         HERMES_PATH_EXPORT,
+        // ── Pre-start hygiene per Hermes docs ────────────────────────────
+        // Hermes' gateway uses scoped per-channel lock files under
+        // ~/.local/state/hermes/gateway-locks/. If a previous gateway PID
+        // died without unlocking (WSL Ctrl+C, hard reboot), the next start
+        // exits with "Slack app token already in use (PID N)" and the
+        // gateway exits cleanly without ever creating the WhatsApp adapter.
+        // Clear any locks whose PIDs are no longer alive before starting.
+        'LOCK_DIR="$HOME/.local/state/hermes/gateway-locks"',
+        'if [ -d "$LOCK_DIR" ]; then',
+        '  for lf in "$LOCK_DIR"/*.lock; do',
+        '    [ -f "$lf" ] || continue',
+        '    LPID="$(grep -oE "[0-9]+" "$lf" 2>/dev/null | head -n 1)"',
+        '    if [ -n "$LPID" ] && ! kill -0 "$LPID" 2>/dev/null; then',
+        '      echo "[gateway] removing stale lock $lf (PID $LPID not running)"',
+        '      rm -f "$lf"',
+        '    fi',
+        '  done',
+        'fi',
         // Detect a working user/systemd PID 1 the same way Hermes does.
         'HAS_SYSTEMD=0',
         'if command -v systemctl >/dev/null 2>&1; then',
@@ -1897,11 +1915,33 @@ export const hermesAPI = {
         'fi',
         'if [ "$HAS_SYSTEMD" = "0" ]; then',
         '  echo "[gateway] systemd is not PID 1 (typical on WSL without systemd=true) — using foreground/background mode per Hermes docs"',
+        // Stop any existing gateway via the documented `hermes gateway stop`
+        // first. --replace handles the signal handoff but stop is what the
+        // docs prescribe for clean foreground/background restarts.
+        '  hermes gateway stop >/dev/null 2>&1 || true',
+        '  sleep 1',
         '  if pgrep -f "hermes gateway" >/dev/null 2>&1; then',
-        '    echo "[gateway] existing hermes gateway process detected; relying on --replace"',
+        '    echo "[gateway] existing hermes gateway process detected after stop; relying on --replace"',
         '  fi',
         '  nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
         '  sleep 3',
+        // ── Slack-conflict self-heal (one retry) ─────────────────────────
+        // If we still see "Slack app token already in use (PID N)" in the
+        // gateway log, the offending PID is from another gateway we don\'t
+        // own. Kill it, clear matching locks, and re-run --replace once.
+        '  CONFLICT_PID="$(grep -oE "Slack app token already in use \\(PID [0-9]+\\)" /tmp/hermes-gateway.log 2>/dev/null | grep -oE "[0-9]+" | head -n 1)"',
+        '  if [ -n "$CONFLICT_PID" ]; then',
+        '    echo "[gateway] Slack token held by PID $CONFLICT_PID — terminating to recover"',
+        '    kill "$CONFLICT_PID" 2>/dev/null || true',
+        '    sleep 1',
+        '    kill -9 "$CONFLICT_PID" 2>/dev/null || true',
+        '    if [ -d "$LOCK_DIR" ]; then',
+        '      grep -lE "(^|[^0-9])$CONFLICT_PID([^0-9]|$)" "$LOCK_DIR"/*.lock 2>/dev/null | xargs -r rm -f',
+        '    fi',
+        '    : > /tmp/hermes-gateway.log 2>/dev/null || true',
+        '    nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
+        '    sleep 3',
+        '  fi',
         '  if pgrep -f "hermes gateway" >/dev/null 2>&1; then',
         '    echo "[gateway] started in background replace mode"',
         '    exit 0',
@@ -1931,10 +1971,22 @@ export const hermesAPI = {
         '  RC=$?',
         'fi',
         // Last resort for environments where service units are unavailable:
-        // force-replace with foreground command in background mode.
+        // force-replace with foreground command in background mode (with
+        // the same Slack-conflict self-heal as above).
         'if [ "$RC" -ne 0 ]; then',
+        '  hermes gateway stop >/dev/null 2>&1 || true',
+        '  sleep 1',
         '  nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
         '  sleep 3',
+        '  CONFLICT_PID="$(grep -oE "Slack app token already in use \\(PID [0-9]+\\)" /tmp/hermes-gateway.log 2>/dev/null | grep -oE "[0-9]+" | head -n 1)"',
+        '  if [ -n "$CONFLICT_PID" ]; then',
+        '    echo "[gateway] Slack token held by PID $CONFLICT_PID — terminating to recover"',
+        '    kill "$CONFLICT_PID" 2>/dev/null || true; sleep 1; kill -9 "$CONFLICT_PID" 2>/dev/null || true',
+        '    if [ -d "$LOCK_DIR" ]; then grep -lE "(^|[^0-9])$CONFLICT_PID([^0-9]|$)" "$LOCK_DIR"/*.lock 2>/dev/null | xargs -r rm -f; fi',
+        '    : > /tmp/hermes-gateway.log 2>/dev/null || true',
+        '    nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
+        '    sleep 3',
+        '  fi',
         '  pgrep -f "hermes gateway" >/dev/null 2>&1',
         '  if [ $? -eq 0 ]; then',
         '    echo "[gateway] started in background replace mode"',
@@ -1948,7 +2000,7 @@ export const hermesAPI = {
         'fi',
         'exit "$RC"',
       ].join('\n'),
-      { timeout: 90000 },
+      { timeout: 120000 },
     );
     const combined = `${r.stdout || ''}\n${r.stderr || ''}`.toLowerCase();
     const missingGatewayUnit =
