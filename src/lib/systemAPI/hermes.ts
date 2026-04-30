@@ -2707,6 +2707,24 @@ export const hermesAPI = {
         .filter(Boolean)
         .join('\n') || undefined,
     });
+    // Best-effort: ensure the WhatsApp bridge folder has its node_modules
+    // installed. The Hermes Python adapter emits "WhatsApp: Node.js not
+    // installed or bridge not configured" when EITHER node is missing OR
+    // when @whiskeysockets/baileys cannot be required from the bridge dir.
+    // ensureWhatsAppBridgeDeps is idempotent — it short-circuits when
+    // baileys is already present, so this is safe to call on every prep.
+    const deps = await this.ensureWhatsAppBridgeDeps().catch((e) => ({
+      success: false,
+      stdout: '',
+      stderr: e instanceof Error ? e.message : String(e),
+      code: 1,
+    } as CommandResult));
+    agentLogs.push({
+      source: 'system',
+      level: deps.success ? 'info' : 'warn',
+      summary: `ensureWhatsAppManagedNode: bridge deps ${deps.success ? 'ok' : 'failed'}`,
+      detail: deps.success ? undefined : (deps.stderr || deps.stdout || '').split('\n').slice(-5).join('\n'),
+    });
     return { success: true, version, shimPath };
   },
 
