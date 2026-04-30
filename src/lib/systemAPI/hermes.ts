@@ -2762,6 +2762,18 @@ export const hermesAPI = {
     if (!isElectron()) {
       return { success: true, version: HERMES_NODE_VERSION, shimPath: '~/.hermes/bin/node' };
     }
+    const runtime = await this.ensureHermesNodeRuntime().catch((e) => ({
+      success: false,
+      stderr: e instanceof Error ? e.message : String(e),
+      stdout: '',
+      code: 1,
+    } as CommandResult));
+    if (!runtime.success) {
+      return {
+        success: false,
+        error: [runtime.stderr, runtime.stdout].filter(Boolean).join('\n').trim() || 'Could not install managed Node v22 runtime.',
+      };
+    }
     const r = await runHermesShell(
       [
         'set +e',
