@@ -77,6 +77,7 @@ export const systemAPI = {
   startGateway: hermesAPI.startGateway.bind(hermesAPI),
   stopGateway: hermesAPI.stopGateway.bind(hermesAPI),
   terminateConflictingGatewayProcess: hermesAPI.terminateConflictingGatewayProcess.bind(hermesAPI),
+  parseGatewayStartupRecoverySignals: hermesAPI.parseGatewayStartupRecoverySignals.bind(hermesAPI),
   getWhatsAppGatewayHealth: hermesAPI.getWhatsAppGatewayHealth.bind(hermesAPI),
   getWhatsAppBridgeStatus: hermesAPI.getWhatsAppBridgeStatus.bind(hermesAPI),
   readWhatsAppBridgeLogTail: hermesAPI.readWhatsAppBridgeLogTail.bind(hermesAPI),

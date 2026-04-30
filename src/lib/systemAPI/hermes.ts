@@ -43,6 +43,12 @@ export interface SlackGatewayConflictInfo {
   snippet?: string;
 }
 
+export interface GatewayStartupRecoverySignals {
+  slackConflict: SlackGatewayConflictInfo;
+  whatsappRuntimeMissing: boolean;
+  whatsappRuntimeSnippet?: string;
+}
+
 export type StartupIssueSeverity = 'info' | 'warn' | 'error';
 export interface StartupIssue {
   id: string;
@@ -283,6 +289,22 @@ export const parseSlackGatewayConflict = (rawOutput: string): SlackGatewayConfli
     return { hasConflict: true, pid: Number.isFinite(pid) ? pid : undefined, snippet: line };
   }
   return { hasConflict: false };
+};
+
+export const parseGatewayStartupRecoverySignals = (rawOutput: string): GatewayStartupRecoverySignals => {
+  const slackConflict = parseSlackGatewayConflict(rawOutput);
+  const lines = rawOutput
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const waRuntimeLine = lines.find((line) =>
+    /whatsapp: node\.js not installed or bridge not configured|no adapter available for whatsapp/i.test(line),
+  );
+  return {
+    slackConflict,
+    whatsappRuntimeMissing: !!waRuntimeLine,
+    whatsappRuntimeSnippet: waRuntimeLine,
+  };
 };
 
 let listSkillsCache: { at: number; value: { success: boolean; skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string; requiredSecrets?: string[] }>; error?: string } } | null = null;
@@ -1068,6 +1090,7 @@ export const setBrowserCdpUrl = async (
 
 /** Hermes Agent installation, configuration, and lifecycle */
 export const hermesAPI = {
+  parseGatewayStartupRecoverySignals,
   /** Force-write secrets to ~/.hermes/.env and verify. Used by Diagnostics
    *  page and the Secrets tab "Sync to agent" button. */
   async materializeEnv() {

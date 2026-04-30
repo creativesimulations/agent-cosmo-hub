@@ -621,27 +621,35 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     // Re-apply patches AFTER refreshGatewayInstall (which rewrites the unit).
     await systemAPI.patchGatewayServicePathForWhatsApp().catch(() => undefined);
     await systemAPI.patchHermesWhatsAppAdapterForNode().catch(() => undefined);
-    const parseSlackConflictPid = (output: string): { hasConflict: boolean; pid?: number; snippet?: string } => {
-      const lines = output
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-      for (const line of lines) {
-        const m = line.match(/slack app token already in use \(pid\s+(\d+)\)/i);
-        if (m) return { hasConflict: true, pid: Number(m[1]), snippet: line };
-        if (/non-retryable startup conflict:\s*slack:/i.test(line)) return { hasConflict: true, snippet: line };
-      }
-      return { hasConflict: false };
-    };
+    const recoverySteps: string[] = [];
     let r = await systemAPI.startGateway();
     if (!r.success) {
       const combined = `${r.stdout || ""}\n${r.stderr || ""}`;
-      const conflict = parseSlackConflictPid(combined);
-      if (conflict.hasConflict && conflict.pid) {
+      const signals = systemAPI.parseGatewayStartupRecoverySignals(combined);
+      if (signals.slackConflict.hasConflict && signals.slackConflict.pid) {
         setWaStatusHint("Detected Slack token conflict, stopping old gateway process and retrying…");
-        const terminated = await systemAPI.terminateConflictingGatewayProcess(conflict.pid, "slack-token-lock");
+        const terminated = await systemAPI.terminateConflictingGatewayProcess(signals.slackConflict.pid, "slack-token-lock");
         if (terminated.terminated) {
+          recoverySteps.push(`Auto-stopped conflicting Slack PID ${signals.slackConflict.pid}.`);
           r = await systemAPI.startGateway();
+        } else {
+          recoverySteps.push(`Detected Slack token conflict, but PID ${signals.slackConflict.pid} could not be stopped.`);
+        }
+      }
+      if (!r.success) {
+        const retryCombined = `${r.stdout || ""}\n${r.stderr || ""}`;
+        const retrySignals = systemAPI.parseGatewayStartupRecoverySignals(retryCombined);
+        if (retrySignals.whatsappRuntimeMissing) {
+          setWaStatusHint("Detected WhatsApp bridge runtime issue, applying runtime repair and retrying…");
+          const repaired = await systemAPI.repairWhatsAppGatewayRuntime().catch(() => ({ ok: false }));
+          recoverySteps.push(
+            repaired.ok
+              ? "Ran WhatsApp runtime repair."
+              : "Attempted WhatsApp runtime repair, but it did not complete.",
+          );
+          if (repaired.ok) {
+            r = await systemAPI.startGateway();
+          }
         }
       }
     }
@@ -658,11 +666,15 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       } else if (lower.includes("slack app token already in use") || lower.includes("non-retryable startup conflict")) {
         detail =
           "Gateway startup is blocked by a Slack token lock from another running process. Ronbot attempted auto-recovery once, but the lock is still active. Stop the other gateway process and retry.";
+      } else if (lower.includes("node.js not installed or bridge not configured") || lower.includes("no adapter available for whatsapp")) {
+        detail =
+          "WhatsApp bridge runtime is still not configured for the shared gateway. Ronbot attempted runtime repair once.\nNext steps: re-run WhatsApp pairing, verify ~/.hermes/platforms/whatsapp/session is writable, then refresh gateway install metadata and retry.";
       } else if (lower.includes("wsl") && lower.includes("not available")) {
         detail =
           "WSL gateway route is unavailable. Verify WSL is installed/running (`wsl --status`), then retry WhatsApp setup.";
       }
-      setFormError(detail);
+      const traceBlock = recoverySteps.length ? `\n\nRecovery attempts:\n- ${recoverySteps.join("\n- ")}` : "";
+      setFormError(detail + traceBlock);
       setWaStatusHint("");
       toast.error("Failed to start gateway", { description: detail });
       return "fail";
@@ -746,7 +758,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     const nonWhatsappBlock = nonWhatsapp.length
       ? `\n\nOther platform warnings (informational):\n${nonWhatsapp.join("\n")}`
       : "";
-    setFormError(detail + nonWhatsappBlock + (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""));
+    const traceBlock = recoverySteps.length ? `\n\nRecovery attempts:\n- ${recoverySteps.join("\n- ")}` : "";
+    setFormError(
+      detail +
+      traceBlock +
+      nonWhatsappBlock +
+      (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""),
+    );
     toast.error("WhatsApp bridge not confirmed", {
       description:
         failure.kind === "node-version" || diag?.bridgeLogShowsNode18
