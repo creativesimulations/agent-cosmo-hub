@@ -2434,7 +2434,7 @@ export const hermesAPI = {
         '    if [ $rc -ne 0 ]; then',
         '      echo "[ronbot] npm install failed twice — usually a network/registry issue or a missing git for git+ssh deps." >&2',
         '      echo "[ronbot] Check internet access and that git is installed inside the agent runtime, then retry." >&2',
-        '      echo "[ronbot] On WSL, try: wsl --shutdown, reopen Ronbot, and click Repair runtime only." >&2',
+        '      echo "[ronbot] On WSL, try: wsl --shutdown, reopen Ronbot, and run WhatsApp setup again." >&2',
         '      exit $rc',
         '    fi',
         '  fi',
@@ -3288,7 +3288,7 @@ export const hermesAPI = {
         '  echo "PASS:bridge-deps"',
         'else',
         '  TRIM="$(echo "$MISSING_SENT" | sed "s|$HOME|~|g" | cut -c1-220)"',
-        '  echo "FAIL:bridge-deps:Partial WhatsApp bridge install — missing:$TRIM. Click Repair runtime only or Re-pair + Restart to reinstall."',
+        '  echo "FAIL:bridge-deps:Partial WhatsApp bridge install — missing:$TRIM. Ronbot will reinstall automatically during setup."',
         'fi',
         'if [ -z "$MISSING_SENT" ] && [ -x "$NODE_BIN" ]; then',
         '  LOAD_ERR="$( ( cd "$BRIDGE_DIR" && "$NODE_BIN" --input-type=module -e "import(\'@whiskeysockets/baileys\').then(()=>process.exit(0)).catch(e=>{process.stderr.write(String(e&&e.message||e));process.exit(1)})" ) 2>&1 1>/dev/null )"',
@@ -3472,7 +3472,7 @@ export const hermesAPI = {
     const steps: Array<{ name: string; ok: boolean; detail?: string }> = [];
     const log = (line: string) => onOutput?.({ type: 'stdout', data: `[ronbot-repair] ${line}\n` });
     // 1. Ensure managed Node runtime tarball is installed.
-    log('ensuring managed Node v20 runtime…');
+    log('ensuring managed Node v22 runtime…');
     const runtime = await this.ensureHermesNodeRuntime(onOutput).catch((e) => ({
       success: false,
       stderr: e instanceof Error ? e.message : String(e),
@@ -3488,7 +3488,7 @@ export const hermesAPI = {
     if (!shim.success) return { ok: false, steps };
     // 2.5 Ensure Baileys & friends are installed in the bridge folder.
     // Without this, the gateway adapter logs "WhatsApp: Node.js not
-    // installed or bridge not configured" even on a healthy Node v20.
+    // installed or bridge not configured" even on a healthy managed Node.
     log('installing WhatsApp bridge dependencies (npm install)…');
     const deps = await this.ensureWhatsAppBridgeDeps(onOutput).catch((e) => ({
       success: false,
