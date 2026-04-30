@@ -1875,6 +1875,17 @@ export const hermesAPI = {
       }
     }
     await materializeHermesEnv();
+    const env = await this.readEnvFile().catch(() => ({} as Record<string, string>));
+    if ((env.WHATSAPP_ENABLED || '').trim().toLowerCase() === 'true') {
+      const prep = await this.ensureWhatsAppManagedNode().catch((e) => ({
+        success: false,
+        error: e instanceof Error ? e.message : String(e),
+      }));
+      if (!prep.success) {
+        const msg = `WhatsApp bridge runtime setup failed before gateway start: ${prep.error || 'managed Node could not be prepared.'}`;
+        return { success: false, stdout: '', stderr: msg, code: 54 };
+      }
+    }
     // Some Hermes installs don't have the user-service unit registered yet.
     // Install/register the gateway service, then retry start before giving up.
     // NOTE: runHermesCli wraps everything in `set -e`, so we explicitly switch
