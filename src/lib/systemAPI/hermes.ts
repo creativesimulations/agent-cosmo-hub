@@ -1875,6 +1875,17 @@ export const hermesAPI = {
       }
     }
     await materializeHermesEnv();
+    const env = await this.readEnvFile().catch(() => ({} as Record<string, string>));
+    if ((env.WHATSAPP_ENABLED || '').trim().toLowerCase() === 'true') {
+      const prep = await this.ensureWhatsAppManagedNode().catch((e) => ({
+        success: false,
+        error: e instanceof Error ? e.message : String(e),
+      }));
+      if (!prep.success) {
+        const msg = `WhatsApp bridge runtime setup failed before gateway start: ${prep.error || 'managed Node could not be prepared.'}`;
+        return { success: false, stdout: '', stderr: msg, code: 54 };
+      }
+    }
     // Some Hermes installs don't have the user-service unit registered yet.
     // Install/register the gateway service, then retry start before giving up.
     // NOTE: runHermesCli wraps everything in `set -e`, so we explicitly switch
@@ -1897,7 +1908,25 @@ export const hermesAPI = {
         // gateway exits cleanly without ever creating the WhatsApp adapter.
         // Clear any locks whose PIDs are no longer alive before starting.
         'LOCK_DIR="$HOME/.local/state/hermes/gateway-locks"',
-        'if [ -d "$LOCK_DIR" ]; then',
+        'ronbot_kill_pid() {',
+        '  KP="$1"',
+        '  [ -n "$KP" ] || return 0',
+        '  case "$KP" in *[!0-9]*|0|1|$$|$PPID) return 0 ;; esac',
+        '  if kill -0 "$KP" 2>/dev/null; then',
+        '    CMD="$(ps -p "$KP" -o command= 2>/dev/null || true)"',
+        '    if [ -n "$CMD" ] && ! printf "%s" "$CMD" | grep -Eiq "(hermes|gateway|python)"; then',
+        '      echo "[gateway] PID $KP no longer looks like a gateway process; clearing matching locks only"',
+        '    else',
+        '      echo "[gateway] terminating stale gateway/conflict PID $KP ${CMD:+($CMD)}"',
+        '      kill "$KP" 2>/dev/null || true',
+        '      sleep 1',
+        '      kill -9 "$KP" 2>/dev/null || true',
+        '    fi',
+        '  fi',
+        '  if [ -d "$LOCK_DIR" ]; then grep -lE "(^|[^0-9])$KP([^0-9]|$)" "$LOCK_DIR"/*.lock 2>/dev/null | xargs -r rm -f; fi',
+        '}',
+        'ronbot_clear_stale_locks() {',
+        '  [ -d "$LOCK_DIR" ] || return 0',
         '  for lf in "$LOCK_DIR"/*.lock; do',
         '    [ -f "$lf" ] || continue',
         '    LPID="$(grep -oE "[0-9]+" "$lf" 2>/dev/null | head -n 1)"',
@@ -1906,7 +1935,8 @@ export const hermesAPI = {
         '      rm -f "$lf"',
         '    fi',
         '  done',
-        'fi',
+        '}',
+        'ronbot_clear_stale_locks',
         // Detect a working user/systemd PID 1 the same way Hermes does.
         'HAS_SYSTEMD=0',
         'if command -v systemctl >/dev/null 2>&1; then',
@@ -1920,10 +1950,10 @@ export const hermesAPI = {
         // docs prescribe for clean foreground/background restarts.
         '  hermes gateway stop >/dev/null 2>&1 || true',
         '  sleep 1',
-        '  if pgrep -f "hermes gateway" >/dev/null 2>&1; then',
-        '    echo "[gateway] existing hermes gateway process detected after stop; relying on --replace"',
-        '  fi',
+        '  for pid in $(pgrep -f "hermes gateway|gateway.run" 2>/dev/null || true); do ronbot_kill_pid "$pid"; done',
+        '  ronbot_clear_stale_locks',
         '  nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
+        '  NEW_PID=$!',
         '  sleep 3',
         // ── Slack-conflict self-heal (one retry) ─────────────────────────
         // If we still see "Slack app token already in use (PID N)" in the
@@ -1932,20 +1962,17 @@ export const hermesAPI = {
         '  CONFLICT_PID="$(grep -oE "Slack app token already in use \\(PID [0-9]+\\)" /tmp/hermes-gateway.log 2>/dev/null | grep -oE "[0-9]+" | head -n 1)"',
         '  if [ -n "$CONFLICT_PID" ]; then',
         '    echo "[gateway] Slack token held by PID $CONFLICT_PID — terminating to recover"',
-        '    kill "$CONFLICT_PID" 2>/dev/null || true',
-        '    sleep 1',
-        '    kill -9 "$CONFLICT_PID" 2>/dev/null || true',
-        '    if [ -d "$LOCK_DIR" ]; then',
-        '      grep -lE "(^|[^0-9])$CONFLICT_PID([^0-9]|$)" "$LOCK_DIR"/*.lock 2>/dev/null | xargs -r rm -f',
-        '    fi',
+        '    ronbot_kill_pid "$CONFLICT_PID"',
         '    : > /tmp/hermes-gateway.log 2>/dev/null || true',
         '    nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
+        '    NEW_PID=$!',
         '    sleep 3',
         '  fi',
-        '  if pgrep -f "hermes gateway" >/dev/null 2>&1; then',
+        '  if [ -n "${NEW_PID:-}" ] && kill -0 "$NEW_PID" 2>/dev/null; then',
         '    echo "[gateway] started in background replace mode"',
         '    exit 0',
         '  fi',
+        '  tail -n 120 /tmp/hermes-gateway.log 2>/dev/null || true',
         '  echo "[gateway] background start did not produce a running process — falling back to service path" >&2',
         'fi',
         // User systemd units often lack Homebrew/snap/npm on PATH — push ours in
@@ -1954,7 +1981,17 @@ export const hermesAPI = {
         'hermes gateway start 2>&1',
         'RC=$?',
         'COMBINED_LOG=""',
-        'if [ -f /tmp/hermes-gateway.log ]; then COMBINED_LOG="$(tail -n 120 /tmp/hermes-gateway.log 2>/dev/null || true)"; fi',
+        'if [ -f /tmp/hermes-gateway.log ]; then COMBINED_LOG="$COMBINED_LOG\n$(tail -n 120 /tmp/hermes-gateway.log 2>/dev/null || true)"; fi',
+        'if [ -f "$HOME/.hermes/logs/gateway.log" ]; then COMBINED_LOG="$COMBINED_LOG\n$(tail -n 120 "$HOME/.hermes/logs/gateway.log" 2>/dev/null || true)"; fi',
+        'CONFLICT_PID="$(printf "%s" "$COMBINED_LOG" | grep -oE "Slack app token already in use \\(PID [0-9]+\\)" | grep -oE "[0-9]+" | head -n 1)"',
+        'if [ -n "$CONFLICT_PID" ]; then',
+        '  echo "[gateway] Slack token held by PID $CONFLICT_PID after service start — terminating and retrying"',
+        '  hermes gateway stop >/dev/null 2>&1 || true',
+        '  ronbot_kill_pid "$CONFLICT_PID"',
+        '  ronbot_clear_stale_locks',
+        '  hermes gateway start 2>&1',
+        '  RC=$?',
+        'fi',
         'if [ "$RC" -ne 0 ]; then',
         '  STATUS_OUT="$(hermes gateway status 2>&1 || true)"',
         '  printf "%s\\n%s\\n" "$COMBINED_LOG" "$STATUS_OUT" | grep -Eqi "already running|pid [0-9]+" && RC=42',
@@ -1976,19 +2013,21 @@ export const hermesAPI = {
         'if [ "$RC" -ne 0 ]; then',
         '  hermes gateway stop >/dev/null 2>&1 || true',
         '  sleep 1',
+        '  for pid in $(pgrep -f "hermes gateway|gateway.run" 2>/dev/null || true); do ronbot_kill_pid "$pid"; done',
+        '  ronbot_clear_stale_locks',
         '  nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
+        '  NEW_PID=$!',
         '  sleep 3',
         '  CONFLICT_PID="$(grep -oE "Slack app token already in use \\(PID [0-9]+\\)" /tmp/hermes-gateway.log 2>/dev/null | grep -oE "[0-9]+" | head -n 1)"',
         '  if [ -n "$CONFLICT_PID" ]; then',
         '    echo "[gateway] Slack token held by PID $CONFLICT_PID — terminating to recover"',
-        '    kill "$CONFLICT_PID" 2>/dev/null || true; sleep 1; kill -9 "$CONFLICT_PID" 2>/dev/null || true',
-        '    if [ -d "$LOCK_DIR" ]; then grep -lE "(^|[^0-9])$CONFLICT_PID([^0-9]|$)" "$LOCK_DIR"/*.lock 2>/dev/null | xargs -r rm -f; fi',
+        '    ronbot_kill_pid "$CONFLICT_PID"',
         '    : > /tmp/hermes-gateway.log 2>/dev/null || true',
         '    nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
+        '    NEW_PID=$!',
         '    sleep 3',
         '  fi',
-        '  pgrep -f "hermes gateway" >/dev/null 2>&1',
-        '  if [ $? -eq 0 ]; then',
+        '  if [ -n "${NEW_PID:-}" ] && kill -0 "$NEW_PID" 2>/dev/null; then',
         '    echo "[gateway] started in background replace mode"',
         '    RC=0',
         '  else',
@@ -3164,21 +3203,30 @@ export const hermesAPI = {
     const r = await runHermesShell(
       [
         'set +e',
-        'F=""',
-        'for cand in "$HOME/.hermes/hermes-agent/gateway/platforms/whatsapp.py" "$HOME/.hermes/venv/lib"/python*/site-packages/gateway/platforms/whatsapp.py; do',
+        'CANDIDATES=""',
+        'for cand in "$HOME/.hermes/hermes-agent/gateway/platforms/whatsapp.py" "$HOME/.hermes/venv/lib"/python*/site-packages/gateway/platforms/whatsapp.py "$HOME/.hermes/venv/src"/*/gateway/platforms/whatsapp.py; do',
         '  [ -f "$cand" ] || continue',
-        '  F="$cand"; break',
+        '  case " $CANDIDATES " in *" $cand "*) ;; *) CANDIDATES="$CANDIDATES $cand" ;; esac',
         'done',
-        '[ -n "$F" ] || { echo "ADAPTER_NOT_FOUND"; exit 0; }',
-        'echo "ADAPTER_PATH=$F"',
-        'if grep -q "RONBOT_NODE_BIN_PATCH_V3" "$F"; then echo "ALREADY_PATCHED"; exit 0; fi',
-        'cp "$F" "$F.ronbot.bak" 2>/dev/null || true',
-        'python3 - "$F" <<\'PY\' || { echo "PATCH_FAILED"; exit 1; }',
+        'while IFS= read -r cand; do',
+        '  [ -f "$cand" ] || continue',
+        '  case " $CANDIDATES " in *" $cand "*) ;; *) CANDIDATES="$CANDIDATES $cand" ;; esac',
+        'done <<EOF_FIND',
+        '$(find "$HOME/.hermes" -path "*/gateway/platforms/whatsapp.py" -type f 2>/dev/null)',
+        'EOF_FIND',
+        '[ -n "$CANDIDATES" ] || { echo "ADAPTER_NOT_FOUND"; exit 0; }',
+        'PATCHED_PATHS=""',
+        'FAILED_PATHS=""',
+        'for F in $CANDIDATES; do',
+        '  echo "ADAPTER_PATH=$F"',
+        '  if grep -q "RONBOT_NODE_BIN_PATCH_V4" "$F"; then PATCHED_PATHS="$PATCHED_PATHS $F"; continue; fi',
+        '  cp "$F" "$F.ronbot.bak" 2>/dev/null || true',
+        '  python3 - "$F" <<\'PY\'',
         'import sys, re, pathlib',
         'p = pathlib.Path(sys.argv[1])',
         'src = p.read_text()',
         'helper = (',
-        '"\\n# RONBOT_NODE_BIN_PATCH_V3: prefer managed Node for both adapter preflight and bridge launch\\n"',
+        '"\\n# RONBOT_NODE_BIN_PATCH_V4: prefer managed Node for both adapter preflight and bridge launch\\n"',
         '"def _ronbot_node_bin():\\n"',
         '"    import os, shutil\\n"',
         '"    for env_key in (\\"WHATSAPP_NODE_BIN\\", \\"NODE_BIN\\", \\"HERMES_NODE_BIN\\", \\"NODE\\"):\\n"',
@@ -3197,31 +3245,36 @@ export const hermesAPI = {
         '    insert_at = m.end() if m else 0',
         '    src = src[:insert_at] + helper + src[insert_at:]',
         '# Replace both the adapter preflight and bridge launch so the adapter does not reject WhatsApp before launch.',
-        'src2 = re.sub(r"subprocess\\.run\\(\\s*\\[\\s*\\\"node\\\"\\s*,\\s*\\\"--version\\\"", "subprocess.run([_ronbot_node_bin(), \\\"--version\\\"", src)',
-        'src2, n = re.subn(r"\\[\\s*\\\"node\\\"\\s*,", "[_ronbot_node_bin(),", src2)',
-        'if n == 0 and "_ronbot_node_bin()," not in src2:',
+        'src2 = re.sub(r"subprocess\\.run\\(\\s*\\[\\s*([\'\"])(?:node)\\1\\s*,\\s*([\'\"])(?:--version)\\2", "subprocess.run([_ronbot_node_bin(), \\\"--version\\\"", src)',
+        'src2, n1 = re.subn(r"\\[\\s*([\'\"])(?:node)\\1\\s*,", "[_ronbot_node_bin(),", src2)',
+        'src2, n2 = re.subn(r"subprocess\\.(?:Popen|run)\\(\\s*([\'\"])(?:node)\\1\\s*,", lambda m: m.group(0).replace(m.group(1)+"node"+m.group(1), "_ronbot_node_bin()"), src2)',
+        'if (n1 + n2) == 0 and "_ronbot_node_bin()," not in src2:',
         '    sys.stderr.write("no node launch literal found\\n")',
         '    sys.exit(2)',
-        'if "RONBOT_NODE_BIN_PATCH_V3" not in src2:',
+        'if "RONBOT_NODE_BIN_PATCH_V4" not in src2:',
         '    if "RONBOT_NODE_BIN_PATCH" in src2:',
-        '        src2 = src2.replace("RONBOT_NODE_BIN_PATCH", "RONBOT_NODE_BIN_PATCH_V3", 1)',
+        '        src2 = re.sub(r"RONBOT_NODE_BIN_PATCH(?:_V\\d+)?", "RONBOT_NODE_BIN_PATCH_V4", src2, count=1)',
         '    else:',
-        '        src2 = "# RONBOT_NODE_BIN_PATCH_V3\\n" + src2',
+        '        src2 = "# RONBOT_NODE_BIN_PATCH_V4\\n" + src2',
         'p.write_text(src2)',
         'PY',
-        'PATCH_RC=$?',
-        'if [ "$PATCH_RC" -eq 0 ]; then echo "PATCHED_OK"; else echo "PATCH_FAILED"; fi',
+        '  PATCH_RC=$?',
+        '  if [ "$PATCH_RC" -eq 0 ]; then PATCHED_PATHS="$PATCHED_PATHS $F"; else FAILED_PATHS="$FAILED_PATHS $F"; fi',
+        'done',
+        'echo "PATCHED_PATHS=$PATCHED_PATHS"',
+        'echo "FAILED_PATHS=$FAILED_PATHS"',
+        '[ -z "$FAILED_PATHS" ] || echo "PATCH_FAILED"',
         'exit 0',
       ].join('\n'),
       { timeout: 15000 },
     );
     const out = `${r.stdout || ''}\n${r.stderr || ''}`;
-    const path = (out.match(/ADAPTER_PATH=(\S+)/)?.[1] || '').trim() || undefined;
+    const path = (out.match(/PATCHED_PATHS=(.*)/)?.[1] || out.match(/ADAPTER_PATH=(\S+)/)?.[1] || '').trim() || undefined;
     if (out.includes('ADAPTER_NOT_FOUND')) {
       return { success: true, patched: false, error: 'Installed Hermes WhatsApp adapter not found at the expected paths.' };
     }
-    if (out.includes('ALREADY_PATCHED')) return { success: true, patched: true, path };
-    if (out.includes('PATCHED_OK')) return { success: true, patched: true, path };
+    if (out.includes('PATCH_FAILED')) return { success: false, patched: false, path, error: out.split('\n').slice(-8).join('\n').trim() };
+    if (/PATCHED_PATHS=\s*\S/.test(out)) return { success: true, patched: true, path };
     return { success: false, patched: false, path, error: out.split('\n').slice(-6).join('\n').trim() };
   },
 
