@@ -172,7 +172,29 @@ const ChannelsPage = () => {
       // #endregion
       if (!startResult.success) {
         const detail = startResult.stderr?.split("\n")[0] || startResult.stdout?.split("\n")[0] || "Check Logs for details.";
-        toast.error("Could not start configured channels automatically", { description: detail });
+        // Only surface the toast if the failure actually mentions one of the
+        // channels the user has configured. Errors for non-configured
+        // platforms (e.g. Slack scopes when Slack isn't set up, IMAP auth
+        // when email isn't set up) should never bubble up — those services
+        // were never opted into, so the user shouldn't see attention banners.
+        const haystack = `${startResult.stderr || ""}\n${startResult.stdout || ""}`.toLowerCase();
+        const platformKeywords: Record<string, string[]> = {
+          whatsapp: ["whatsapp"],
+          slack: ["slack"],
+          email: ["email", "imap", "smtp"],
+          telegram: ["telegram"],
+          discord: ["discord"],
+          signal: ["signal"],
+        };
+        const mentionedChannels = Object.entries(platformKeywords)
+          .filter(([, words]) => words.some((w) => haystack.includes(w)))
+          .map(([id]) => id);
+        const relevant =
+          mentionedChannels.length === 0 ||
+          mentionedChannels.some((id) => (configuredChannels as string[]).includes(id));
+        if (relevant) {
+          toast.error("Could not start configured channels automatically", { description: detail });
+        }
       }
       runningChannels = await getRunningChannels();
     }
