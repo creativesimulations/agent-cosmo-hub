@@ -3103,11 +3103,17 @@ export const hermesAPI = {
         'else',
         '  echo "FAIL:shim-node:Missing managed Node shim at ~/.hermes/bin/node"',
         'fi',
-        // bridge deps existence + load probe
+        // bridge deps existence + ESM-safe load probe (Baileys v7 ships ESM).
         'if [ -d "$BAILEYS_DIR" ]; then echo "PASS:bridge-deps"; else echo "FAIL:bridge-deps:Missing $BAILEYS_DIR — run npm install in the WhatsApp bridge folder"; fi',
         'if [ -d "$BAILEYS_DIR" ] && [ -x "$NODE_BIN" ]; then',
-        '  ( cd "$BRIDGE_DIR" && "$NODE_BIN" -e "require(\'@whiskeysockets/baileys\')" >/dev/null 2>&1 )',
-        '  if [ $? -eq 0 ]; then echo "PASS:bridge-deps-loadable"; else echo "FAIL:bridge-deps-loadable:Managed Node cannot require(\'@whiskeysockets/baileys\') from $BRIDGE_DIR — reinstall bridge dependencies"; fi',
+        '  LOAD_ERR="$( ( cd "$BRIDGE_DIR" && "$NODE_BIN" --input-type=module -e "import(\'@whiskeysockets/baileys\').then(()=>process.exit(0)).catch(e=>{process.stderr.write(String(e&&e.message||e));process.exit(1)})" ) 2>&1 1>/dev/null )"',
+        '  LOAD_RC=$?',
+        '  if [ $LOAD_RC -eq 0 ]; then',
+        '    echo "PASS:bridge-deps-loadable"',
+        '  else',
+        '    SHORT_ERR="$(printf %s "$LOAD_ERR" | tr "\\n" " " | cut -c1-180)"',
+        '    echo "FAIL:bridge-deps-loadable:Managed Node cannot load @whiskeysockets/baileys from $BRIDGE_DIR — ${SHORT_ERR:-unknown error}"',
+        '  fi',
         'fi',
         // env file checks
         'if [ -f "$ENV_FILE" ]; then',
