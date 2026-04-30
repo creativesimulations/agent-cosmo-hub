@@ -207,20 +207,36 @@ const runHermesShell = async (
 const HERMES_PATH_EXPORT =
   'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/snap/bin:$PATH"';
 
-const HERMES_NODE_VERSION = 'v22.22.2';
+// Hermes' official installer (scripts/install.sh) installs Node into
+// ~/.hermes/node and symlinks node/npm/npx into ~/.local/bin. We follow
+// that exact layout so the WhatsApp adapter's preflight (`node --version`)
+// resolves the same binary regardless of how the gateway was started.
+//
+// Major version is pinned to Node 22 (matching install.sh's NODE_VERSION).
+// The actual patch release is resolved dynamically from
+// https://nodejs.org/dist/latest-v22.x/ at install time, so we never
+// download a non-existent tarball.
+const HERMES_NODE_MAJOR = '22';
+const HERMES_NODE_VERSION = `v${HERMES_NODE_MAJOR}`; // display fallback only
 const getHermesNodeEnvExport = (): string =>
   [
-    `NODE_RUNTIME_VERSION="${HERMES_NODE_VERSION}"`,
-    'NODE_RUNTIME_DIR="$HOME/.hermes/runtime/node"',
+    `NODE_RUNTIME_MAJOR="${HERMES_NODE_MAJOR}"`,
+    // Canonical Hermes layout: ~/.hermes/node (NODE_RUNTIME_HOME). Any
+    // legacy ~/.hermes/runtime/node/node-v* trees are migrated by
+    // ensureHermesNodeRuntime so this path is the single source of truth.
+    'NODE_RUNTIME_HOME="$HOME/.hermes/node"',
+    'NODE_RUNTIME_DIR="$HOME/.hermes/runtime/node"', // legacy path, kept for migration only
     'ARCH="$(uname -m)"',
     'case "$ARCH" in',
     '  x86_64|amd64) NODE_ARCH="x64" ;;',
     '  aarch64|arm64) NODE_ARCH="arm64" ;;',
+    '  armv7l) NODE_ARCH="armv7l" ;;',
     '  *) NODE_ARCH="" ;;',
     'esac',
     '[ -n "$NODE_ARCH" ] || { echo "[ronbot] Unsupported CPU architecture for managed Node runtime: $ARCH" >&2; exit 1; }',
-    'NODE_RUNTIME_HOME="$NODE_RUNTIME_DIR/node-${NODE_RUNTIME_VERSION}-linux-${NODE_ARCH}"',
-    'export PATH="$NODE_RUNTIME_HOME/bin:$PATH"',
+    // Put both the canonical Hermes Node bin and ~/.local/bin (where the
+    // installer symlinks node/npm/npx) on PATH, ahead of system Node.
+    'export PATH="$NODE_RUNTIME_HOME/bin:$HOME/.local/bin:$PATH"',
   ].join('\n');
 
 const runHermesCli = async (
