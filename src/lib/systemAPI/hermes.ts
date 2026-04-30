@@ -2288,9 +2288,20 @@ export const hermesAPI = {
         '  NEEDS_INSTALL=1',
         'else',
         '  "$NPM_BIN" ls @whiskeysockets/baileys --depth=0 >/dev/null 2>&1 || NEEDS_INSTALL=1',
+        '  # ESM-safe load probe: Baileys v7 ships as ESM, so a CommonJS require()',
+        '  # check would falsely report a healthy install as broken.',
+        '  if [ "$NEEDS_INSTALL" = "0" ]; then',
+        '    "$NODE_BIN" --input-type=module -e "import(\'@whiskeysockets/baileys\').then(()=>process.exit(0)).catch(()=>process.exit(1))" >/dev/null 2>&1 || NEEDS_INSTALL=1',
+        '  fi',
         'fi',
         '',
         'if [ "$NEEDS_INSTALL" = "1" ]; then',
+        '  # If node_modules exists but the load probe failed, wipe it so the',
+        '  # reinstall starts from a clean state.',
+        '  if [ -d "node_modules" ]; then',
+        '    echo "[ronbot] existing node_modules failed import probe — wiping for clean reinstall"',
+        '    rm -rf node_modules package-lock.json 2>/dev/null || true',
+        '  fi',
         '  run_npm_install "repairing WhatsApp bridge dependencies (npm install)…" ""',
         '  rc=$?',
         '  if [ $rc -ne 0 ]; then',
@@ -2305,9 +2316,14 @@ export const hermesAPI = {
         '      exit $rc',
         '    fi',
         '  fi',
-        '  # Final sanity check: baileys must be present after install.',
+        '  # Final sanity check: baileys must be present AND loadable as ESM.',
         '  if [ ! -d "node_modules/@whiskeysockets/baileys" ]; then',
         '    echo "[ronbot] npm install completed but @whiskeysockets/baileys is still missing." >&2',
+        '    exit 1',
+        '  fi',
+        '  if ! "$NODE_BIN" --input-type=module -e "import(\'@whiskeysockets/baileys\').then(()=>process.exit(0)).catch(e=>{process.stderr.write(String(e&&e.message||e));process.exit(1)})" 2>/tmp/ronbot-baileys-load-err; then',
+        '    echo "[ronbot] @whiskeysockets/baileys installed but failed to load:" >&2',
+        '    cat /tmp/ronbot-baileys-load-err >&2 || true',
         '    exit 1',
         '  fi',
         'fi',
@@ -3103,11 +3119,17 @@ export const hermesAPI = {
         'else',
         '  echo "FAIL:shim-node:Missing managed Node shim at ~/.hermes/bin/node"',
         'fi',
-        // bridge deps existence + load probe
+        // bridge deps existence + ESM-safe load probe (Baileys v7 ships ESM).
         'if [ -d "$BAILEYS_DIR" ]; then echo "PASS:bridge-deps"; else echo "FAIL:bridge-deps:Missing $BAILEYS_DIR — run npm install in the WhatsApp bridge folder"; fi',
         'if [ -d "$BAILEYS_DIR" ] && [ -x "$NODE_BIN" ]; then',
-        '  ( cd "$BRIDGE_DIR" && "$NODE_BIN" -e "require(\'@whiskeysockets/baileys\')" >/dev/null 2>&1 )',
-        '  if [ $? -eq 0 ]; then echo "PASS:bridge-deps-loadable"; else echo "FAIL:bridge-deps-loadable:Managed Node cannot require(\'@whiskeysockets/baileys\') from $BRIDGE_DIR — reinstall bridge dependencies"; fi',
+        '  LOAD_ERR="$( ( cd "$BRIDGE_DIR" && "$NODE_BIN" --input-type=module -e "import(\'@whiskeysockets/baileys\').then(()=>process.exit(0)).catch(e=>{process.stderr.write(String(e&&e.message||e));process.exit(1)})" ) 2>&1 1>/dev/null )"',
+        '  LOAD_RC=$?',
+        '  if [ $LOAD_RC -eq 0 ]; then',
+        '    echo "PASS:bridge-deps-loadable"',
+        '  else',
+        '    SHORT_ERR="$(printf %s "$LOAD_ERR" | tr "\\n" " " | cut -c1-180)"',
+        '    echo "FAIL:bridge-deps-loadable:Managed Node cannot load @whiskeysockets/baileys from $BRIDGE_DIR — ${SHORT_ERR:-unknown error}"',
+        '  fi',
         'fi',
         // env file checks
         'if [ -f "$ENV_FILE" ]; then',
@@ -3365,7 +3387,15 @@ export const hermesAPI = {
         : blockingFailures.map((f) => `${f.id}: ${f.detail}`).join('\n'),
     });
     const diagnostics = await this.getWhatsAppRuntimeDiagnostic().catch(() => undefined);
-    const ok = steps.every((s) => s.ok || (s.name === 'verify-gateway-path' && !verify.error));
+    // The post-repair audit is authoritative. `verify-gateway-path` is a
+    // best-effort /proc check and routinely fails in WSL/manual mode where
+    // there's no systemd-managed PID — we should not block the whole repair
+    // on it as long as the audit's blocking checks all pass.
+    const auditOk = blockingFailures.length === 0;
+    const otherStepsOk = steps
+      .filter((s) => s.name !== 'verify-gateway-path' && s.name !== 'bridge-runtime-audit')
+      .every((s) => s.ok);
+    const ok = auditOk && otherStepsOk;
     return { ok, steps, diagnostics };
   },
 
