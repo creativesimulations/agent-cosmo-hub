@@ -3144,6 +3144,22 @@ export const hermesAPI = {
     const shim = await this.ensureWhatsAppManagedNode().catch((e) => ({ success: false, error: e instanceof Error ? e.message : String(e) }));
     steps.push({ name: 'managed-node-shim', ok: shim.success, detail: shim.success ? `version ${(shim as { version?: string }).version || 'unknown'}` : (shim as { error?: string }).error });
     if (!shim.success) return { ok: false, steps };
+    // 2.5 Ensure Baileys & friends are installed in the bridge folder.
+    // Without this, the gateway adapter logs "WhatsApp: Node.js not
+    // installed or bridge not configured" even on a healthy Node v20.
+    log('installing WhatsApp bridge dependencies (npm install)…');
+    const deps = await this.ensureWhatsAppBridgeDeps(onOutput).catch((e) => ({
+      success: false,
+      stdout: '',
+      stderr: e instanceof Error ? e.message : String(e),
+      code: 1,
+    } as CommandResult));
+    steps.push({
+      name: 'bridge-deps',
+      ok: deps.success,
+      detail: deps.success ? undefined : (deps.stderr || deps.stdout || '').split('\n').slice(-3).join('\n'),
+    });
+    if (!deps.success) return { ok: false, steps };
     // 3. Rotate stale logs so the next failure-classification reads fresh data.
     log('rotating stale bridge logs…');
     const rot = await this.rotateWhatsAppBridgeLogs().catch(() => ({ success: false, rotated: [] as string[] }));
