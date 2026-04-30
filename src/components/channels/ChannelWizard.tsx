@@ -1544,6 +1544,23 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           />
         )}
 
+        {formError && waOtherGatewayLogs.length > 0 && (
+          <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2 text-xs">
+            <button
+              type="button"
+              onClick={() => setWaOtherGatewayLogsOpen((v) => !v)}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {waOtherGatewayLogsOpen ? "Hide" : "Show"} other gateway logs (not related to WhatsApp) · {waOtherGatewayLogs.length}
+            </button>
+            {waOtherGatewayLogsOpen && (
+              <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground/90 font-mono">
+                {waOtherGatewayLogs.join("\n")}
+              </pre>
+            )}
+          </div>
+        )}
+
         {/* Progress bar */}
         <div className="flex gap-1.5 mb-2">
           {Array.from({ length: totalSteps }, (_, i) => i).map((i) => (
