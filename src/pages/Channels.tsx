@@ -191,7 +191,7 @@ const ChannelsPage = () => {
           .map(([id]) => id);
         const relevant =
           mentionedChannels.length === 0 ||
-          mentionedChannels.some((id) => configuredChannels.includes(id));
+          mentionedChannels.some((id) => (configuredChannels as string[]).includes(id));
         if (relevant) {
           toast.error("Could not start configured channels automatically", { description: detail });
         }
