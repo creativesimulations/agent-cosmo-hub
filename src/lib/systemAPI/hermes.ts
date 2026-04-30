@@ -263,7 +263,32 @@ const WHATSAPP_FATAL_HINTS: Array<{ reason: WhatsAppFatalReason; regex: RegExp }
   { reason: 'node-version', regex: /Cannot destructure property 'subtle'|globalThis\.crypto\.subtle|baileys\/lib\/Utils\/crypto\.js/i },
 ];
 
-export const analyzeWhatsAppGatewaySignals = (rawOutput: string): WhatsAppGatewaySignalReport => {
+/**
+ * Map of platform keyword (lowercased substring that appears in gateway log
+ * lines) → the env flag the user toggles in ~/.hermes/.env to opt into that
+ * channel. We use this to suppress warnings for channels the user has NOT
+ * configured: a fresh user who has only set up WhatsApp should never see
+ * Slack/IMAP/Telegram errors leaking out of the gateway.
+ */
+const PLATFORM_ENV_FLAGS: Record<string, string> = {
+  slack: 'SLACK_ENABLED',
+  email: 'EMAIL_ENABLED',
+  telegram: 'TELEGRAM_ENABLED',
+  discord: 'DISCORD_ENABLED',
+  signal: 'SIGNAL_ENABLED',
+};
+
+const isChannelEnabledInEnv = (env: Record<string, string> | undefined, key: string): boolean => {
+  if (!env) return false;
+  const flag = PLATFORM_ENV_FLAGS[key];
+  if (!flag) return false;
+  return (env[flag] || '').trim().toLowerCase() === 'true';
+};
+
+export const analyzeWhatsAppGatewaySignals = (
+  rawOutput: string,
+  options?: { configuredEnv?: Record<string, string> },
+): WhatsAppGatewaySignalReport => {
   const lines = rawOutput
     .split('\n')
     .map((line) => line.trim())
@@ -285,9 +310,16 @@ export const analyzeWhatsAppGatewaySignals = (rawOutput: string): WhatsAppGatewa
       report.whatsappWarnings.push(line);
       continue;
     }
-    if (lower.includes('slack') || lower.includes('email') || lower.includes('telegram') || lower.includes('discord') || lower.includes('signal')) {
-      report.nonWhatsappWarnings.push(line);
+    // Find which non-WhatsApp platform this warning is about.
+    const platformKey = Object.keys(PLATFORM_ENV_FLAGS).find((k) => lower.includes(k));
+    if (!platformKey) continue;
+    // If the user has not opted into this channel, suppress the warning
+    // entirely. Errors for channels the user never configured are noise,
+    // not actionable, and should never bubble up into Ronbot's UI.
+    if (options?.configuredEnv && !isChannelEnabledInEnv(options.configuredEnv, platformKey)) {
+      continue;
     }
+    report.nonWhatsappWarnings.push(line);
   }
   return report;
 };
