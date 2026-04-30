@@ -207,20 +207,36 @@ const runHermesShell = async (
 const HERMES_PATH_EXPORT =
   'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/snap/bin:$PATH"';
 
-const HERMES_NODE_VERSION = 'v22.22.2';
+// Hermes' official installer (scripts/install.sh) installs Node into
+// ~/.hermes/node and symlinks node/npm/npx into ~/.local/bin. We follow
+// that exact layout so the WhatsApp adapter's preflight (`node --version`)
+// resolves the same binary regardless of how the gateway was started.
+//
+// Major version is pinned to Node 22 (matching install.sh's NODE_VERSION).
+// The actual patch release is resolved dynamically from
+// https://nodejs.org/dist/latest-v22.x/ at install time, so we never
+// download a non-existent tarball.
+const HERMES_NODE_MAJOR = '22';
+const HERMES_NODE_VERSION = `v${HERMES_NODE_MAJOR}`; // display fallback only
 const getHermesNodeEnvExport = (): string =>
   [
-    `NODE_RUNTIME_VERSION="${HERMES_NODE_VERSION}"`,
-    'NODE_RUNTIME_DIR="$HOME/.hermes/runtime/node"',
+    `NODE_RUNTIME_MAJOR="${HERMES_NODE_MAJOR}"`,
+    // Canonical Hermes layout: ~/.hermes/node (NODE_RUNTIME_HOME). Any
+    // legacy ~/.hermes/runtime/node/node-v* trees are migrated by
+    // ensureHermesNodeRuntime so this path is the single source of truth.
+    'NODE_RUNTIME_HOME="$HOME/.hermes/node"',
+    'NODE_RUNTIME_DIR="$HOME/.hermes/runtime/node"', // legacy path, kept for migration only
     'ARCH="$(uname -m)"',
     'case "$ARCH" in',
     '  x86_64|amd64) NODE_ARCH="x64" ;;',
     '  aarch64|arm64) NODE_ARCH="arm64" ;;',
+    '  armv7l) NODE_ARCH="armv7l" ;;',
     '  *) NODE_ARCH="" ;;',
     'esac',
     '[ -n "$NODE_ARCH" ] || { echo "[ronbot] Unsupported CPU architecture for managed Node runtime: $ARCH" >&2; exit 1; }',
-    'NODE_RUNTIME_HOME="$NODE_RUNTIME_DIR/node-${NODE_RUNTIME_VERSION}-linux-${NODE_ARCH}"',
-    'export PATH="$NODE_RUNTIME_HOME/bin:$PATH"',
+    // Put both the canonical Hermes Node bin and ~/.local/bin (where the
+    // installer symlinks node/npm/npx) on PATH, ahead of system Node.
+    'export PATH="$NODE_RUNTIME_HOME/bin:$HOME/.local/bin:$PATH"',
   ].join('\n');
 
 const runHermesCli = async (
@@ -1873,6 +1889,24 @@ export const hermesAPI = {
       [
         'set +e',
         HERMES_PATH_EXPORT,
+        // ── Pre-start hygiene per Hermes docs ────────────────────────────
+        // Hermes' gateway uses scoped per-channel lock files under
+        // ~/.local/state/hermes/gateway-locks/. If a previous gateway PID
+        // died without unlocking (WSL Ctrl+C, hard reboot), the next start
+        // exits with "Slack app token already in use (PID N)" and the
+        // gateway exits cleanly without ever creating the WhatsApp adapter.
+        // Clear any locks whose PIDs are no longer alive before starting.
+        'LOCK_DIR="$HOME/.local/state/hermes/gateway-locks"',
+        'if [ -d "$LOCK_DIR" ]; then',
+        '  for lf in "$LOCK_DIR"/*.lock; do',
+        '    [ -f "$lf" ] || continue',
+        '    LPID="$(grep -oE "[0-9]+" "$lf" 2>/dev/null | head -n 1)"',
+        '    if [ -n "$LPID" ] && ! kill -0 "$LPID" 2>/dev/null; then',
+        '      echo "[gateway] removing stale lock $lf (PID $LPID not running)"',
+        '      rm -f "$lf"',
+        '    fi',
+        '  done',
+        'fi',
         // Detect a working user/systemd PID 1 the same way Hermes does.
         'HAS_SYSTEMD=0',
         'if command -v systemctl >/dev/null 2>&1; then',
@@ -1881,11 +1915,33 @@ export const hermesAPI = {
         'fi',
         'if [ "$HAS_SYSTEMD" = "0" ]; then',
         '  echo "[gateway] systemd is not PID 1 (typical on WSL without systemd=true) — using foreground/background mode per Hermes docs"',
+        // Stop any existing gateway via the documented `hermes gateway stop`
+        // first. --replace handles the signal handoff but stop is what the
+        // docs prescribe for clean foreground/background restarts.
+        '  hermes gateway stop >/dev/null 2>&1 || true',
+        '  sleep 1',
         '  if pgrep -f "hermes gateway" >/dev/null 2>&1; then',
-        '    echo "[gateway] existing hermes gateway process detected; relying on --replace"',
+        '    echo "[gateway] existing hermes gateway process detected after stop; relying on --replace"',
         '  fi',
         '  nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
         '  sleep 3',
+        // ── Slack-conflict self-heal (one retry) ─────────────────────────
+        // If we still see "Slack app token already in use (PID N)" in the
+        // gateway log, the offending PID is from another gateway we don\'t
+        // own. Kill it, clear matching locks, and re-run --replace once.
+        '  CONFLICT_PID="$(grep -oE "Slack app token already in use \\(PID [0-9]+\\)" /tmp/hermes-gateway.log 2>/dev/null | grep -oE "[0-9]+" | head -n 1)"',
+        '  if [ -n "$CONFLICT_PID" ]; then',
+        '    echo "[gateway] Slack token held by PID $CONFLICT_PID — terminating to recover"',
+        '    kill "$CONFLICT_PID" 2>/dev/null || true',
+        '    sleep 1',
+        '    kill -9 "$CONFLICT_PID" 2>/dev/null || true',
+        '    if [ -d "$LOCK_DIR" ]; then',
+        '      grep -lE "(^|[^0-9])$CONFLICT_PID([^0-9]|$)" "$LOCK_DIR"/*.lock 2>/dev/null | xargs -r rm -f',
+        '    fi',
+        '    : > /tmp/hermes-gateway.log 2>/dev/null || true',
+        '    nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
+        '    sleep 3',
+        '  fi',
         '  if pgrep -f "hermes gateway" >/dev/null 2>&1; then',
         '    echo "[gateway] started in background replace mode"',
         '    exit 0',
@@ -1915,10 +1971,22 @@ export const hermesAPI = {
         '  RC=$?',
         'fi',
         // Last resort for environments where service units are unavailable:
-        // force-replace with foreground command in background mode.
+        // force-replace with foreground command in background mode (with
+        // the same Slack-conflict self-heal as above).
         'if [ "$RC" -ne 0 ]; then',
+        '  hermes gateway stop >/dev/null 2>&1 || true',
+        '  sleep 1',
         '  nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
         '  sleep 3',
+        '  CONFLICT_PID="$(grep -oE "Slack app token already in use \\(PID [0-9]+\\)" /tmp/hermes-gateway.log 2>/dev/null | grep -oE "[0-9]+" | head -n 1)"',
+        '  if [ -n "$CONFLICT_PID" ]; then',
+        '    echo "[gateway] Slack token held by PID $CONFLICT_PID — terminating to recover"',
+        '    kill "$CONFLICT_PID" 2>/dev/null || true; sleep 1; kill -9 "$CONFLICT_PID" 2>/dev/null || true',
+        '    if [ -d "$LOCK_DIR" ]; then grep -lE "(^|[^0-9])$CONFLICT_PID([^0-9]|$)" "$LOCK_DIR"/*.lock 2>/dev/null | xargs -r rm -f; fi',
+        '    : > /tmp/hermes-gateway.log 2>/dev/null || true',
+        '    nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
+        '    sleep 3',
+        '  fi',
         '  pgrep -f "hermes gateway" >/dev/null 2>&1',
         '  if [ $? -eq 0 ]; then',
         '    echo "[gateway] started in background replace mode"',
@@ -1932,7 +2000,7 @@ export const hermesAPI = {
         'fi',
         'exit "$RC"',
       ].join('\n'),
-      { timeout: 90000 },
+      { timeout: 120000 },
     );
     const combined = `${r.stdout || ''}\n${r.stderr || ''}`.toLowerCase();
     const missingGatewayUnit =
@@ -2259,33 +2327,78 @@ export const hermesAPI = {
         'set +e',
         HERMES_PATH_EXPORT,
         getHermesNodeEnvExport(),
-        'mkdir -p "$NODE_RUNTIME_DIR"',
-        'if [ -x "$NODE_RUNTIME_HOME/bin/node" ] && [ -x "$NODE_RUNTIME_HOME/bin/npm" ]; then',
-        '  NP="$("$NODE_RUNTIME_HOME/bin/node" -p "process.platform" 2>/dev/null || true)"',
-        '  if [ "$NP" = "linux" ]; then',
-        '    echo "[ronbot] Managed Node runtime ready: $("$NODE_RUNTIME_HOME/bin/node" --version) ($NODE_RUNTIME_HOME)"',
-        '    exit 0',
+        // ── Migrate any legacy ~/.hermes/runtime/node/node-v* tree ────────
+        // Older Ronbot builds installed Node into a versioned subfolder.
+        // Hermes' official install.sh uses ~/.hermes/node directly. If we
+        // find a legacy tree and the canonical path is empty, move the
+        // legacy tree into place so we don't redownload Node.
+        'if [ ! -x "$NODE_RUNTIME_HOME/bin/node" ] && [ -d "$NODE_RUNTIME_DIR" ]; then',
+        '  LEGACY_DIR="$(ls -1d "$NODE_RUNTIME_DIR"/node-v*-linux-* 2>/dev/null | head -n 1)"',
+        '  if [ -n "$LEGACY_DIR" ] && [ -x "$LEGACY_DIR/bin/node" ]; then',
+        '    echo "[ronbot] Migrating legacy managed Node runtime $LEGACY_DIR -> $NODE_RUNTIME_HOME"',
+        '    rm -rf "$NODE_RUNTIME_HOME"',
+        '    mkdir -p "$(dirname "$NODE_RUNTIME_HOME")"',
+        '    mv "$LEGACY_DIR" "$NODE_RUNTIME_HOME" || true',
+        '    rm -rf "$NODE_RUNTIME_DIR" 2>/dev/null || true',
         '  fi',
         'fi',
-        'echo "[ronbot] Installing managed Node runtime ($NODE_RUNTIME_VERSION)..."',
-        'TARBALL="node-${NODE_RUNTIME_VERSION}-linux-${NODE_ARCH}.tar.xz"',
-        'URL="https://nodejs.org/dist/${NODE_RUNTIME_VERSION}/${TARBALL}"',
-        'TMP="/tmp/ronbot-node-${NODE_RUNTIME_VERSION}-${NODE_ARCH}.tar.xz"',
+        // ── Idempotent fast path ─────────────────────────────────────────
+        'if [ -x "$NODE_RUNTIME_HOME/bin/node" ] && [ -x "$NODE_RUNTIME_HOME/bin/npm" ]; then',
+        '  NP="$("$NODE_RUNTIME_HOME/bin/node" -p "process.platform" 2>/dev/null || true)"',
+        '  NV="$("$NODE_RUNTIME_HOME/bin/node" --version 2>/dev/null || echo unknown)"',
+        '  case "$NV" in v22.*) NV_OK=1 ;; *) NV_OK=0 ;; esac',
+        '  if [ "$NP" = "linux" ] && [ "$NV_OK" = "1" ]; then',
+        '    mkdir -p "$HOME/.local/bin"',
+        '    ln -sf "$NODE_RUNTIME_HOME/bin/node" "$HOME/.local/bin/node"',
+        '    ln -sf "$NODE_RUNTIME_HOME/bin/npm"  "$HOME/.local/bin/npm"',
+        '    ln -sf "$NODE_RUNTIME_HOME/bin/npx"  "$HOME/.local/bin/npx"',
+        '    echo "[ronbot] Managed Node runtime ready: $NV ($NODE_RUNTIME_HOME)"',
+        '    exit 0',
+        '  fi',
+        '  echo "[ronbot] Existing managed Node ($NV, platform=$NP) does not satisfy v22+linux — reinstalling"',
+        'fi',
+        // ── Resolve the latest Node v22 release dynamically ─────────────
+        'INDEX_URL="https://nodejs.org/dist/latest-v${NODE_RUNTIME_MAJOR}.x/"',
+        'echo "[ronbot] Resolving latest Node v${NODE_RUNTIME_MAJOR} release from $INDEX_URL"',
+        'INDEX_HTML=""',
         'if command -v curl >/dev/null 2>&1; then',
-        '  curl -fsSL --retry 3 --connect-timeout 15 "$URL" -o "$TMP" || { echo "[ronbot] Failed to download managed Node runtime from $URL" >&2; exit 1; }',
+        '  INDEX_HTML="$(curl -fsSL --connect-timeout 15 --retry 3 "$INDEX_URL" 2>/dev/null || true)"',
         'elif command -v wget >/dev/null 2>&1; then',
-        '  wget -qO "$TMP" "$URL" || { echo "[ronbot] Failed to download managed Node runtime from $URL" >&2; exit 1; }',
+        '  INDEX_HTML="$(wget -qO- "$INDEX_URL" 2>/dev/null || true)"',
         'else',
-        '  echo "[ronbot] Need curl or wget to download managed Node runtime." >&2',
+        '  echo "[ronbot] Need curl or wget to install the managed Node runtime." >&2',
         '  exit 1',
         'fi',
+        '[ -n "$INDEX_HTML" ] || { echo "[ronbot] Could not fetch $INDEX_URL — check network access." >&2; exit 1; }',
+        'TARBALL="$(printf %s "$INDEX_HTML" | grep -oE "node-v${NODE_RUNTIME_MAJOR}\\.[0-9]+\\.[0-9]+-linux-${NODE_ARCH}\\.tar\\.xz" | head -n 1)"',
+        '[ -n "$TARBALL" ] || { echo "[ronbot] No Node v${NODE_RUNTIME_MAJOR} linux-${NODE_ARCH} tarball found at $INDEX_URL" >&2; exit 1; }',
+        'URL="${INDEX_URL}${TARBALL}"',
+        'TMP="/tmp/ronbot-${TARBALL}"',
+        'echo "[ronbot] Installing managed Node runtime: $TARBALL"',
+        'if command -v curl >/dev/null 2>&1; then',
+        '  curl -fsSL --retry 3 --connect-timeout 15 "$URL" -o "$TMP" || { echo "[ronbot] Failed to download $URL" >&2; exit 1; }',
+        'else',
+        '  wget -qO "$TMP" "$URL" || { echo "[ronbot] Failed to download $URL" >&2; exit 1; }',
+        'fi',
+        // ── Extract to a temp dir, then move into the canonical path ────
+        'EXTRACT_TMP="$(mktemp -d /tmp/ronbot-node-extract.XXXXXX)" || { echo "[ronbot] Failed to create extract tmpdir" >&2; exit 1; }',
+        'tar -xJf "$TMP" -C "$EXTRACT_TMP" || { echo "[ronbot] Failed to extract Node runtime archive." >&2; rm -rf "$EXTRACT_TMP"; exit 1; }',
+        'EXTRACTED_DIR="$(ls -1d "$EXTRACT_TMP"/node-v* 2>/dev/null | head -n 1)"',
+        '[ -n "$EXTRACTED_DIR" ] && [ -d "$EXTRACTED_DIR" ] || { echo "[ronbot] Could not find extracted Node directory" >&2; rm -rf "$EXTRACT_TMP"; exit 1; }',
         'rm -rf "$NODE_RUNTIME_HOME"',
-        'tar -xJf "$TMP" -C "$NODE_RUNTIME_DIR" || { echo "[ronbot] Failed to extract Node runtime archive." >&2; exit 1; }',
-        'rm -f "$TMP"',
+        'mkdir -p "$(dirname "$NODE_RUNTIME_HOME")"',
+        'mv "$EXTRACTED_DIR" "$NODE_RUNTIME_HOME" || { echo "[ronbot] Failed to move extracted Node runtime into $NODE_RUNTIME_HOME" >&2; rm -rf "$EXTRACT_TMP"; exit 1; }',
+        'rm -rf "$EXTRACT_TMP" "$TMP" 2>/dev/null || true',
         '[ -x "$NODE_RUNTIME_HOME/bin/node" ] || { echo "[ronbot] Managed Node install incomplete: node binary missing." >&2; exit 1; }',
         '[ -x "$NODE_RUNTIME_HOME/bin/npm" ] || { echo "[ronbot] Managed Node install incomplete: npm binary missing." >&2; exit 1; }',
+        // ── Mirror Hermes install.sh: symlink node/npm/npx into ~/.local/bin ──
+        'mkdir -p "$HOME/.local/bin"',
+        'ln -sf "$NODE_RUNTIME_HOME/bin/node" "$HOME/.local/bin/node"',
+        'ln -sf "$NODE_RUNTIME_HOME/bin/npm"  "$HOME/.local/bin/npm"',
+        'ln -sf "$NODE_RUNTIME_HOME/bin/npx"  "$HOME/.local/bin/npx"',
         'echo "[ronbot] Managed Node runtime installed: $("$NODE_RUNTIME_HOME/bin/node" --version)"',
         'echo "[ronbot] Managed npm runtime installed: $("$NODE_RUNTIME_HOME/bin/npm" --version)"',
+        'echo "[ronbot] Symlinked node/npm/npx into $HOME/.local/bin (matches Hermes install.sh layout)"',
         'exit 0',
       ].join('\n'),
       { timeout: 900000, ...(options ?? {}) },
