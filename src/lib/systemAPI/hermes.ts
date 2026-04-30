@@ -2727,7 +2727,7 @@ export const hermesAPI = {
 
   /**
    * Force the Hermes gateway to spawn the WhatsApp Baileys bridge with the
-   * managed Node v20 runtime instead of whatever `node` happens to be first
+   * managed Node v22 runtime instead of whatever `node` happens to be first
    * on the service unit's PATH.
    *
    * Why this exists:
@@ -2743,14 +2743,14 @@ export const hermesAPI = {
    *   2. Confirms the managed Node is actually v20+ and exposes
    *      `globalThis.crypto.subtle`. Aborts loudly if not.
    *   3. Writes a tiny `~/.hermes/bin/node` shim that execs the managed
-   *      `node` so anything that resolves `node` via PATH gets v20.
+   *      `node` so anything that resolves `node` via PATH gets managed Node.
    *   4. Writes `NODE`, `NODE_BIN`, `HERMES_NODE_BIN`, `WHATSAPP_NODE_BIN`,
    *      and a `PATH=$HOME/.hermes/bin:$PATH` entry into ~/.hermes/.env so
-   *      the gateway service env (loaded from .env) picks up v20 regardless
+   *      the gateway service env (loaded from .env) picks up managed Node regardless
    *      of where it's started from.
    *
    * Returns `{ success, version }` where `version` is the managed Node
-   * version actually installed (e.g. "v20.19.2"). On failure, `error`
+   * version actually installed (e.g. "v22.22.2"). On failure, `error`
    * carries an actionable message for the wizard.
    */
   async ensureWhatsAppManagedNode(): Promise<{
@@ -2819,7 +2819,7 @@ export const hermesAPI = {
     if (!r.success) {
       let error = 'Could not prepare the managed Node runtime for the WhatsApp bridge.';
       if (out.includes('MANAGED_NODE_MISSING')) {
-        error = 'The managed Node v20 runtime is not installed. Run the WhatsApp setup wizard from the start so Ronbot can install it.';
+        error = 'The managed Node v22 runtime is not installed. Re-run Ronbot setup so the base Hermes runtime can install it.';
       } else if (out.includes('MANAGED_NODE_PROBE_FAILED')) {
         error = `Managed Node ${version ?? ''} does not expose globalThis.crypto.subtle. Reinstall the managed runtime and try again.`;
       } else if (out.includes('SHIM_BODY_BAD')) {
