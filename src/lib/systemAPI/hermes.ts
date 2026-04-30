@@ -3387,7 +3387,15 @@ export const hermesAPI = {
         : blockingFailures.map((f) => `${f.id}: ${f.detail}`).join('\n'),
     });
     const diagnostics = await this.getWhatsAppRuntimeDiagnostic().catch(() => undefined);
-    const ok = steps.every((s) => s.ok || (s.name === 'verify-gateway-path' && !verify.error));
+    // The post-repair audit is authoritative. `verify-gateway-path` is a
+    // best-effort /proc check and routinely fails in WSL/manual mode where
+    // there's no systemd-managed PID — we should not block the whole repair
+    // on it as long as the audit's blocking checks all pass.
+    const auditOk = blockingFailures.length === 0;
+    const otherStepsOk = steps
+      .filter((s) => s.name !== 'verify-gateway-path' && s.name !== 'bridge-runtime-audit')
+      .every((s) => s.ok);
+    const ok = auditOk && otherStepsOk;
     return { ok, steps, diagnostics };
   },
 
