@@ -1097,8 +1097,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           // retry before surfacing the error and leaving the wizard open.
           const failure = await systemAPI.classifyWhatsAppBridgeFailure().catch(() => ({ kind: "unknown" as const }));
           const diag = await systemAPI.getWhatsAppRuntimeDiagnostic().catch(() => null);
+          const audit = await systemAPI.auditWhatsAppBridgeRuntime().catch(() => null);
+          const auditBlocking = (audit?.failedChecks || []).filter((f) => f.id !== "session-creds");
           const repairableKinds = new Set(["node-version", "bridge-not-configured", "adapter-missing"]);
-          const shouldRepair = repairableKinds.has(failure.kind) || !!diag?.bridgeLogShowsNode18;
+          const shouldRepair =
+            repairableKinds.has(failure.kind) ||
+            !!diag?.bridgeLogShowsNode18 ||
+            auditBlocking.length > 0;
           if (shouldRepair) {
             const repairTitle =
               failure.kind === "node-version" || diag?.bridgeLogShowsNode18
