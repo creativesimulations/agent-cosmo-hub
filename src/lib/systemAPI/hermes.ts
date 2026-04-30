@@ -3094,21 +3094,8 @@ export const hermesAPI = {
       { timeout: 20000 },
     );
     const raw = r.stdout || '';
-    const home = (raw.match(/^HOME=(.*)$/m)?.[1] || '').trim() || undefined;
-    const bridgeDir = (raw.match(/^BRIDGE_DIR=(.*)$/m)?.[1] || '').trim() || undefined;
-    const failedChecks: Array<{ id: string; detail: string }> = [];
-    const passedChecks: string[] = [];
-    for (const line of raw.split('\n')) {
-      const passMatch = line.match(/^PASS:([\w-]+)\s*$/);
-      if (passMatch) {
-        passedChecks.push(passMatch[1]);
-        continue;
-      }
-      const failMatch = line.match(/^FAIL:([\w-]+):(.*)$/);
-      if (failMatch) {
-        failedChecks.push({ id: failMatch[1], detail: failMatch[2].trim() });
-      }
-    }
+    const parsed = parseWhatsAppBridgeAudit(raw);
+    const { home, bridgeDir, failedChecks, passedChecks } = parsed;
     return {
       success: r.success,
       home,
