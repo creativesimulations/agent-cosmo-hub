@@ -267,37 +267,8 @@ const ChannelsPage = () => {
     [refresh, bumpCapabilityProbes],
   );
 
-  const handleRestartGateway = useCallback(async () => {
-    if (restartGatewayInFlightRef.current) return;
-    restartGatewayInFlightRef.current = true;
-    setGatewayRestartBusy(true);
-    try {
-      await systemAPI.materializeEnv().catch(() => undefined);
-      await systemAPI.stopGateway().catch(() => undefined);
-      await systemAPI.materializeEnv().catch(() => undefined);
-      // Apply the WhatsApp Node v20 runtime fix BEFORE we re-install the
-      // gateway service. refreshGatewayInstall will re-apply the same patch
-      // again after Hermes regenerates the systemd unit / launchd plist.
-      await systemAPI.ensureWhatsAppManagedNode().catch(() => undefined);
-      await systemAPI
-        .terminateWhatsAppPairingProcesses({ includeGatewayBridge: true })
-        .catch(() => undefined);
-      await systemAPI.refreshGatewayInstall().catch(() => undefined);
-      const r = await systemAPI.startGateway();
-      if (!r.success) {
-        toast.error("Could not restart messaging gateway", {
-          description: r.stderr?.split("\n")[0] || r.stdout?.split("\n")[0] || "Check Logs and try again.",
-        });
-        return;
-      }
-      bumpCapabilityProbes();
-      toast.success("Messaging gateway restarted");
-    } finally {
-      restartGatewayInFlightRef.current = false;
-      setGatewayRestartBusy(false);
-      void refresh();
-    }
-  }, [refresh, bumpCapabilityProbes]);
+
+
 
   const confirmWhatsAppReset = async () => {
     if (whatsappResetInFlightRef.current) return;
@@ -310,7 +281,8 @@ const ChannelsPage = () => {
         return;
       }
       bumpCapabilityProbes();
-      toast.success("WhatsApp reset", { description: "You can run Set up again whenever you are ready." });
+      setWhatsappResetPending(true);
+      toast.success("WhatsApp reset", { description: "Click Set up to pair WhatsApp again." });
       setWhatsappResetOpen(false);
       void refresh();
     } finally {
