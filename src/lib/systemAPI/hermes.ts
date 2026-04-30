@@ -3028,7 +3028,7 @@ export const hermesAPI = {
     // Proactively strip any previously-written PATH override that contained
     // unexpanded shell variables (from earlier Ronbot versions). A bad PATH
     // entry in .env breaks every subprocess the gateway spawns.
-    await this.unsetEnvVar?.('PATH').catch(() => undefined);
+    await this.removeEnvVar('PATH').catch(() => undefined);
     agentLogs.push({
       source: 'system',
       level: 'info',
