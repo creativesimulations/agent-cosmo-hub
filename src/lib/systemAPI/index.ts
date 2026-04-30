@@ -92,6 +92,7 @@ export const systemAPI = {
   patchHermesWhatsAppAdapterForNode: hermesAPI.patchHermesWhatsAppAdapterForNode.bind(hermesAPI),
   getWhatsAppRuntimeDiagnostic: hermesAPI.getWhatsAppRuntimeDiagnostic.bind(hermesAPI),
   classifyWhatsAppBridgeFailure: hermesAPI.classifyWhatsAppBridgeFailure.bind(hermesAPI),
+  auditWhatsAppBridgeRuntime: hermesAPI.auditWhatsAppBridgeRuntime.bind(hermesAPI),
   repairWhatsAppGatewayRuntime: hermesAPI.repairWhatsAppGatewayRuntime.bind(hermesAPI),
   verifyGatewayUsesManagedNode: hermesAPI.verifyGatewayUsesManagedNode.bind(hermesAPI),
   rotateWhatsAppBridgeLogs: hermesAPI.rotateWhatsAppBridgeLogs.bind(hermesAPI),

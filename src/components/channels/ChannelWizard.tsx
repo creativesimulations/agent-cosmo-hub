@@ -706,6 +706,14 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaOtherGatewayLogsOpen(false);
       return "live";
     }
+    // Authoritative WSL/runtime-side audit. This runs INSIDE the same
+    // environment Hermes runs in (WSL on Windows), so it knows what the
+    // gateway actually sees — vs. what the Windows host has installed.
+    const audit = await systemAPI
+      .auditWhatsAppBridgeRuntime()
+      .catch(() => null);
+    const blockingAuditFailures =
+      (audit?.failedChecks || []).filter((f) => f.id !== "session-creds");
     // Inspect the bridge log for the well-known Node-version crash signature
     // and surface a clear, actionable message instead of a wall of stack traces.
     const failure = await systemAPI
@@ -719,7 +727,19 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     const hint = (logR.content || tail).split("\n").slice(-20).join("\n").trim();
     setWaBridgeInactiveHint(hint);
     let detail: string;
-    if (failure.kind === "node-version" || diag?.bridgeLogShowsNode18) {
+    if (blockingAuditFailures.length > 0) {
+      // Audit-driven message: precise paths inside the agent's runtime.
+      const platform = await systemAPI.getPlatform().catch(() => null);
+      const runtimeLabel = platform?.isWindows ? "WSL" : "the agent runtime";
+      const lines = blockingAuditFailures
+        .slice(0, 6)
+        .map((f) => `• ${f.detail}`);
+      detail =
+        `Hermes WhatsApp bridge is not ready inside ${runtimeLabel}.\n` +
+        (audit?.home ? `Runtime $HOME = ${audit.home}\n` : "") +
+        `\nFailing checks:\n${lines.join("\n")}\n\n` +
+        `Click "Re-pair + Restart" or "Repair runtime only" to install the managed Node v20 + Baileys inside ${runtimeLabel} and restart the gateway.`;
+    } else if (failure.kind === "node-version" || diag?.bridgeLogShowsNode18) {
       const reasons: string[] = [];
       if (diag) {
         if (!diag.shimVersion || diag.shimVersion === "missing") {
@@ -762,17 +782,20 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       }
     }
     const nonWhatsapp = Array.from(otherPlatformWarnings).slice(-8);
-    // Non-WhatsApp warnings (Slack scopes, IMAP auth, etc.) are NOT part of
-    // the WhatsApp finalize verdict. Keep them out of the primary error and
-    // expose them under a collapsible disclosure so support still has access.
+    // Non-WhatsApp warnings (Slack scopes, IMAP auth, etc.) are NEVER part of
+    // the WhatsApp finalize verdict. Keep them strictly out of the primary
+    // error and only expose them under a collapsible disclosure.
     setWaOtherGatewayLogs(nonWhatsapp);
     setWaOtherGatewayLogsOpen(false);
     const traceBlock = recoverySteps.length ? `\n\nRecovery attempts:\n- ${recoverySteps.join("\n- ")}` : "";
-    setFormError(
-      detail +
-      traceBlock +
-      (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""),
-    );
+    // When the audit caught a specific failure, suppress the noisy log tail
+    // (which usually just repeats the same error). Otherwise keep the tail
+    // so support still has the raw context.
+    const tailBlock =
+      blockingAuditFailures.length === 0 && logR.content
+        ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}`
+        : "";
+    setFormError(detail + traceBlock + tailBlock);
     toast.error("WhatsApp bridge not confirmed", {
       description:
         failure.kind === "node-version" || diag?.bridgeLogShowsNode18
@@ -1074,8 +1097,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           // retry before surfacing the error and leaving the wizard open.
           const failure = await systemAPI.classifyWhatsAppBridgeFailure().catch(() => ({ kind: "unknown" as const }));
           const diag = await systemAPI.getWhatsAppRuntimeDiagnostic().catch(() => null);
+          const audit = await systemAPI.auditWhatsAppBridgeRuntime().catch(() => null);
+          const auditBlocking = (audit?.failedChecks || []).filter((f) => f.id !== "session-creds");
           const repairableKinds = new Set(["node-version", "bridge-not-configured", "adapter-missing"]);
-          const shouldRepair = repairableKinds.has(failure.kind) || !!diag?.bridgeLogShowsNode18;
+          const shouldRepair =
+            repairableKinds.has(failure.kind) ||
+            !!diag?.bridgeLogShowsNode18 ||
+            auditBlocking.length > 0;
           if (shouldRepair) {
             const repairTitle =
               failure.kind === "node-version" || diag?.bridgeLogShowsNode18
