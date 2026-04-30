@@ -161,6 +161,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   useEffect(() => {
     if (!open) return;
     setWaBridgeInactiveHint("");
+    setWaOtherGatewayLogs([]);
+    setWaOtherGatewayLogsOpen(false);
     setStep(0);
     waWhatsAppFinalizeCompletedRef.current = false;
     setTestResult("idle");
