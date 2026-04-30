@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseWhatsAppBridgeAudit } from './hermes';
+import { parseWhatsAppBridgeAudit, parseSlackGatewayConflict, parseGatewayStartupRecoverySignals } from './hermes';
 
 describe('parseWhatsAppBridgeAudit', () => {
   it('captures HOME, BRIDGE_DIR, and groups passes vs failures', () => {
@@ -35,7 +35,7 @@ describe('parseWhatsAppBridgeAudit', () => {
     const failIds = report.failedChecks.map((f) => f.id);
     expect(failIds).toEqual(['bridge-deps', 'bridge-deps-loadable', 'session-creds']);
     expect(report.failedChecks[0].detail).toContain('Partial WhatsApp bridge install');
-    expect(report.failedChecks[1].detail).toContain('cannot load');
+    expect(report.failedChecks[1].detail.toLowerCase()).toContain('cannot load');
   });
 
   it('returns empty arrays when audit produced no output', () => {
@@ -55,5 +55,38 @@ describe('parseWhatsAppBridgeAudit', () => {
     const report = parseWhatsAppBridgeAudit(raw);
     const blocking = report.failedChecks.filter((f) => f.id !== 'session-creds');
     expect(blocking).toEqual([]);
+  });
+});
+
+describe('parseSlackGatewayConflict', () => {
+  it('extracts the conflicting Slack PID', () => {
+    const raw = [
+      '[Slack] Slack app token already in use (PID 82973). Stop the other gateway first.',
+      'WARNING gateway.run: ✗ slack failed to connect',
+    ].join('\n');
+    const conflict = parseSlackGatewayConflict(raw);
+    expect(conflict.hasConflict).toBe(true);
+    expect(conflict.pid).toBe(82973);
+  });
+
+  it('returns hasConflict=false when no conflict is present', () => {
+    const conflict = parseSlackGatewayConflict('Gateway started cleanly\nWhatsApp adapter ready');
+    expect(conflict.hasConflict).toBe(false);
+    expect(conflict.pid).toBeUndefined();
+  });
+});
+
+describe('parseGatewayStartupRecoverySignals', () => {
+  it('flags both Slack conflict and missing WhatsApp runtime', () => {
+    const raw = [
+      'WARNING gateway.run: WhatsApp: Node.js not installed or bridge not configured',
+      'ERROR gateway.platforms.base: [Slack] Slack app token already in use (PID 12345). Stop the other gateway first.',
+      'WARNING gateway.run: No adapter available for whatsapp',
+    ].join('\n');
+    const signals = parseGatewayStartupRecoverySignals(raw);
+    expect(signals.slackConflict.hasConflict).toBe(true);
+    expect(signals.slackConflict.pid).toBe(12345);
+    expect(signals.whatsappRuntimeMissing).toBe(true);
+    expect(signals.whatsappRuntimeSnippet).toContain('Node.js not installed');
   });
 });
