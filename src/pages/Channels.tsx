@@ -298,10 +298,11 @@ const ChannelsPage = () => {
       });
       return;
     }
-    if (channel.id === "whatsapp" && statuses[channel.id]?.state === "configured") {
+    if (channel.id === "whatsapp" && statuses[channel.id]?.state === "configured" && !whatsappResetPending) {
       setWhatsappResetOpen(true);
       return;
     }
+    if (channel.id === "whatsapp") setWhatsappResetPending(false);
     setActiveWizard(channel);
   };
 
