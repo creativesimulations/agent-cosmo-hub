@@ -32,9 +32,8 @@ const ChannelsPage = () => {
   const [activeWizard, setActiveWizard] = useState<Channel | null>(null);
   const [whatsappResetOpen, setWhatsappResetOpen] = useState(false);
   const [whatsappResetBusy, setWhatsappResetBusy] = useState(false);
-  const [gatewayRestartBusy, setGatewayRestartBusy] = useState(false);
+  const [whatsappResetPending, setWhatsappResetPending] = useState(false);
   const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
-  const restartGatewayInFlightRef = useRef(false);
   const whatsappResetInFlightRef = useRef(false);
   const googleSetupInFlightRef = useRef(false);
   const channelsDebugRunRef = useRef("");

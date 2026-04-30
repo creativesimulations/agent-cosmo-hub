@@ -1,4 +1,4 @@
-import { CheckCircle2, Lock, Loader2, AlertCircle, RotateCcw } from "lucide-react";
+import { Lock, Loader2, AlertCircle, RotateCcw } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -14,11 +14,11 @@ interface ChannelCardProps {
   channel: Channel;
   status: ChannelStatus;
   onSetUp: () => void;
-  /** WhatsApp: when fully configured, only reset + gateway restart (no full reconfigure wizard). */
+  /** WhatsApp: when fully configured, surface a "Reset WhatsApp…" action instead of Reconfigure. */
   whatsappResetOnly?: boolean;
   onResetWhatsApp?: () => void;
-  onRestartGateway?: () => void;
-  gatewayRestartBusy?: boolean;
+  /** Disable the Reset button after the user has triggered a reset, until they click Set up again. */
+  whatsappResetPending?: boolean;
 }
 
 const ChannelCard = ({
@@ -27,8 +27,7 @@ const ChannelCard = ({
   onSetUp,
   whatsappResetOnly,
   onResetWhatsApp,
-  onRestartGateway,
-  gatewayRestartBusy,
+  whatsappResetPending,
 }: ChannelCardProps) => {
   const Icon = channel.icon;
 
@@ -100,33 +99,17 @@ const ChannelCard = ({
           <Button variant="outline" size="sm" onClick={onSetUp} className="w-full">
             <Lock className="w-3.5 h-3.5 mr-1.5" /> Unlock
           </Button>
-        ) : whatsappResetOnly && onResetWhatsApp && onRestartGateway ? (
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full border-destructive/50 text-destructive hover:bg-destructive/10"
-              onClick={onResetWhatsApp}
-              disabled={status.state === "loading" || gatewayRestartBusy}
-            >
-              <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reset WhatsApp…
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onRestartGateway}
-              className="w-full"
-              disabled={status.state === "loading" || !!gatewayRestartBusy}
-            >
-              {gatewayRestartBusy ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Restarting gateway…
-                </>
-              ) : (
-                "Restart messaging gateway"
-              )}
-            </Button>
-          </>
+        ) : whatsappResetOnly && onResetWhatsApp ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full border-destructive/50 text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={onResetWhatsApp}
+            disabled={status.state === "loading" || !!whatsappResetPending}
+          >
+            <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+            {whatsappResetPending ? "Reset — click Set up" : "Reset WhatsApp…"}
+          </Button>
         ) : (
           <Button
             variant={status.state === "not-configured" ? "default" : "outline"}
