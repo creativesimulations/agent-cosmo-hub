@@ -16,7 +16,7 @@ describe('parseWhatsAppBridgeAudit', () => {
       'PASS:managed-npm',
       'PASS:managed-node-version',
       'PASS:shim-node',
-      'FAIL:bridge-deps:Missing /home/kadosh/.hermes/hermes-agent/scripts/whatsapp-bridge/node_modules/@whiskeysockets/baileys — run npm install in the WhatsApp bridge folder',
+      'FAIL:bridge-deps:Partial WhatsApp bridge install — missing: ~/.hermes/hermes-agent/scripts/whatsapp-bridge/node_modules/@whiskeysockets/baileys/package.json. Click Repair runtime only or Re-pair + Restart to reinstall.',
       'FAIL:bridge-deps-loadable:Managed Node cannot load @whiskeysockets/baileys from /home/kadosh/.hermes/hermes-agent/scripts/whatsapp-bridge — Cannot find package \'@whiskeysockets/baileys\'',
       'PASS:env-whatsapp-enabled',
       'PASS:env-allowed-users',
@@ -34,7 +34,7 @@ describe('parseWhatsAppBridgeAudit', () => {
 
     const failIds = report.failedChecks.map((f) => f.id);
     expect(failIds).toEqual(['bridge-deps', 'bridge-deps-loadable', 'session-creds']);
-    expect(report.failedChecks[0].detail).toContain('npm install');
+    expect(report.failedChecks[0].detail).toContain('Partial WhatsApp bridge install');
     expect(report.failedChecks[1].detail).toContain('cannot load');
   });
 
