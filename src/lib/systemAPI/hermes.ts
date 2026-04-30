@@ -3327,8 +3327,27 @@ export const hermesAPI = {
       ok: verify.pathStartsWithShim,
       detail: verify.rawPath ? `PATH=${verify.rawPath.split(':').slice(0, 3).join(':')}…` : (verify.error || 'unable to read /proc — assuming OK'),
     });
+    // 9. Authoritative WSL/runtime-side audit AFTER restart so any remaining
+    //    failure is reported with the exact failing path inside the agent
+    //    environment, not just the desktop-host's view of things.
+    log('auditing WhatsApp bridge runtime…');
+    const audit = await this.auditWhatsAppBridgeRuntime().catch((e) => ({
+      success: false,
+      failedChecks: [{ id: 'audit-error', detail: e instanceof Error ? e.message : String(e) }],
+      passedChecks: [],
+      raw: '',
+    } as Awaited<ReturnType<typeof hermesAPI.auditWhatsAppBridgeRuntime>>));
+    // Treat session-creds as informational — pairing is a separate step.
+    const blockingFailures = (audit.failedChecks || []).filter((f) => f.id !== 'session-creds');
+    steps.push({
+      name: 'bridge-runtime-audit',
+      ok: blockingFailures.length === 0,
+      detail: blockingFailures.length === 0
+        ? `OK (${audit.passedChecks.length} checks passed)`
+        : blockingFailures.map((f) => `${f.id}: ${f.detail}`).join('\n'),
+    });
     const diagnostics = await this.getWhatsAppRuntimeDiagnostic().catch(() => undefined);
-    const ok = steps.every((s) => s.ok || s.name === 'verify-gateway-path' && !verify.error);
+    const ok = steps.every((s) => s.ok || (s.name === 'verify-gateway-path' && !verify.error));
     return { ok, steps, diagnostics };
   },
 
