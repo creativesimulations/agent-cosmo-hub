@@ -2248,7 +2248,14 @@ export const hermesAPI = {
     const waOk = /WA_OK=1/.test(out);
     const sourceMatch = out.match(/WA_SOURCE=(\w+)/);
     const source = (sourceMatch?.[1] as 'gateway_state' | 'bridge_health' | 'cli_status' | 'log_tail' | 'none') || 'none';
-    const signals = analyzeWhatsAppGatewaySignals([statusOutput, bridgeLogTail, bridgeHealthJson, gatewayStateJson].filter(Boolean).join('\n'));
+    // Read configured channels so we suppress warnings for any platform the
+    // user has not opted into (no Slack errors when Slack isn't configured,
+    // no IMAP errors when email isn't configured, etc.).
+    const configuredEnv = await this.readEnvFile().catch(() => ({} as Record<string, string>));
+    const signals = analyzeWhatsAppGatewaySignals(
+      [statusOutput, bridgeLogTail, bridgeHealthJson, gatewayStateJson].filter(Boolean).join('\n'),
+      { configuredEnv },
+    );
     return {
       success: r.success,
       running: procOk,
