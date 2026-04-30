@@ -2987,6 +2987,139 @@ export const hermesAPI = {
   },
 
   /**
+   * Authoritative WSL/macOS/Linux-side audit of every prerequisite the
+   * Hermes WhatsApp adapter needs to actually start the bridge. This runs
+   * INSIDE the same environment Hermes runs in (WSL on Windows), so the
+   * report reflects what the gateway sees — not what the desktop host has.
+   *
+   * The audit returns a list of failed checks with stable ids the wizard
+   * uses to render a precise error message and pick the right repair.
+   *
+   * Checks performed (in order):
+   *   - hermes-home-resolved: $HOME is a POSIX path, ~/.hermes exists
+   *   - hermes-cli: hermes binary is on PATH inside the runtime
+   *   - bridge-folder: ~/.hermes/hermes-agent/scripts/whatsapp-bridge exists
+   *   - bridge-script: bridge.js exists in that folder
+   *   - bridge-package-json: package.json exists in that folder
+   *   - managed-node-runtime: ~/.hermes/runtime/node/.../bin/node exists
+   *   - managed-node-version: managed node reports v20+
+   *   - managed-npm: managed npm exists
+   *   - bridge-deps: node_modules/@whiskeysockets/baileys exists
+   *   - bridge-deps-loadable: managed node can require('@whiskeysockets/baileys') from bridge dir
+   *   - shim-node: ~/.hermes/bin/node exists & runs v20+
+   *   - env-whatsapp-enabled: WHATSAPP_ENABLED=true in ~/.hermes/.env
+   *   - env-allowed-users: access-control key set in ~/.hermes/.env
+   *   - session-creds (informational): ~/.hermes/platforms/whatsapp/session/creds.json
+   */
+  async auditWhatsAppBridgeRuntime(): Promise<{
+    success: boolean;
+    home?: string;
+    bridgeDir?: string;
+    failedChecks: Array<{ id: string; detail: string }>;
+    passedChecks: string[];
+    raw: string;
+  }> {
+    if (!isElectron()) {
+      return {
+        success: true,
+        failedChecks: [],
+        passedChecks: ['preview'],
+        raw: '[preview] WhatsApp bridge audit only runs in Electron.',
+      };
+    }
+    const r = await runHermesShell(
+      [
+        'set +e',
+        HERMES_PATH_EXPORT,
+        getHermesNodeEnvExport(),
+        'BRIDGE_DIR="$HOME/.hermes/hermes-agent/scripts/whatsapp-bridge"',
+        'BRIDGE_JS="$BRIDGE_DIR/bridge.js"',
+        'PKG_JSON="$BRIDGE_DIR/package.json"',
+        'BAILEYS_DIR="$BRIDGE_DIR/node_modules/@whiskeysockets/baileys"',
+        'NODE_BIN="$NODE_RUNTIME_HOME/bin/node"',
+        'NPM_BIN="$NODE_RUNTIME_HOME/bin/npm"',
+        'SHIM="$HOME/.hermes/bin/node"',
+        'ENV_FILE="$HOME/.hermes/.env"',
+        'CREDS="$HOME/.hermes/platforms/whatsapp/session/creds.json"',
+        'echo "AUDIT_BEGIN"',
+        'echo "HOME=$HOME"',
+        'echo "BRIDGE_DIR=$BRIDGE_DIR"',
+        // hermes-home-resolved
+        'case "$HOME" in /*) echo "PASS:hermes-home-resolved" ;; *) echo "FAIL:hermes-home-resolved:HOME is not a POSIX absolute path: $HOME" ;; esac',
+        // hermes-cli
+        'if command -v hermes >/dev/null 2>&1; then echo "PASS:hermes-cli"; else echo "FAIL:hermes-cli:hermes binary not on PATH inside the agent runtime"; fi',
+        // bridge folder/files
+        'if [ -d "$BRIDGE_DIR" ]; then echo "PASS:bridge-folder"; else echo "FAIL:bridge-folder:Missing $BRIDGE_DIR — Hermes WhatsApp bridge is not installed"; fi',
+        'if [ -f "$BRIDGE_JS" ]; then echo "PASS:bridge-script"; else echo "FAIL:bridge-script:Missing $BRIDGE_JS — reinstall Hermes to restore the WhatsApp bridge"; fi',
+        'if [ -f "$PKG_JSON" ]; then echo "PASS:bridge-package-json"; else echo "FAIL:bridge-package-json:Missing $PKG_JSON in the WhatsApp bridge folder"; fi',
+        // managed node + npm + version probe
+        'if [ -x "$NODE_BIN" ]; then echo "PASS:managed-node-runtime"; else echo "FAIL:managed-node-runtime:Managed Node runtime missing at $NODE_BIN"; fi',
+        'if [ -x "$NPM_BIN" ]; then echo "PASS:managed-npm"; else echo "FAIL:managed-npm:Managed npm missing at $NPM_BIN"; fi',
+        'if [ -x "$NODE_BIN" ]; then',
+        '  NODE_VER="$("$NODE_BIN" --version 2>/dev/null || echo unknown)"',
+        '  case "$NODE_VER" in',
+        '    v2[0-9].*|v[3-9][0-9].*) echo "PASS:managed-node-version" ;;',
+        '    *) echo "FAIL:managed-node-version:Managed Node reports $NODE_VER — Baileys requires v20+" ;;',
+        '  esac',
+        'fi',
+        // shim
+        'if [ -x "$SHIM" ]; then',
+        '  SHIM_VER="$("$SHIM" --version 2>/dev/null || echo unknown)"',
+        '  case "$SHIM_VER" in',
+        '    v2[0-9].*|v[3-9][0-9].*) echo "PASS:shim-node" ;;',
+        '    *) echo "FAIL:shim-node:~/.hermes/bin/node reports $SHIM_VER — should be v20+" ;;',
+        '  esac',
+        'else',
+        '  echo "FAIL:shim-node:Missing managed Node shim at ~/.hermes/bin/node"',
+        'fi',
+        // bridge deps existence + load probe
+        'if [ -d "$BAILEYS_DIR" ]; then echo "PASS:bridge-deps"; else echo "FAIL:bridge-deps:Missing $BAILEYS_DIR — run npm install in the WhatsApp bridge folder"; fi',
+        'if [ -d "$BAILEYS_DIR" ] && [ -x "$NODE_BIN" ]; then',
+        '  ( cd "$BRIDGE_DIR" && "$NODE_BIN" -e "require(\'@whiskeysockets/baileys\')" >/dev/null 2>&1 )',
+        '  if [ $? -eq 0 ]; then echo "PASS:bridge-deps-loadable"; else echo "FAIL:bridge-deps-loadable:Managed Node cannot require(\'@whiskeysockets/baileys\') from $BRIDGE_DIR — reinstall bridge dependencies"; fi',
+        'fi',
+        // env file checks
+        'if [ -f "$ENV_FILE" ]; then',
+        '  if grep -E "^WHATSAPP_ENABLED=\\"?true\\"?[[:space:]]*$" "$ENV_FILE" >/dev/null 2>&1; then echo "PASS:env-whatsapp-enabled"; else echo "FAIL:env-whatsapp-enabled:WHATSAPP_ENABLED=true is missing from ~/.hermes/.env"; fi',
+        '  if grep -E "^WHATSAPP_ALLOWED_USERS=" "$ENV_FILE" >/dev/null 2>&1 || grep -E "^WHATSAPP_ALLOW_ALL_USERS=\\"?true\\"?[[:space:]]*$" "$ENV_FILE" >/dev/null 2>&1; then echo "PASS:env-allowed-users"; else echo "FAIL:env-allowed-users:Neither WHATSAPP_ALLOWED_USERS nor WHATSAPP_ALLOW_ALL_USERS=true is set in ~/.hermes/.env"; fi',
+        'else',
+        '  echo "FAIL:env-whatsapp-enabled:~/.hermes/.env not found"',
+        '  echo "FAIL:env-allowed-users:~/.hermes/.env not found"',
+        'fi',
+        // session creds (informational)
+        'if [ -f "$CREDS" ]; then echo "PASS:session-creds"; else echo "FAIL:session-creds:WhatsApp session not paired yet — scan the QR code first"; fi',
+        'echo "AUDIT_END"',
+        'exit 0',
+      ].join('\n'),
+      { timeout: 20000 },
+    );
+    const raw = r.stdout || '';
+    const home = (raw.match(/^HOME=(.*)$/m)?.[1] || '').trim() || undefined;
+    const bridgeDir = (raw.match(/^BRIDGE_DIR=(.*)$/m)?.[1] || '').trim() || undefined;
+    const failedChecks: Array<{ id: string; detail: string }> = [];
+    const passedChecks: string[] = [];
+    for (const line of raw.split('\n')) {
+      const passMatch = line.match(/^PASS:([\w-]+)\s*$/);
+      if (passMatch) {
+        passedChecks.push(passMatch[1]);
+        continue;
+      }
+      const failMatch = line.match(/^FAIL:([\w-]+):(.*)$/);
+      if (failMatch) {
+        failedChecks.push({ id: failMatch[1], detail: failMatch[2].trim() });
+      }
+    }
+    return {
+      success: r.success,
+      home,
+      bridgeDir,
+      failedChecks,
+      passedChecks,
+      raw,
+    };
+  },
+
+  /**
    * Quick read of the most recent WhatsApp bridge crash signature, if any.
    * Used by the wizard to map a "gateway didn't come up" failure to an
    * actionable explanation instead of a wall of stack traces.
