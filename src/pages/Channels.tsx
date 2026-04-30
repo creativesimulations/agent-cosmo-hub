@@ -359,8 +359,7 @@ const ChannelsPage = () => {
               onSetUp={() => handleSetUp(c)}
               whatsappResetOnly={c.id === "whatsapp" && statuses[c.id]?.state === "configured"}
               onResetWhatsApp={() => setWhatsappResetOpen(true)}
-              onRestartGateway={() => void handleRestartGateway()}
-              gatewayRestartBusy={c.id === "whatsapp" ? gatewayRestartBusy : false}
+              whatsappResetPending={c.id === "whatsapp" ? whatsappResetPending : false}
             />
           ))}
           {googleWorkspaceUnlocked && googleWorkspaceUpgrade && (
@@ -415,8 +414,7 @@ const ChannelsPage = () => {
                 onSetUp={() => handleSetUp(c)}
                 whatsappResetOnly={c.id === "whatsapp" && statuses[c.id]?.state === "configured"}
                 onResetWhatsApp={() => setWhatsappResetOpen(true)}
-                onRestartGateway={() => void handleRestartGateway()}
-                gatewayRestartBusy={c.id === "whatsapp" ? gatewayRestartBusy : false}
+                whatsappResetPending={c.id === "whatsapp" ? whatsappResetPending : false}
               />
             ))}
           </div>
