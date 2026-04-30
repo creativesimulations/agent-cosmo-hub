@@ -16,7 +16,7 @@ describe('parseWhatsAppBridgeAudit', () => {
       'PASS:managed-npm',
       'PASS:managed-node-version',
       'PASS:shim-node',
-      'FAIL:bridge-deps:Partial WhatsApp bridge install — missing: ~/.hermes/hermes-agent/scripts/whatsapp-bridge/node_modules/@whiskeysockets/baileys/package.json. Click Repair runtime only or Re-pair + Restart to reinstall.',
+      'FAIL:bridge-deps:Partial WhatsApp bridge install — missing: ~/.hermes/hermes-agent/scripts/whatsapp-bridge/node_modules/@whiskeysockets/baileys/package.json. Ronbot will reinstall automatically during setup.',
       'FAIL:bridge-deps-loadable:Managed Node cannot load @whiskeysockets/baileys from /home/kadosh/.hermes/hermes-agent/scripts/whatsapp-bridge — Cannot find package \'@whiskeysockets/baileys\'',
       'PASS:env-whatsapp-enabled',
       'PASS:env-allowed-users',

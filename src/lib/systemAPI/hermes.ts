@@ -207,7 +207,7 @@ const runHermesShell = async (
 const HERMES_PATH_EXPORT =
   'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/snap/bin:$PATH"';
 
-const HERMES_NODE_VERSION = 'v20.19.2';
+const HERMES_NODE_VERSION = 'v22.22.2';
 const getHermesNodeEnvExport = (): string =>
   [
     `NODE_RUNTIME_VERSION="${HERMES_NODE_VERSION}"`,
@@ -651,9 +651,64 @@ const finalizeInstallVerification = async (result: CommandResult, onOutput?: Com
   onOutput?.({ type: 'stdout', data: `${verificationLines.join('\n')}\n` });
 
   if (hasUsableHermesInstall(state)) {
+    const runtime = await hermesAPI.ensureHermesNodeRuntime(onOutput).catch((e) => ({
+      success: false,
+      stdout: '',
+      stderr: e instanceof Error ? e.message : String(e),
+      code: 1,
+    } as CommandResult));
+    if (!runtime.success) {
+      const failure = '[verify] Base runtime setup failed: managed Node v22 could not be installed for browser and WhatsApp bridge support.';
+      onOutput?.({ type: 'stderr', data: `${failure}\n${runtime.stderr || runtime.stdout || ''}\n` });
+      return {
+        success: false,
+        code: runtime.code || 53,
+        stdout: `${result.stdout}${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${verificationLines.join('\n')}\n${runtime.stdout || ''}`,
+        stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${failure}\n${runtime.stderr || ''}`,
+      };
+    }
+
+    const whatsappRuntime = await hermesAPI.ensureWhatsAppManagedNode().catch((e) => ({
+      success: false,
+      error: e instanceof Error ? e.message : String(e),
+    }));
+    if (!whatsappRuntime.success) {
+      const failure = `[verify] WhatsApp bridge runtime setup failed: ${whatsappRuntime.error || 'managed Node shim could not be prepared.'}`;
+      onOutput?.({ type: 'stderr', data: `${failure}\n` });
+      return {
+        success: false,
+        code: 54,
+        stdout: `${result.stdout}${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${verificationLines.join('\n')}\n${runtime.stdout || ''}`,
+        stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${failure}\n`,
+      };
+    }
+
+    const bridgeDeps = await hermesAPI.ensureWhatsAppBridgeDeps(onOutput).catch((e) => ({
+      success: false,
+      stdout: '',
+      stderr: e instanceof Error ? e.message : String(e),
+      code: 1,
+    } as CommandResult));
+    if (!bridgeDeps.success) {
+      const failure = '[verify] WhatsApp bridge dependency setup failed during install.';
+      onOutput?.({ type: 'stderr', data: `${failure}\n${bridgeDeps.stderr || bridgeDeps.stdout || ''}\n` });
+      return {
+        success: false,
+        code: bridgeDeps.code || 55,
+        stdout: `${result.stdout}${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${verificationLines.join('\n')}\n${runtime.stdout || ''}\n${bridgeDeps.stdout || ''}`,
+        stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${failure}\n${bridgeDeps.stderr || ''}`,
+      };
+    }
+
+    const baseRuntimeLines = [
+      `[verify] managed Node runtime: ready (${whatsappRuntime.version || HERMES_NODE_VERSION})`,
+      '[verify] WhatsApp bridge dependencies: ready',
+    ];
+    onOutput?.({ type: 'stdout', data: `${baseRuntimeLines.join('\n')}\n` });
     return {
       ...result,
-      stdout: `${result.stdout}${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${verificationLines.join('\n')}\n`,
+      stdout: `${result.stdout}${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${verificationLines.join('\n')}\n${runtime.stdout || ''}${bridgeDeps.stdout || ''}${baseRuntimeLines.join('\n')}\n`,
+      stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${runtime.stderr || ''}${bridgeDeps.stderr || ''}`,
     };
   }
 
@@ -1555,6 +1610,16 @@ export const hermesAPI = {
     );
 
     if (hasMessagingConfigured) {
+      if ((env.WHATSAPP_ENABLED || '').trim().toLowerCase() === 'true') {
+        await timed('whatsapp-runtime-bootstrap', async () => {
+          const r = await this.repairWhatsAppGatewayRuntime();
+          const failed = r.steps.find((step) => !step.ok && step.name !== 'verify-gateway-path');
+          return {
+            ok: r.ok,
+            detail: r.ok ? 'WhatsApp bridge runtime ready' : (failed?.detail || failed?.name || 'WhatsApp runtime bootstrap failed'),
+          };
+        });
+      }
       await timed('gateway-refresh-install', async () => {
         const r = await this.refreshGatewayInstall();
         return { ok: r.success, detail: r.success ? 'gateway install refreshed' : (r.stderr || r.stdout || 'refresh failed').split('\n')[0] };
@@ -2369,7 +2434,7 @@ export const hermesAPI = {
         '    if [ $rc -ne 0 ]; then',
         '      echo "[ronbot] npm install failed twice — usually a network/registry issue or a missing git for git+ssh deps." >&2',
         '      echo "[ronbot] Check internet access and that git is installed inside the agent runtime, then retry." >&2',
-        '      echo "[ronbot] On WSL, try: wsl --shutdown, reopen Ronbot, and click Repair runtime only." >&2',
+        '      echo "[ronbot] On WSL, try: wsl --shutdown, reopen Ronbot, and run WhatsApp setup again." >&2',
         '      exit $rc',
         '    fi',
         '  fi',
@@ -2672,7 +2737,7 @@ export const hermesAPI = {
 
   /**
    * Force the Hermes gateway to spawn the WhatsApp Baileys bridge with the
-   * managed Node v20 runtime instead of whatever `node` happens to be first
+   * managed Node v22 runtime instead of whatever `node` happens to be first
    * on the service unit's PATH.
    *
    * Why this exists:
@@ -2688,14 +2753,14 @@ export const hermesAPI = {
    *   2. Confirms the managed Node is actually v20+ and exposes
    *      `globalThis.crypto.subtle`. Aborts loudly if not.
    *   3. Writes a tiny `~/.hermes/bin/node` shim that execs the managed
-   *      `node` so anything that resolves `node` via PATH gets v20.
+   *      `node` so anything that resolves `node` via PATH gets managed Node.
    *   4. Writes `NODE`, `NODE_BIN`, `HERMES_NODE_BIN`, `WHATSAPP_NODE_BIN`,
    *      and a `PATH=$HOME/.hermes/bin:$PATH` entry into ~/.hermes/.env so
-   *      the gateway service env (loaded from .env) picks up v20 regardless
+   *      the gateway service env (loaded from .env) picks up managed Node regardless
    *      of where it's started from.
    *
    * Returns `{ success, version }` where `version` is the managed Node
-   * version actually installed (e.g. "v20.19.2"). On failure, `error`
+   * version actually installed (e.g. "v22.22.2"). On failure, `error`
    * carries an actionable message for the wizard.
    */
   async ensureWhatsAppManagedNode(): Promise<{
@@ -2706,6 +2771,18 @@ export const hermesAPI = {
   }> {
     if (!isElectron()) {
       return { success: true, version: HERMES_NODE_VERSION, shimPath: '~/.hermes/bin/node' };
+    }
+    const runtime = await this.ensureHermesNodeRuntime().catch((e) => ({
+      success: false,
+      stderr: e instanceof Error ? e.message : String(e),
+      stdout: '',
+      code: 1,
+    } as CommandResult));
+    if (!runtime.success) {
+      return {
+        success: false,
+        error: [runtime.stderr, runtime.stdout].filter(Boolean).join('\n').trim() || 'Could not install managed Node v22 runtime.',
+      };
     }
     const r = await runHermesShell(
       [
@@ -2735,13 +2812,14 @@ export const hermesAPI = {
         'NPM_BIN_REAL="$NODE_RUNTIME_HOME/bin/npm"',
         'NPX_BIN_REAL="$NODE_RUNTIME_HOME/bin/npx"',
         // Write node shim with literal "$@" preserved (printf %s + single-quoted body).
-        'printf %s \'#!/usr/bin/env bash\n# Auto-generated by Ronbot (RONBOT_NODE_SHIM_V2).\n# Forces the WhatsApp bridge and any Hermes child onto managed Node v20\n# so Baileys can load globalThis.crypto.subtle.\nexec "\'"$NODE_BIN"\'" "$@"\n\' > "$SHIM"',
+        'printf %s \'#!/usr/bin/env bash\n# Auto-generated by Ronbot (RONBOT_NODE_SHIM_V3).\n# Forces the WhatsApp bridge and any Hermes child onto managed Node v22\n# so Baileys and Hermes gateway preflights use the same runtime.\nexec "\'"$NODE_BIN"\'" "$@"\n\' > "$SHIM"',
         // npm/npx shims so child processes (postinstall scripts, etc.) all resolve to the managed runtime.
         '[ -x "$NPM_BIN_REAL" ] && printf %s \'#!/usr/bin/env bash\nexec "\'"$NPM_BIN_REAL"\'" "$@"\n\' > "$NPM_SHIM" && chmod 755 "$NPM_SHIM"',
         '[ -x "$NPX_BIN_REAL" ] && printf %s \'#!/usr/bin/env bash\nexec "\'"$NPX_BIN_REAL"\'" "$@"\n\' > "$NPX_SHIM" && chmod 755 "$NPX_SHIM"',
         'chmod 755 "$SHIM"',
         // Sanity-check that the written shim actually contains a literal "$@".
         'grep -q \'"$@"\' "$SHIM" || { echo "[ronbot] shim is missing literal \\"\\$@\\" — write failed" >&2; echo "SHIM_BODY_BAD"; exit 5; }',
+        'export PATH="$HOME/.hermes/bin:$PATH"',
         'echo "SHIM_PATH=$SHIM"',
         // Sanity-check the shim runs and reports v20+. We pass an actual
         // argument so a regression in "$@" handling shows up immediately.
@@ -2763,7 +2841,7 @@ export const hermesAPI = {
     if (!r.success) {
       let error = 'Could not prepare the managed Node runtime for the WhatsApp bridge.';
       if (out.includes('MANAGED_NODE_MISSING')) {
-        error = 'The managed Node v20 runtime is not installed. Run the WhatsApp setup wizard from the start so Ronbot can install it.';
+        error = 'The managed Node v22 runtime is not installed. Re-run Ronbot setup so the base Hermes runtime can install it.';
       } else if (out.includes('MANAGED_NODE_PROBE_FAILED')) {
         error = `Managed Node ${version ?? ''} does not expose globalThis.crypto.subtle. Reinstall the managed runtime and try again.`;
       } else if (out.includes('SHIM_BODY_BAD')) {
@@ -2792,7 +2870,7 @@ export const hermesAPI = {
       source: 'system',
       level: 'info',
       summary: `ensureWhatsAppManagedNode: Node shim ready (${version ?? 'unknown'})`,
-      detail: `Wrote ${shimPath ?? '~/.hermes/bin/node'} and added NODE/HERMES_NODE_BIN/WHATSAPP_NODE_BIN + PATH overrides to ~/.hermes/.env so the gateway spawns the WhatsApp bridge on Node v20.`,
+      detail: `Wrote ${shimPath ?? '~/.hermes/bin/node'} and added NODE/HERMES_NODE_BIN/WHATSAPP_NODE_BIN + PATH overrides to ~/.hermes/.env so the gateway spawns the WhatsApp bridge on managed Node.`,
     });
     // Best-effort follow-up: patch the gateway service unit/plist so its
     // captured PATH starts with ~/.hermes/bin, AND patch the installed
@@ -2980,14 +3058,14 @@ export const hermesAPI = {
         'done',
         '[ -n "$F" ] || { echo "ADAPTER_NOT_FOUND"; exit 0; }',
         'echo "ADAPTER_PATH=$F"',
-        'if grep -q "RONBOT_NODE_BIN_PATCH" "$F"; then echo "ALREADY_PATCHED"; exit 0; fi',
+        'if grep -q "RONBOT_NODE_BIN_PATCH_V3" "$F"; then echo "ALREADY_PATCHED"; exit 0; fi',
         'cp "$F" "$F.ronbot.bak" 2>/dev/null || true',
         'python3 - "$F" <<\'PY\' || { echo "PATCH_FAILED"; exit 1; }',
         'import sys, re, pathlib',
         'p = pathlib.Path(sys.argv[1])',
         'src = p.read_text()',
         'helper = (',
-        '"\\n# RONBOT_NODE_BIN_PATCH: prefer managed Node so Baileys gets globalThis.crypto.subtle\\n"',
+        '"\\n# RONBOT_NODE_BIN_PATCH_V3: prefer managed Node for both adapter preflight and bridge launch\\n"',
         '"def _ronbot_node_bin():\\n"',
         '"    import os, shutil\\n"',
         '"    for env_key in (\\"WHATSAPP_NODE_BIN\\", \\"NODE_BIN\\", \\"HERMES_NODE_BIN\\", \\"NODE\\"):\\n"',
@@ -3001,15 +3079,21 @@ export const hermesAPI = {
         '"    found = shutil.which(\\"node\\")\\n"',
         '"    return found or \\"node\\"\\n"',
         ')',
-        '# Insert the helper after the first import block / module docstring.',
-        'm = re.search(r"(?ms)^(\\s*\\"\\"\\".*?\\"\\"\\"\\s*\\n)", src)',
-        'insert_at = m.end() if m else 0',
-        'src = src[:insert_at] + helper + src[insert_at:]',
-        '# Replace [\\"node\\", ...bridge_path...] with [_ronbot_node_bin(), ...]',
-        'src2, n = re.subn(r"\\[\\s*\\\"node\\\"\\s*,", "[_ronbot_node_bin(),", src)',
-        'if n == 0:',
-        '    sys.stderr.write("no node literal found\\n")',
+        'if "def _ronbot_node_bin():" not in src:',
+        '    m = re.search(r"(?ms)^(\\s*\\"\\"\\".*?\\"\\"\\"\\s*\\n)", src)',
+        '    insert_at = m.end() if m else 0',
+        '    src = src[:insert_at] + helper + src[insert_at:]',
+        '# Replace both the adapter preflight and bridge launch so the adapter does not reject WhatsApp before launch.',
+        'src2 = re.sub(r"subprocess\\.run\\(\\s*\\[\\s*\\\"node\\\"\\s*,\\s*\\\"--version\\\"", "subprocess.run([_ronbot_node_bin(), \\\"--version\\\"", src)',
+        'src2, n = re.subn(r"\\[\\s*\\\"node\\\"\\s*,", "[_ronbot_node_bin(),", src2)',
+        'if n == 0 and "_ronbot_node_bin()," not in src2:',
+        '    sys.stderr.write("no node launch literal found\\n")',
         '    sys.exit(2)',
+        'if "RONBOT_NODE_BIN_PATCH_V3" not in src2:',
+        '    if "RONBOT_NODE_BIN_PATCH" in src2:',
+        '        src2 = src2.replace("RONBOT_NODE_BIN_PATCH", "RONBOT_NODE_BIN_PATCH_V3", 1)',
+        '    else:',
+        '        src2 = "# RONBOT_NODE_BIN_PATCH_V3\\n" + src2',
         'p.write_text(src2)',
         'PY',
         'PATCH_RC=$?',
@@ -3204,7 +3288,7 @@ export const hermesAPI = {
         '  echo "PASS:bridge-deps"',
         'else',
         '  TRIM="$(echo "$MISSING_SENT" | sed "s|$HOME|~|g" | cut -c1-220)"',
-        '  echo "FAIL:bridge-deps:Partial WhatsApp bridge install — missing:$TRIM. Click Repair runtime only or Re-pair + Restart to reinstall."',
+        '  echo "FAIL:bridge-deps:Partial WhatsApp bridge install — missing:$TRIM. Ronbot will reinstall automatically during setup."',
         'fi',
         'if [ -z "$MISSING_SENT" ] && [ -x "$NODE_BIN" ]; then',
         '  LOAD_ERR="$( ( cd "$BRIDGE_DIR" && "$NODE_BIN" --input-type=module -e "import(\'@whiskeysockets/baileys\').then(()=>process.exit(0)).catch(e=>{process.stderr.write(String(e&&e.message||e));process.exit(1)})" ) 2>&1 1>/dev/null )"',
@@ -3388,7 +3472,7 @@ export const hermesAPI = {
     const steps: Array<{ name: string; ok: boolean; detail?: string }> = [];
     const log = (line: string) => onOutput?.({ type: 'stdout', data: `[ronbot-repair] ${line}\n` });
     // 1. Ensure managed Node runtime tarball is installed.
-    log('ensuring managed Node v20 runtime…');
+    log('ensuring managed Node v22 runtime…');
     const runtime = await this.ensureHermesNodeRuntime(onOutput).catch((e) => ({
       success: false,
       stderr: e instanceof Error ? e.message : String(e),
@@ -3404,7 +3488,7 @@ export const hermesAPI = {
     if (!shim.success) return { ok: false, steps };
     // 2.5 Ensure Baileys & friends are installed in the bridge folder.
     // Without this, the gateway adapter logs "WhatsApp: Node.js not
-    // installed or bridge not configured" even on a healthy Node v20.
+    // installed or bridge not configured" even on a healthy managed Node.
     log('installing WhatsApp bridge dependencies (npm install)…');
     const deps = await this.ensureWhatsAppBridgeDeps(onOutput).catch((e) => ({
       success: false,

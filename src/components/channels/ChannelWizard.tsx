@@ -145,7 +145,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waStaleSessionDetected, setWaStaleSessionDetected] = useState(false);
   const [waForceFreshBusy, setWaForceFreshBusy] = useState(false);
   const [waRePairRestartBusy, setWaRePairRestartBusy] = useState(false);
-  const [waRuntimeRepairBusy, setWaRuntimeRepairBusy] = useState(false);
   const [waBridgeInactiveHint, setWaBridgeInactiveHint] = useState("");
   /** Non-WhatsApp gateway warnings (Slack/email/etc.) shown only on demand. */
   const [waOtherGatewayLogs, setWaOtherGatewayLogs] = useState<string[]>([]);
@@ -594,7 +593,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
     await systemAPI.materializeEnv().catch(() => undefined);
     // Make sure the gateway will spawn the Baileys bridge with the managed
-    // Node v20 runtime. Without this, systems with system Node 18.x crash
+    // Node runtime. Without this, systems with system Node 18.x crash
     // the bridge in a loop with `Cannot destructure property 'subtle' of
     // globalThis.crypto` and the channel never goes live.
     setWaStatusHint("Preparing managed Node runtime for the WhatsApp bridge…");
@@ -606,7 +605,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaStatusHint("");
       const detail =
         nodePrep.error ||
-        "Could not prepare the managed Node runtime for WhatsApp. Re-run the WhatsApp setup wizard so Ronbot reinstalls Node v20.";
+        "Could not prepare the managed Node runtime for WhatsApp. Re-run Ronbot setup so the base Hermes runtime can reinstall Node.";
       setFormError(detail);
       toast.error("WhatsApp bridge runtime not ready", { description: detail });
       return "fail";
@@ -738,12 +737,12 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         `Hermes WhatsApp bridge is not ready inside ${runtimeLabel}.\n` +
         (audit?.home ? `Runtime $HOME = ${audit.home}\n` : "") +
         `\nFailing checks:\n${lines.join("\n")}\n\n` +
-        `Click "Re-pair + Restart" or "Repair runtime only" to install the managed Node v20 + Baileys inside ${runtimeLabel} and restart the gateway.`;
+        `Ronbot already attempted automatic runtime setup inside ${runtimeLabel}. Re-run WhatsApp setup once after checking network access.`;
     } else if (failure.kind === "node-version" || diag?.bridgeLogShowsNode18) {
       const reasons: string[] = [];
       if (diag) {
         if (!diag.shimVersion || diag.shimVersion === "missing") {
-          reasons.push("• Managed Node v20 shim is missing at ~/.hermes/bin/node.");
+          reasons.push("• Managed Node shim is missing at ~/.hermes/bin/node.");
         } else if (!/^v2[0-9]/.test(diag.shimVersion)) {
           reasons.push(`• Managed Node shim reports ${diag.shimVersion} (need v20+).`);
         }
@@ -756,7 +755,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       }
       detail =
         `WhatsApp bridge keeps crashing on Node ${failure.nodeVersion ?? "18.x"} — Baileys needs Node 20+. ` +
-        `Click "Re-pair + Restart" to apply the runtime fix.` +
+        `Ronbot already attempted to apply the runtime fix automatically.` +
         (reasons.length ? `\n\nDiagnostics:\n${reasons.join("\n")}` : "");
     } else if (lastHealth?.fatalWhatsappReason === "adapter-missing" || failure.kind === "adapter-missing") {
       detail = `WhatsApp adapter is missing from the running gateway.\n${lastHealth?.fatalWhatsappSnippet || failure.snippet || "No adapter available for whatsapp."}`;
@@ -799,10 +798,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     toast.error("WhatsApp bridge not confirmed", {
       description:
         failure.kind === "node-version" || diag?.bridgeLogShowsNode18
-          ? "Bridge crashed on Node 18 — click Re-pair + Restart to apply the runtime fix."
+          ? "Bridge crashed on Node 18 after automatic runtime setup."
           : failure.kind === "bridge-not-configured"
-            ? "WhatsApp bridge dependencies missing — click Re-pair + Restart to install them."
-            : "Try Re-pair + Restart.",
+            ? "WhatsApp bridge dependencies are still missing after automatic setup."
+            : "Retry WhatsApp setup once.",
     });
     return "fail";
   }, []);
@@ -1092,7 +1091,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           //   - missing node_modules in bridge folder      (kind=bridge-not-configured)
           //   - adapter not exposing whatsapp              (kind=adapter-missing)
           // All three are fixable by repairWhatsAppGatewayRuntime, which
-          // installs Node v20, writes shims, runs npm install in the bridge
+          // installs managed Node, writes shims, runs npm install in the bridge
           // folder, and patches the adapter + service unit. Run it once and
           // retry before surfacing the error and leaving the wizard open.
           const failure = await systemAPI.classifyWhatsAppBridgeFailure().catch(() => ({ kind: "unknown" as const }));
@@ -1113,7 +1112,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                   : "Repairing WhatsApp adapter…";
             const repairDescription =
               failure.kind === "node-version" || diag?.bridgeLogShowsNode18
-                ? "Re-applying Node v20 shim and gateway service overrides."
+                ? "Re-applying managed Node shim and gateway service overrides."
                 : failure.kind === "bridge-not-configured"
                   ? "Running npm install inside the WhatsApp bridge folder, then restarting the gateway."
                   : "Re-installing WhatsApp adapter glue and restarting the gateway.";
@@ -1247,7 +1246,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaRePairRestartBusy(true);
     setWaBridgeInactiveHint("");
     try {
-      // 1. Atomic runtime repair: install Node v20, write shims (with the
+      // 1. Atomic runtime repair: install managed Node, write shims (with the
       // literal "$@" fix), drop systemd override, patch adapter, rotate
       // logs, restart gateway, verify gateway PID actually has the shim
       // dir on its captured PATH. This addresses the recurring case where
@@ -1288,42 +1287,6 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     } finally {
       rePairRestartInFlightRef.current = false;
       setWaRePairRestartBusy(false);
-    }
-  };
-
-  const handleRepairRuntimeOnly = async () => {
-    if (waRuntimeRepairBusy) return;
-    setWaRuntimeRepairBusy(true);
-    setWaBridgeInactiveHint("");
-    try {
-      appendWaPairingChunk({ type: "stdout", data: "[ronbot] running atomic runtime repair…\n" });
-      const repair = await systemAPI
-        .repairWhatsAppGatewayRuntime(appendWaPairingChunk)
-        .catch((e) => ({ ok: false, steps: [{ name: "repair", ok: false, detail: e instanceof Error ? e.message : String(e) }] as Array<{ name: string; ok: boolean; detail?: string }> }));
-      for (const s of repair.steps) {
-        appendWaPairingChunk({ type: s.ok ? "stdout" : "stderr", data: `[ronbot] ${s.ok ? "✓" : "✗"} ${s.name}${s.detail ? ` — ${s.detail}` : ""}\n` });
-      }
-      if (repair.ok) {
-        toast.success("Runtime repaired", { description: "Gateway restarted on managed Node v20." });
-        // Re-test the bridge to see if it now comes up cleanly.
-        setFormError("");
-        const outcome = await restartWhatsAppGatewayWithNewSession();
-        if (outcome === "live") {
-          setWaBridgeInactiveHint("");
-          toast.success(`${channel.name} channel enabled`, {
-            description: "WhatsApp is now active.",
-          });
-          onComplete();
-          onClose();
-        }
-      } else {
-        const failed = repair.steps.find((s) => !s.ok);
-        toast.error("Runtime repair did not complete", {
-          description: failed ? `${failed.name}: ${failed.detail || "see log"}` : "See log for details.",
-        });
-      }
-    } finally {
-      setWaRuntimeRepairBusy(false);
     }
   };
 
@@ -2050,25 +2013,13 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                         variant="default"
                         size="sm"
                         className="h-8 text-xs"
-                        disabled={waRePairRestartBusy || waPairingActive || waRuntimeRepairBusy}
+                        disabled={waRePairRestartBusy || waPairingActive}
                         onClick={() => void handleRePairAndRestart()}
                       >
                         {waRePairRestartBusy ? (
                           <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
                         ) : null}
-                        Re-pair + Restart
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8 text-xs"
-                        disabled={waRuntimeRepairBusy || waPairingActive || waRePairRestartBusy}
-                        title="Re-install Node v20 shim, drop systemd PATH override, patch the WhatsApp adapter, and restart the gateway — without clearing your linked WhatsApp session."
-                        onClick={() => void handleRepairRuntimeOnly()}
-                      >
-                        {waRuntimeRepairBusy ? <Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> : null}
-                        Repair runtime only
+                        Restart WhatsApp setup
                       </Button>
                     </>
                   ) : null}
