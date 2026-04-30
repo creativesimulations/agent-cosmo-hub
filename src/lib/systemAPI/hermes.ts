@@ -3223,7 +3223,7 @@ export const hermesAPI = {
         'src2 = re.sub(r"subprocess\\.run\\(\\s*\\[\\s*([\'\"])(?:node)\\1\\s*,\\s*([\'\"])(?:--version)\\2", "subprocess.run([_ronbot_node_bin(), \\\"--version\\\"", src)',
         'src2, n1 = re.subn(r"\\[\\s*([\'\"])(?:node)\\1\\s*,", "[_ronbot_node_bin(),", src2)',
         'src2, n2 = re.subn(r"subprocess\\.(?:Popen|run)\\(\\s*([\'\"])(?:node)\\1\\s*,", lambda m: m.group(0).replace(m.group(1)+"node"+m.group(1), "_ronbot_node_bin()"), src2)',
-        'if n == 0 and "_ronbot_node_bin()," not in src2:',
+        'if (n1 + n2) == 0 and "_ronbot_node_bin()," not in src2:',
         '    sys.stderr.write("no node launch literal found\\n")',
         '    sys.exit(2)',
         'if "RONBOT_NODE_BIN_PATCH_V4" not in src2:',
@@ -3244,12 +3244,12 @@ export const hermesAPI = {
       { timeout: 15000 },
     );
     const out = `${r.stdout || ''}\n${r.stderr || ''}`;
-    const path = (out.match(/ADAPTER_PATH=(\S+)/)?.[1] || '').trim() || undefined;
+    const path = (out.match(/PATCHED_PATHS=(.*)/)?.[1] || out.match(/ADAPTER_PATH=(\S+)/)?.[1] || '').trim() || undefined;
     if (out.includes('ADAPTER_NOT_FOUND')) {
       return { success: true, patched: false, error: 'Installed Hermes WhatsApp adapter not found at the expected paths.' };
     }
-    if (out.includes('ALREADY_PATCHED')) return { success: true, patched: true, path };
-    if (out.includes('PATCHED_OK')) return { success: true, patched: true, path };
+    if (out.includes('PATCH_FAILED')) return { success: false, patched: false, path, error: out.split('\n').slice(-8).join('\n').trim() };
+    if (/PATCHED_PATHS=\s*\S/.test(out)) return { success: true, patched: true, path };
     return { success: false, patched: false, path, error: out.split('\n').slice(-6).join('\n').trim() };
   },
 
