@@ -702,6 +702,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaStatusHint("");
     if (lastHealth?.running && lastHealth.whatsappActive) {
       setFormError("");
+      setWaOtherGatewayLogs([]);
+      setWaOtherGatewayLogsOpen(false);
       return "live";
     }
     // Inspect the bridge log for the well-known Node-version crash signature
