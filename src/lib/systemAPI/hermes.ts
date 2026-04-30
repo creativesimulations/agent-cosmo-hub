@@ -3007,17 +3007,28 @@ export const hermesAPI = {
       }
       return { success: false, version, shimPath, error };
     }
-    // Persist env overrides so the gateway service picks the right binary
-    // when it sources ~/.hermes/.env. We write each key individually so we
-    // don't disturb the rest of the file.
-    const homeEnv = '$HOME/.hermes/bin/node';
-    await this.setEnvVar('NODE', homeEnv).catch(() => undefined);
-    await this.setEnvVar('NODE_BIN', homeEnv).catch(() => undefined);
-    await this.setEnvVar('HERMES_NODE_BIN', homeEnv).catch(() => undefined);
-    await this.setEnvVar('WHATSAPP_NODE_BIN', homeEnv).catch(() => undefined);
-    // PATH must include ~/.hermes/bin BEFORE the system PATH. We write a
-    // literal $PATH so bash expands it at source-time inside the gateway.
-    await this.setEnvVar('PATH', '$HOME/.hermes/bin:$PATH').catch(() => undefined);
+    // Persist env overrides so the gateway service (which loads ~/.hermes/.env
+    // via python-dotenv) picks the right binary. CRITICAL: python-dotenv does
+    // NOT expand $HOME or $PATH — values are stored as literal strings. So we
+    // must resolve the absolute path here and write it expanded.
+    //
+    // We DO NOT write a PATH override into .env: a literal "$HOME/.hermes/bin:$PATH"
+    // would replace the gateway's PATH with a non-existent directory string and
+    // break node/npm resolution entirely. The adapter patch + WHATSAPP_NODE_BIN
+    // env var are what make the WhatsApp preflight find Node.
+    const homeProbe = await runHermesShell('printf %s "$HOME"', { timeout: 5000 }).catch(() => null);
+    const homeDir = (homeProbe?.stdout || '').trim();
+    if (homeDir) {
+      const absShim = `${homeDir}/.hermes/bin/node`;
+      await this.setEnvVar('NODE', absShim).catch(() => undefined);
+      await this.setEnvVar('NODE_BIN', absShim).catch(() => undefined);
+      await this.setEnvVar('HERMES_NODE_BIN', absShim).catch(() => undefined);
+      await this.setEnvVar('WHATSAPP_NODE_BIN', absShim).catch(() => undefined);
+    }
+    // Proactively strip any previously-written PATH override that contained
+    // unexpanded shell variables (from earlier Ronbot versions). A bad PATH
+    // entry in .env breaks every subprocess the gateway spawns.
+    await this.removeEnvVar('PATH').catch(() => undefined);
     agentLogs.push({
       source: 'system',
       level: 'info',
