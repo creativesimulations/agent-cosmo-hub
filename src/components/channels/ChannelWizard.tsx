@@ -147,6 +147,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waRePairRestartBusy, setWaRePairRestartBusy] = useState(false);
   const [waRuntimeRepairBusy, setWaRuntimeRepairBusy] = useState(false);
   const [waBridgeInactiveHint, setWaBridgeInactiveHint] = useState("");
+  /** Non-WhatsApp gateway warnings (Slack/email/etc.) shown only on demand. */
+  const [waOtherGatewayLogs, setWaOtherGatewayLogs] = useState<string[]>([]);
+  const [waOtherGatewayLogsOpen, setWaOtherGatewayLogsOpen] = useState(false);
   /** Guard against double-click reentry before state updates land. */
   const resetInFlightRef = useRef(false);
   const startPairingInFlightRef = useRef(false);
@@ -158,6 +161,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   useEffect(() => {
     if (!open) return;
     setWaBridgeInactiveHint("");
+    setWaOtherGatewayLogs([]);
+    setWaOtherGatewayLogsOpen(false);
     setStep(0);
     waWhatsAppFinalizeCompletedRef.current = false;
     setTestResult("idle");
@@ -697,6 +702,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     setWaStatusHint("");
     if (lastHealth?.running && lastHealth.whatsappActive) {
       setFormError("");
+      setWaOtherGatewayLogs([]);
+      setWaOtherGatewayLogsOpen(false);
       return "live";
     }
     // Inspect the bridge log for the well-known Node-version crash signature
@@ -755,21 +762,24 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       }
     }
     const nonWhatsapp = Array.from(otherPlatformWarnings).slice(-8);
-    const nonWhatsappBlock = nonWhatsapp.length
-      ? `\n\nOther platform warnings (informational):\n${nonWhatsapp.join("\n")}`
-      : "";
+    // Non-WhatsApp warnings (Slack scopes, IMAP auth, etc.) are NOT part of
+    // the WhatsApp finalize verdict. Keep them out of the primary error and
+    // expose them under a collapsible disclosure so support still has access.
+    setWaOtherGatewayLogs(nonWhatsapp);
+    setWaOtherGatewayLogsOpen(false);
     const traceBlock = recoverySteps.length ? `\n\nRecovery attempts:\n- ${recoverySteps.join("\n- ")}` : "";
     setFormError(
       detail +
       traceBlock +
-      nonWhatsappBlock +
       (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""),
     );
     toast.error("WhatsApp bridge not confirmed", {
       description:
         failure.kind === "node-version" || diag?.bridgeLogShowsNode18
           ? "Bridge crashed on Node 18 — click Re-pair + Restart to apply the runtime fix."
-          : "Try Re-pair + Restart.",
+          : failure.kind === "bridge-not-configured"
+            ? "WhatsApp bridge dependencies missing — click Re-pair + Restart to install them."
+            : "Try Re-pair + Restart.",
     });
     return "fail";
   }, []);
@@ -1054,13 +1064,32 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         if (!testOk) return;
         let outcome = await restartWhatsAppGatewayWithNewSession();
         if (outcome === "fail") {
-          // First failure on finalize is almost always the Node 18 / Baileys
-          // crypto.subtle crash. Run the atomic runtime repair and retry
-          // ONCE before surfacing the error and leaving the wizard open.
+          // First failure on finalize is almost always one of:
+          //   - Node 18 / Baileys crypto.subtle crash      (kind=node-version)
+          //   - missing node_modules in bridge folder      (kind=bridge-not-configured)
+          //   - adapter not exposing whatsapp              (kind=adapter-missing)
+          // All three are fixable by repairWhatsAppGatewayRuntime, which
+          // installs Node v20, writes shims, runs npm install in the bridge
+          // folder, and patches the adapter + service unit. Run it once and
+          // retry before surfacing the error and leaving the wizard open.
           const failure = await systemAPI.classifyWhatsAppBridgeFailure().catch(() => ({ kind: "unknown" as const }));
           const diag = await systemAPI.getWhatsAppRuntimeDiagnostic().catch(() => null);
-          if (failure.kind === "node-version" || diag?.bridgeLogShowsNode18) {
-            toast.message("Repairing WhatsApp bridge runtime…", { description: "Re-applying Node v20 shim and gateway service overrides." });
+          const repairableKinds = new Set(["node-version", "bridge-not-configured", "adapter-missing"]);
+          const shouldRepair = repairableKinds.has(failure.kind) || !!diag?.bridgeLogShowsNode18;
+          if (shouldRepair) {
+            const repairTitle =
+              failure.kind === "node-version" || diag?.bridgeLogShowsNode18
+                ? "Repairing WhatsApp bridge runtime…"
+                : failure.kind === "bridge-not-configured"
+                  ? "Installing WhatsApp bridge dependencies…"
+                  : "Repairing WhatsApp adapter…";
+            const repairDescription =
+              failure.kind === "node-version" || diag?.bridgeLogShowsNode18
+                ? "Re-applying Node v20 shim and gateway service overrides."
+                : failure.kind === "bridge-not-configured"
+                  ? "Running npm install inside the WhatsApp bridge folder, then restarting the gateway."
+                  : "Re-installing WhatsApp adapter glue and restarting the gateway.";
+            toast.message(repairTitle, { description: repairDescription });
             await systemAPI.repairWhatsAppGatewayRuntime(appendWaPairingChunk).catch(() => undefined);
             outcome = await restartWhatsAppGatewayWithNewSession();
           }
@@ -1513,6 +1542,23 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
             onFix={() => setFormError("")}
             fixLabel="Dismiss"
           />
+        )}
+
+        {formError && waOtherGatewayLogs.length > 0 && (
+          <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2 text-xs">
+            <button
+              type="button"
+              onClick={() => setWaOtherGatewayLogsOpen((v) => !v)}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {waOtherGatewayLogsOpen ? "Hide" : "Show"} other gateway logs (not related to WhatsApp) · {waOtherGatewayLogs.length}
+            </button>
+            {waOtherGatewayLogsOpen && (
+              <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground/90 font-mono">
+                {waOtherGatewayLogs.join("\n")}
+              </pre>
+            )}
+          </div>
         )}
 
         {/* Progress bar */}

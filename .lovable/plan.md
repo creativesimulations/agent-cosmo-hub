@@ -1,91 +1,84 @@
-# WhatsApp Bridge Runtime Fix — Final Plan
+## Plan — WhatsApp finalize: real fix for "bridge not configured"
 
-## Goal
-Permanently fix the Baileys `crypto.subtle` crash by ensuring the Hermes gateway and any spawned bridge subprocesses always use Node 20+, surviving service restarts and gateway reinstalls.
+### What the user is seeing
 
-## Strategy
+After successfully scanning the QR code, the finalize step fails with:
 
-Single source of truth: a **managed Node 20 runtime** at `~/.hermes/bin/` that is enforced at three layers (shim, service env, adapter patch). Designed to be idempotent — safe to re-run on every pairing attempt.
+> WhatsApp bridge runtime is not configured on this machine. WARNING gateway.run: WhatsApp: Node.js not installed or bridge not configured
 
-## Implementation
+…followed by a wall of unrelated Slack/email/IMAP warnings, even though the user only wanted to set up WhatsApp.
 
-### 1. `src/lib/systemAPI/hermes.ts` — new `repairWhatsAppGatewayRuntime()`
+### Why the previous Node v20 fix wasn't enough
 
-One atomic, idempotent repair routine that returns a structured `{ ok, steps, diagnostics }` result. Steps:
+The Node v20 runtime fix is correct but **incomplete**. After reading the code, three real gaps remain:
 
-1. **Detect platform** (`uname`) — Linux uses systemd user units, macOS uses launchd. Windows is not supported for the bridge; fail fast with a clear message.
-2. **Install Node 20** into `~/.hermes/runtime/node-v20/` if missing:
-   - Download official Node 20 LTS tarball matching arch (`x64` / `arm64`).
-   - Extract to a versioned directory; keep older versions for rollback.
-   - Verify via `<dir>/bin/node -e "console.log(!!globalThis.crypto.subtle)"` — must print `true`.
-3. **Create shims** at `~/.hermes/bin/{node,npm,npx}` using `printf` (NOT heredoc) so `"$@"` is preserved literally:
-   ```
-   #!/usr/bin/env bash
-   exec "$HOME/.hermes/runtime/node-v20/bin/node" "$@"
-   ```
-   `chmod +x` each. Verify shim with the same `crypto.subtle` probe before continuing.
-4. **Systemd drop-in** (Linux) at `~/.config/systemd/user/hermes-gateway.service.d/10-ronbot-whatsapp-node.conf`:
-   ```
-   [Service]
-   Environment=PATH=%h/.hermes/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-   Environment=WHATSAPP_NODE_BIN=%h/.hermes/bin/node
-   Environment=NODE=%h/.hermes/bin/node
-   ```
-   Then `systemctl --user daemon-reload`. Drop-ins survive `hermes gateway install` because the base unit is untouched.
-5. **launchd plist patch** (macOS): write `~/Library/LaunchAgents/com.ronbot.hermes-gateway.path.plist` that prepends `~/.hermes/bin` to `PATH` and sets `WHATSAPP_NODE_BIN`; `launchctl load -w`.
-6. **Adapter hardening**: patch `~/.hermes/hermes-agent/scripts/whatsapp-bridge/run.sh` (create if absent) and the Python adapter `whatsapp.py` to:
-   - Honor `WHATSAPP_NODE_BIN` env var when spawning.
-   - Fall back to `~/.hermes/bin/node` if env var missing.
-   - Patch is idempotent (marker comment `# RONBOT_NODE_PATCH_V2`).
-7. **Bridge `node_modules` rebuild check**: if `package-lock.json` mtime > `node_modules/.package-lock.json` mtime, run `~/.hermes/bin/npm ci` inside the bridge dir to ensure native modules match Node 20 ABI.
-8. **Rotate stale logs** before restart: move `~/.hermes/logs/bridge.log` and `gateway.log` to `*.log.prev` so the UI's failure classifier doesn't read old Node 18 stack traces.
-9. **Restart gateway**: `systemctl --user restart hermes-gateway` (or `launchctl kickstart -k`).
-10. **Post-restart verification**: poll `~/.hermes/logs/gateway.log` for "ready" marker AND probe the running gateway PID's `/proc/<pid>/environ` (Linux) to confirm `PATH` starts with `~/.hermes/bin`.
+1. **Bridge `node_modules` are never installed during finalize.** The finalize path calls `ensureWhatsAppManagedNode()` (installs Node v20 + shims + service patch), but it never calls `ensureWhatsAppBridgeDeps()`, which is the function that runs `npm install` inside `~/.hermes/hermes-agent/scripts/whatsapp-bridge`. The Hermes Python adapter emits the exact warning above when either `node` is missing **or** when the bridge folder lacks `node_modules/@whiskeysockets/baileys`. So even after we successfully install Node v20, the adapter keeps reporting "bridge not configured".
 
-Each step records to the `steps` array with `{name, ok, detail}` for UI display.
+2. **Auto-repair only triggers on the Node-version crash, not on `bridge-not-configured`.** In `ChannelWizard.tsx` line 1062, the one-shot auto-repair on first finalize failure runs **only** when the classifier returns `kind === "node-version"`. The user's failure is `kind === "bridge-not-configured"`, so the repair retry path is skipped entirely and the wizard surfaces the error immediately.
 
-### 2. `src/lib/systemAPI/hermes.ts` — failure classifier
+3. **The repair routine itself doesn't install the deps either.** `repairWhatsAppGatewayRuntime()` does Node runtime + shims + service patch + restart, but skips the `npm install` step. So even the manual "Repair runtime + restart" button can't fix this class of failure.
 
-New `classifyWhatsAppFailure(logs)`:
-- **`runtime`** — log contains `globalThis.crypto`, `Cannot destructure property 'subtle'`, `Node.js v18`, or `requires Node`.
-- **`session`** — `Connection Failure`, `logged out`, `restartRequired`, `loggedOut`.
-- **`network`** — `ECONNREFUSED`, `ETIMEDOUT`, `getaddrinfo`.
-- **`unknown`** — everything else.
+A secondary UX issue: when the wizard fails, it shows the Slack `missing_scope`, IMAP `AUTHENTICATIONFAILED`, and channel-directory errors in the same error block. They're labelled "informational", but it still looks like the WhatsApp wizard is failing because of Slack/email — which is wrong and confusing.
 
-Returns `{ kind, suggestedAction: "repair-runtime" | "re-pair" | "retry" | "manual" }`.
+### Fix
 
-### 3. `src/components/channels/ChannelWizard.tsx` — flow update
+**1. `src/lib/systemAPI/hermes.ts` — make repair self-contained**
 
-- After pairing succeeds, **don't auto-finalize** until `gateway.log` shows the bridge process is alive AND the failure classifier returns clean for 5 consecutive seconds.
-- Replace single "Re-pair + Restart" button with two clearly-labeled actions based on classifier output:
-  - **"Repair runtime + restart gateway"** → calls `repairWhatsAppGatewayRuntime()`, streams steps to the diagnostics panel.
-  - **"Re-pair WhatsApp"** → existing pairing flow (only offered for `session` failures).
-- Wizard close logic: only auto-close after verification passes. If verification fails, show diagnostics + repair button and stay open.
-- Diagnostics panel always shows: managed Node version, shim path resolution, gateway service `PATH`, last 20 lines of `bridge.log`.
+In `repairWhatsAppGatewayRuntime()`, add a new step between "shim" and "rotate logs":
 
-### 4. `src/pages/Channels.tsx`
+```text
+2.5  Ensure WhatsApp bridge dependencies (npm install in scripts/whatsapp-bridge)
+     Calls ensureWhatsAppBridgeDeps() with the same onOutput so progress streams
+     into the wizard. If this fails, the whole repair fails with a clear message.
+```
 
-- Surface the runtime health badge (green = managed Node detected in service env, amber = shim present but service not using it, red = shim missing). Click → opens repair flow without re-pairing.
+This guarantees that any time we run the repair, both halves of the runtime (Node v20 + Baileys) are present.
 
-## Answers to your two questions
+**2. `src/lib/systemAPI/hermes.ts` — strengthen `ensureWhatsAppManagedNode`**
 
-**Where to install Node for the whole app?**
-`~/.hermes/runtime/node-v20/` with shims at `~/.hermes/bin/`. Reasons:
-- User-scoped (no sudo needed, works on locked-down Linux).
-- Survives Hermes gateway reinstalls (lives outside `~/.hermes/hermes-agent/`).
-- Shim layer means we can swap Node versions without touching anything that calls `node`.
-- `~/.hermes/bin` prepended to `PATH` covers gateway, bridge, npm postinstall scripts, and any future Node-based adapter.
+After the shim/service/adapter patch succeeds, also invoke `ensureWhatsAppBridgeDeps` (best-effort, not gating). Idempotent — if `node_modules/@whiskeysockets/baileys` already exists, `ensureWhatsAppBridgeDeps` returns immediately. This means the finalize path's existing `ensureWhatsAppManagedNode` call (line 596 of `ChannelWizard.tsx`) automatically picks up missing deps without changing the wizard contract.
 
-**Use only the newest version, skip multi-version management?**
-**Yes — for the bridge.** Pin a single managed Node 20 LTS. Rationale:
-- Baileys, Ronbot's own scripts, and every modern adapter all work on Node 20.
-- Multi-version managers (nvm, fnm, volta) add a shell-init dependency that systemd/launchd services don't load — they're the reason this bug exists in the first place.
-- Single pinned version = one PATH entry, one shim set, one upgrade path. We bump it from Ronbot's updater when Node 22 LTS lands.
-- The user's system Node v18 stays untouched for any non-Ronbot tools they rely on.
+**3. `src/components/channels/ChannelWizard.tsx` — broaden auto-repair trigger**
 
-## Files to edit
-- `src/lib/systemAPI/hermes.ts` — add `repairWhatsAppGatewayRuntime`, `classifyWhatsAppFailure`, runtime health probe.
-- `src/lib/systemAPI/index.ts` — export new functions.
-- `src/components/channels/ChannelWizard.tsx` — verification gate, dual-action error UI, diagnostics panel.
-- `src/pages/Channels.tsx` — runtime health badge + repair entry point.
-- `.lovable/plan.md` — record decision.
+Change the auto-repair condition at line 1062 from:
+
+```text
+if (failure.kind === "node-version" || diag?.bridgeLogShowsNode18)
+```
+
+to also include `bridge-not-configured` and `adapter-missing`:
+
+```text
+const repairableKinds = new Set(["node-version", "bridge-not-configured", "adapter-missing"]);
+if (repairableKinds.has(failure.kind) || diag?.bridgeLogShowsNode18) { ...repair + retry... }
+```
+
+The toast/status text gets a small switch so the message matches the failure kind ("Installing WhatsApp bridge dependencies…" for `bridge-not-configured`).
+
+**4. `ChannelWizard.tsx` — stop showing unrelated platform warnings during finalize**
+
+The user is right that finalize must judge **only** WhatsApp. Two changes:
+
+- In `restartWhatsAppGatewayWithNewSession`, drop the `nonWhatsappBlock` from the error string entirely. The classifier already separates `fatalWhatsappReason` from `nonWhatsappWarnings`; we only need the WhatsApp half to decide success/failure, so we should only display the WhatsApp half.
+- Move any non-WhatsApp warnings into a collapsible "Other gateway logs (not related to WhatsApp)" disclosure under the error card, off by default. This keeps them available for support without making them look like the cause of the failure.
+
+**5. `ChannelWizard.tsx` — re-classify after repair**
+
+After the auto-repair retry, if the second attempt still fails, re-run `classifyWhatsAppBridgeFailure()` so the error message reflects the **post-repair** state, not the original symptom. Currently the post-repair error reuses the first classification, which can mislead.
+
+### Acceptance criteria
+
+- A clean machine where `~/.hermes/hermes-agent/scripts/whatsapp-bridge/node_modules` is missing can complete the WhatsApp wizard end-to-end without any manual `npm install`.
+- A machine on system Node 18 still gets fixed automatically (existing Node v20 path is preserved).
+- The finalize error card never includes Slack, email, or IMAP messages in the primary error text. They are only reachable via an explicit "Show other gateway logs" disclosure.
+- The "Repair runtime + restart" button in the wizard fixes the bridge-not-configured case in one click.
+
+### Files touched
+
+- `src/lib/systemAPI/hermes.ts` — `repairWhatsAppGatewayRuntime`, `ensureWhatsAppManagedNode`
+- `src/components/channels/ChannelWizard.tsx` — auto-repair trigger, error rendering, post-repair re-classification
+
+### Out of scope (intentionally)
+
+- Slack `missing_scope` for `users.conversations` — that's a separate Slack channel issue and the user explicitly said WhatsApp finalize must not depend on it. We will surface it on the Slack card instead, in a follow-up.
+- Email IMAP auth failure — same reasoning; belongs to the Email channel card.
