@@ -147,6 +147,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [waRePairRestartBusy, setWaRePairRestartBusy] = useState(false);
   const [waRuntimeRepairBusy, setWaRuntimeRepairBusy] = useState(false);
   const [waBridgeInactiveHint, setWaBridgeInactiveHint] = useState("");
+  /** Non-WhatsApp gateway warnings (Slack/email/etc.) shown only on demand. */
+  const [waOtherGatewayLogs, setWaOtherGatewayLogs] = useState<string[]>([]);
+  const [waOtherGatewayLogsOpen, setWaOtherGatewayLogsOpen] = useState(false);
   /** Guard against double-click reentry before state updates land. */
   const resetInFlightRef = useRef(false);
   const startPairingInFlightRef = useRef(false);
