@@ -1610,6 +1610,16 @@ export const hermesAPI = {
     );
 
     if (hasMessagingConfigured) {
+      if ((env.WHATSAPP_ENABLED || '').trim().toLowerCase() === 'true') {
+        await timed('whatsapp-runtime-bootstrap', async () => {
+          const r = await this.repairWhatsAppGatewayRuntime();
+          const failed = r.steps.find((step) => !step.ok && step.name !== 'verify-gateway-path');
+          return {
+            ok: r.ok,
+            detail: r.ok ? 'WhatsApp bridge runtime ready' : (failed?.detail || failed?.name || 'WhatsApp runtime bootstrap failed'),
+          };
+        });
+      }
       await timed('gateway-refresh-install', async () => {
         const r = await this.refreshGatewayInstall();
         return { ok: r.success, detail: r.success ? 'gateway install refreshed' : (r.stderr || r.stdout || 'refresh failed').split('\n')[0] };
