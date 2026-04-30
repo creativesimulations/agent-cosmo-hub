@@ -1,64 +1,72 @@
-I found two concrete problems in the current implementation, both visible in the error text:
+Do I know what the issue is? Yes.
 
-1. The WhatsApp failure happens before the adapter is created. Official Hermes code in `gateway/platforms/whatsapp.py` only checks a bare `node --version`; if the gateway's environment cannot resolve `node`, it returns `None` and logs `WhatsApp: Node.js not installed or bridge not configured` / `No adapter available for whatsapp`.
-2. The Slack error is a real startup blocker: another Hermes gateway process or stale scoped lock is holding the Slack app token. Because the gateway exits on that non-retryable conflict, WhatsApp never gets a stable gateway process even after runtime prep.
+The current blocker is still that the running gateway rejects WhatsApp before it creates the WhatsApp adapter. The exact failing condition is the adapter preflight: `check_whatsapp_requirements()` still returns false, which means the gateway process that is actually running still cannot resolve a working Node runtime when it executes `node --version`.
 
-The key implementation mistake from earlier fixes is that Ronbot is preparing a parallel managed Node path (`~/.hermes/runtime/node/node-v22.22.2-...`) that does not exist on nodejs.org and ignores the canonical layout that the official Hermes installer creates (`~/.hermes/node` with `~/.local/bin/node`/`npm`/`npx` symlinks). We should stop fighting the official installer and follow its layout.
+There are also two UI/logging problems making this harder to diagnose:
 
-## Guiding principle (applies to every step below)
-
-Every function of the app must follow the official Hermes documentation for setup and installation of every aspect of the program — install layout, gateway service flow, WhatsApp bridge prerequisites, channel env vars, gateway start/replace/stop semantics — so the program works exactly as Hermes expects. All of this must be automated. The only acceptable user prompt during setup is the OS sudo password, and only when an action genuinely needs root (apt build tools, Playwright `--with-deps`, system service install). Ronbot must request that password through the existing sudo prompt UI when needed and never ask the user to perform a manual fix or click a “repair” button.
+1. The error detail still appends the raw gateway log, so Slack scope and email IMAP failures leak into the WhatsApp setup error even when those channels should not matter.
+2. The adapter patch currently only checks for the marker string, not whether the live imported adapter actually rewrites `check_whatsapp_requirements()` and bridge launch commands. That can produce a false “patched” state while the gateway still imports an unpatched copy.
 
 Plan:
 
-1. Align Ronbot's managed Node with Hermes' official installer layout
-   - Replace the custom `~/.hermes/runtime/node/node-v...` layout with Hermes' canonical `~/.hermes/node` layout.
-   - Resolve the actual latest Node 22 release from `https://nodejs.org/dist/latest-v22.x/` instead of hardcoding a non-existent patch version (`v22.22.2`).
-   - Maintain `~/.local/bin/node`, `~/.local/bin/npm`, `~/.local/bin/npx` as the user-PATH entry points the official installer creates.
-   - Detect existing legacy `~/.hermes/runtime/node` directories and migrate to the canonical path.
+1. Make Node visible to the actual gateway process without relying on fragile adapter patching alone
+   - Before starting the gateway, export the official managed Node path into the same shell that launches `gateway run --replace`:
+     - `PATH="$HOME/.hermes/node/bin:$HOME/.local/bin:$PATH"`
+     - `NODE`, `NODE_BIN`, `HERMES_NODE_BIN`, `WHATSAPP_NODE_BIN` as absolute paths.
+   - Keep `~/.hermes/node` and `~/.local/bin/node` aligned with the official installer layout.
+   - Do not write a `PATH` override into `.env`; `.env` parsers do not expand `$HOME`/`$PATH` safely.
 
-2. Make the WhatsApp adapter preflight impossible to miss the managed Node
-   - Point `~/.hermes/bin/node` shim at the canonical `~/.hermes/node/bin/node`.
-   - Persist `NODE`, `NODE_BIN`, `HERMES_NODE_BIN`, `WHATSAPP_NODE_BIN`, and `PATH` overrides via the managed env block in `~/.hermes/.env` so `materializeHermesEnv()` cannot strip them.
-   - Patch every plausible adapter location, not just one path:
-     - `~/.hermes/hermes-agent/gateway/platforms/whatsapp.py`
-     - venv editable/source path equivalents
-     - any matching `site-packages/gateway/platforms/whatsapp.py`
-   - The patch must rewrite both `subprocess.run(["node", "--version"…])` (preflight) and `subprocess.Popen(["node", …])` (bridge launch) to use `_ronbot_node_bin()`.
-   - Add an audit check that reports which adapter file the gateway will load and whether the preflight path was actually patched.
+2. Patch the live Python adapter more deterministically
+   - Find every installed `gateway/platforms/whatsapp.py` under `~/.hermes`, including editable source, venv, and site-packages copies.
+   - Patch both:
+     - `check_whatsapp_requirements()` / `subprocess.run(["node", "--version"...])`
+     - bridge launch / `subprocess.Popen(["node", bridge_path...])`
+   - Treat the patch as successful only if the file contains both `_ronbot_node_bin()` and at least one rewritten `_ronbot_node_bin(), "--version"` or equivalent preflight replacement.
+   - Add diagnostics that report the exact adapter path Python imports with:
+     - `python -c "import gateway.platforms.whatsapp as w; print(w.__file__)"`
+     - and verify that same file is patched.
 
-3. Run the entire WhatsApp/messaging runtime prep automatically during install
-   - After Hermes install verification, run base Hermes-style Node prep, write the shim, patch the adapter, and run `npm install` in `~/.hermes/hermes-agent/scripts/whatsapp-bridge` automatically.
-   - Reuse the upstream-style sentinel checks for `@whiskeysockets/baileys`, `express`, `qrcode-terminal`, `pino`.
-   - Use the canonical `~/.hermes/node/bin/npm` for the install.
-   - Remove all "click to repair" UX from the wizard. The wizard must run prep silently as part of setup; only show progress, not action buttons.
-   - When a step legitimately requires sudo (apt build tools, `npx playwright install --with-deps`, `hermes gateway install --system`), use the existing sudo prompt UI to ask for the OS password once and pass it through.
+3. Add an automatic runtime verification step immediately before gateway start
+   - Run these checks in the same shell path used for the gateway:
+     - `command -v node`
+     - `node --version`
+     - `~/.hermes/node/bin/node --version`
+     - `~/.local/bin/node --version`
+     - `python -c 'from gateway.platforms.whatsapp import check_whatsapp_requirements; print(check_whatsapp_requirements())'`
+   - If `check_whatsapp_requirements()` is false, run the runtime prep/adapter patch again and verify once more before starting the gateway.
+   - If it still fails, show the failing diagnostic instead of the generic “runtime not configured” message.
 
-4. Make gateway replace/start follow Hermes docs and self-heal Slack/WhatsApp blockers
-   - On WSL/no-systemd hosts: stop existing gateway processes via `hermes gateway stop`, then proceed with `hermes gateway run --replace` exactly as the docs recommend for foreground/background mode.
-   - On systemd hosts: use `hermes gateway install` + `hermes gateway start`/`restart` as documented.
-   - Before starting, clear stale scoped lock files left by prior gateway PIDs (matching upstream `release_all_scoped_locks` behavior).
-   - When startup output contains `Slack app token already in use (PID N)`, terminate that PID, drop the matching `gateway-locks/*.lock` records that reference it, and retry `start` once.
-   - Centralize all of this inside `startGateway()` so every entry point (channel finalize, bootstrap, manual restart) self-heals identically.
+4. Stop unrelated Slack/email failures from polluting WhatsApp setup
+   - Filter `/tmp/*gateway*.log` content before adding it to the WhatsApp setup error.
+   - Keep only WhatsApp-related lines and the direct Node/adapter diagnostics in the primary error.
+   - Move Slack/email/Telegram/Discord/Signal lines to a separate collapsed diagnostics section only when that channel is actually enabled by the user.
+   - This prevents missing Slack scopes or unused email credentials from making WhatsApp look broken.
 
-5. Improve diagnostics so the next failure is actionable instead of repeating the same generic message
-   - Add diagnostics for: `command -v node` inside the same WSL shell the gateway uses, `~/.local/bin/node` symlink target, `~/.hermes/bin/node` target, `~/.hermes/node/bin/node --version`, adapter patch status, bridge dependency import status, and active gateway PIDs + their command lines + lock files referencing Slack/WhatsApp.
-   - When WhatsApp startup still fails, surface the first failing diagnostic instead of "WhatsApp bridge runtime is not configured".
+5. Fix stale/incorrect enabled-channel state
+   - If Slack/email are not intentionally configured, ensure their enabled flags are not accidentally left on from old setup attempts.
+   - Add a cleanup step during WhatsApp setup that does not delete credentials, but disables unrelated channels with missing/invalid required config so the gateway does not try to connect them.
+   - Preserve intentionally configured channels.
 
-6. UI cleanup so users never have to run repairs
-   - Remove the “Restart messaging gateway” button on the WhatsApp channel card (per earlier user request).
-   - Keep the “Reset WhatsApp” button greyed out until the channel card is re-created via Setup (per earlier user request).
-   - Remove any remaining manual repair affordances in the wizard now that prep is automatic.
+6. Improve WhatsApp “connected” recognition
+   - Consider WhatsApp connected when either:
+     - the gateway reports WhatsApp active, or
+     - the saved WhatsApp session exists and the bridge health endpoint/log confirms a connected session after gateway start.
+   - Continue requiring gateway confirmation for “live”, but show “paired, waiting for bridge” instead of failing immediately when the session exists but the adapter is still initializing.
 
-7. Tests to add/update
-   - Update `parseWhatsAppBridgeAudit` tests for canonical `~/.hermes/node` paths.
-   - Add tests for parsing Slack conflict + stale lock cleanup signals end-to-end.
-   - Add tests asserting the runtime script resolves the latest Node 22 release dynamically (no hardcoded missing patch version).
-   - Add tests asserting the adapter patch rewrites both `subprocess.run(["node", "--version"…])` and `subprocess.Popen(["node", …])` patterns.
+7. Tests
+   - Add tests that fail if `.env` contains a literal `PATH="$HOME...:$PATH"` override.
+   - Add tests that verify adapter patch success requires the actual preflight replacement, not just a marker comment.
+   - Add tests that raw Slack/email gateway lines are not appended to the primary WhatsApp error.
+   - Add tests for the pre-start verification parser: imported adapter path, `command -v node`, and `check_whatsapp_requirements=True`.
 
 Expected result:
-- A fresh Ronbot/Hermes install prepares Node, npm, the WhatsApp bridge, and any other Hermes-managed pieces during installation, exactly as Hermes documents.
-- Pairing no longer relies on a manual repair button or post-failure repair loop.
-- Gateway startup in WSL replaces existing gateway processes and stale Slack locks deterministically.
-- The WhatsApp adapter's official preflight finds Node, creates the WhatsApp adapter, and starts the Baileys bridge from the saved session.
-- Sudo is requested once via the existing OS prompt only when a step genuinely requires root, never to ask the user to perform a manual workaround.
+
+- The gateway process sees the managed Node runtime before importing WhatsApp.
+- `check_whatsapp_requirements()` returns true in the same environment the gateway uses.
+- The WhatsApp adapter is created, so Ronbot can recognize the saved WhatsApp connection.
+- Slack/email issues no longer appear in the WhatsApp setup error unless the user explicitly configured those channels.
+
+<lov-actions>
+<lov-open-history>View History</lov-open-history>
+<lov-link url="https://docs.lovable.dev/tips-tricks/troubleshooting">Troubleshooting docs</lov-link>
+</lov-actions>
