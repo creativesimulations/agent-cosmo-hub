@@ -594,7 +594,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
     await systemAPI.materializeEnv().catch(() => undefined);
     // Make sure the gateway will spawn the Baileys bridge with the managed
-    // Node v20 runtime. Without this, systems with system Node 18.x crash
+    // Node runtime. Without this, systems with system Node 18.x crash
     // the bridge in a loop with `Cannot destructure property 'subtle' of
     // globalThis.crypto` and the channel never goes live.
     setWaStatusHint("Preparing managed Node runtime for the WhatsApp bridge…");
@@ -606,7 +606,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       setWaStatusHint("");
       const detail =
         nodePrep.error ||
-        "Could not prepare the managed Node runtime for WhatsApp. Re-run the WhatsApp setup wizard so Ronbot reinstalls Node v20.";
+        "Could not prepare the managed Node runtime for WhatsApp. Re-run Ronbot setup so the base Hermes runtime can reinstall Node.";
       setFormError(detail);
       toast.error("WhatsApp bridge runtime not ready", { description: detail });
       return "fail";
@@ -738,12 +738,12 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
         `Hermes WhatsApp bridge is not ready inside ${runtimeLabel}.\n` +
         (audit?.home ? `Runtime $HOME = ${audit.home}\n` : "") +
         `\nFailing checks:\n${lines.join("\n")}\n\n` +
-        `Click "Re-pair + Restart" or "Repair runtime only" to install the managed Node v20 + Baileys inside ${runtimeLabel} and restart the gateway.`;
+        `Ronbot already attempted automatic runtime setup inside ${runtimeLabel}. Re-run WhatsApp setup once after checking network access.`;
     } else if (failure.kind === "node-version" || diag?.bridgeLogShowsNode18) {
       const reasons: string[] = [];
       if (diag) {
         if (!diag.shimVersion || diag.shimVersion === "missing") {
-          reasons.push("• Managed Node v20 shim is missing at ~/.hermes/bin/node.");
+          reasons.push("• Managed Node shim is missing at ~/.hermes/bin/node.");
         } else if (!/^v2[0-9]/.test(diag.shimVersion)) {
           reasons.push(`• Managed Node shim reports ${diag.shimVersion} (need v20+).`);
         }
@@ -756,7 +756,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       }
       detail =
         `WhatsApp bridge keeps crashing on Node ${failure.nodeVersion ?? "18.x"} — Baileys needs Node 20+. ` +
-        `Click "Re-pair + Restart" to apply the runtime fix.` +
+        `Ronbot already attempted to apply the runtime fix automatically.` +
         (reasons.length ? `\n\nDiagnostics:\n${reasons.join("\n")}` : "");
     } else if (lastHealth?.fatalWhatsappReason === "adapter-missing" || failure.kind === "adapter-missing") {
       detail = `WhatsApp adapter is missing from the running gateway.\n${lastHealth?.fatalWhatsappSnippet || failure.snippet || "No adapter available for whatsapp."}`;
@@ -799,10 +799,10 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     toast.error("WhatsApp bridge not confirmed", {
       description:
         failure.kind === "node-version" || diag?.bridgeLogShowsNode18
-          ? "Bridge crashed on Node 18 — click Re-pair + Restart to apply the runtime fix."
+          ? "Bridge crashed on Node 18 after automatic runtime setup."
           : failure.kind === "bridge-not-configured"
-            ? "WhatsApp bridge dependencies missing — click Re-pair + Restart to install them."
-            : "Try Re-pair + Restart.",
+            ? "WhatsApp bridge dependencies are still missing after automatic setup."
+            : "Retry WhatsApp setup once.",
     });
     return "fail";
   }, []);
