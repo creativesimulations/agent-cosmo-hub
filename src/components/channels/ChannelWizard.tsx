@@ -760,21 +760,24 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
       }
     }
     const nonWhatsapp = Array.from(otherPlatformWarnings).slice(-8);
-    const nonWhatsappBlock = nonWhatsapp.length
-      ? `\n\nOther platform warnings (informational):\n${nonWhatsapp.join("\n")}`
-      : "";
+    // Non-WhatsApp warnings (Slack scopes, IMAP auth, etc.) are NOT part of
+    // the WhatsApp finalize verdict. Keep them out of the primary error and
+    // expose them under a collapsible disclosure so support still has access.
+    setWaOtherGatewayLogs(nonWhatsapp);
+    setWaOtherGatewayLogsOpen(false);
     const traceBlock = recoverySteps.length ? `\n\nRecovery attempts:\n- ${recoverySteps.join("\n- ")}` : "";
     setFormError(
       detail +
       traceBlock +
-      nonWhatsappBlock +
       (logR.content ? `\n\n${logR.content.split("\n").slice(-24).join("\n")}` : ""),
     );
     toast.error("WhatsApp bridge not confirmed", {
       description:
         failure.kind === "node-version" || diag?.bridgeLogShowsNode18
           ? "Bridge crashed on Node 18 — click Re-pair + Restart to apply the runtime fix."
-          : "Try Re-pair + Restart.",
+          : failure.kind === "bridge-not-configured"
+            ? "WhatsApp bridge dependencies missing — click Re-pair + Restart to install them."
+            : "Try Re-pair + Restart.",
     });
     return "fail";
   }, []);
