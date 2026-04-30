@@ -1798,10 +1798,35 @@ export const hermesAPI = {
     // Install/register the gateway service, then retry start before giving up.
     // NOTE: runHermesCli wraps everything in `set -e`, so we explicitly switch
     // to `set +e` here to collect rc codes and run fallback steps.
+    //
+    // WSL/no-systemd shortcut: Hermes' own FAQ explicitly recommends running
+    // the gateway in foreground/background mode when systemd is not running
+    // as PID 1 (the typical WSL2 default). `hermes gateway start` will fail
+    // there with a confusing "user systemd unavailable" message. Detect that
+    // case up-front and use `nohup hermes gateway run --replace` instead.
     const r = await runHermesCli(
       [
         'set +e',
         HERMES_PATH_EXPORT,
+        // Detect a working user/systemd PID 1 the same way Hermes does.
+        'HAS_SYSTEMD=0',
+        'if command -v systemctl >/dev/null 2>&1; then',
+        '  STATE="$(systemctl is-system-running 2>/dev/null || true)"',
+        '  case "$STATE" in running|degraded|starting|initializing) HAS_SYSTEMD=1 ;; esac',
+        'fi',
+        'if [ "$HAS_SYSTEMD" = "0" ]; then',
+        '  echo "[gateway] systemd is not PID 1 (typical on WSL without systemd=true) — using foreground/background mode per Hermes docs"',
+        '  if pgrep -f "hermes gateway" >/dev/null 2>&1; then',
+        '    echo "[gateway] existing hermes gateway process detected; relying on --replace"',
+        '  fi',
+        '  nohup hermes gateway run --replace >/tmp/hermes-gateway.log 2>&1 &',
+        '  sleep 3',
+        '  if pgrep -f "hermes gateway" >/dev/null 2>&1; then',
+        '    echo "[gateway] started in background replace mode"',
+        '    exit 0',
+        '  fi',
+        '  echo "[gateway] background start did not produce a running process — falling back to service path" >&2',
+        'fi',
         // User systemd units often lack Homebrew/snap/npm on PATH — push ours in
         // so the gateway subprocess can install the WhatsApp bridge.
         'systemctl --user set-environment PATH="$PATH" 2>/dev/null || true',
