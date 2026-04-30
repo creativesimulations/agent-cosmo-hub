@@ -276,6 +276,37 @@ export const analyzeWhatsAppGatewaySignals = (rawOutput: string): WhatsAppGatewa
   return report;
 };
 
+/**
+ * Pure parser for the AUDIT_BEGIN…AUDIT_END output produced by
+ * {@link auditWhatsAppBridgeRuntime}. Extracted so it can be unit-tested
+ * without spawning a real shell.
+ */
+export interface WhatsAppBridgeAuditReport {
+  home?: string;
+  bridgeDir?: string;
+  failedChecks: Array<{ id: string; detail: string }>;
+  passedChecks: string[];
+}
+
+export const parseWhatsAppBridgeAudit = (raw: string): WhatsAppBridgeAuditReport => {
+  const home = (raw.match(/^HOME=(.*)$/m)?.[1] || '').trim() || undefined;
+  const bridgeDir = (raw.match(/^BRIDGE_DIR=(.*)$/m)?.[1] || '').trim() || undefined;
+  const failedChecks: Array<{ id: string; detail: string }> = [];
+  const passedChecks: string[] = [];
+  for (const line of raw.split('\n')) {
+    const passMatch = line.match(/^PASS:([\w-]+)\s*$/);
+    if (passMatch) {
+      passedChecks.push(passMatch[1]);
+      continue;
+    }
+    const failMatch = line.match(/^FAIL:([\w-]+):(.*)$/);
+    if (failMatch) {
+      failedChecks.push({ id: failMatch[1], detail: failMatch[2].trim() });
+    }
+  }
+  return { home, bridgeDir, failedChecks, passedChecks };
+};
+
 export const parseSlackGatewayConflict = (rawOutput: string): SlackGatewayConflictInfo => {
   const lines = rawOutput
     .split('\n')
