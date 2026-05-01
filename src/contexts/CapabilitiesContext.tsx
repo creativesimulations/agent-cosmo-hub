@@ -127,6 +127,14 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
   const [storedSecretKeys, setStoredSecretKeys] = useState<string[]>([]);
   const [observedTools, setObservedTools] = useState<string[]>([]);
   const [recentlyUsed, setRecentlyUsed] = useState<Record<string, ObservedToolUse>>({});
+  // Agent-discovered capability registry (channels, tools, connectors, skills).
+  // Seeded synchronously so the UI never blanks; replaced by live discovery.
+  const [discovered, setDiscovered] = useState<Record<string, DiscoveredCapability>>(() => {
+    const seed: Record<string, DiscoveredCapability> = {};
+    for (const c of SEED_CAPABILITIES) seed[c.id] = { ...c };
+    return seed;
+  });
+  const [discoveryFromHermes, setDiscoveryFromHermes] = useState(false);
   // Session grants live in sessionStorage so they survive HMR but not a real reload.
   const sessionGrantsRef = useRef<Set<string>>(new Set());
 
@@ -168,6 +176,13 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
         setStoredSecretKeys(r.keys);
       }
     } catch { /* best effort */ }
+    // Refresh agent-discovered capability registry (channels, tools, …).
+    try {
+      invalidateDiscoveryCache();
+      const result = await discoverCapabilities({ force: true });
+      setDiscovered(result.capabilities);
+      setDiscoveryFromHermes(result.fromHermes);
+    } catch { /* best effort — seed stays */ }
   }, []);
 
   useEffect(() => {
