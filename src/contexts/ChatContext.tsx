@@ -672,13 +672,21 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             ? detectToolUnavailable(reply)
             : undefined;
 
+          // ── Agent intents ──
+          // Pull `ronbot-intent` fenced JSON blocks out of the visible reply.
+          // Strips them from the rendered text so the user only sees the
+          // surrounding prose; the cards render alongside the bubble.
+          const split = result.success && !result.missingKey
+            ? splitIntentsFromText(reply)
+            : { text: reply, intents: [] as AgentIntent[], errors: [] };
+
           setMessages((prev) =>
             prev.map((m) =>
               m.id === item.placeholderId
                 ? {
                     ...m,
                     content: result.success && !result.missingKey
-                      ? reply
+                      ? split.text
                       : matFailed
                         ? `Failed to sync your secrets to the agent. Open App Diagnostics for the exact shell error.\n\n${result.stderr || ""}`
                         : result.missingKey
@@ -691,6 +699,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     permissionMismatch,
                     toolUnavailable,
                     usedCapabilities: Array.from(usedCapsThisTurn),
+                    intents: split.intents.length > 0 ? split.intents : undefined,
                   }
                 : m,
             ),
