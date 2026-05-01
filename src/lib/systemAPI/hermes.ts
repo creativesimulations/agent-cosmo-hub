@@ -3349,9 +3349,15 @@ export const hermesAPI = {
     error?: string;
   }> {
     if (!isElectron()) return { success: true, patched: false };
+    // Ship the Python patcher as a base64 blob so its regex literals don't
+    // have to survive bash heredoc + cmd.exe + JS-string escaping.
+    const patcherB64 = encodeScript(WHATSAPP_ADAPTER_PATCH_PY);
     const r = await runHermesShell(
       [
         'set +e',
+        `PATCH_B64=${JSON.stringify(patcherB64)}`,
+        'PATCHER="$(mktemp -t ronbot-wa-patch.XXXXXX.py 2>/dev/null || echo "/tmp/ronbot-wa-patch.$$.py")"',
+        'echo "$PATCH_B64" | base64 -d > "$PATCHER" || { echo "PATCH_DECODE_FAILED"; exit 0; }',
         'CANDIDATES=""',
         'for cand in "$HOME/.hermes/hermes-agent/gateway/platforms/whatsapp.py" "$HOME/.hermes/venv/lib"/python*/site-packages/gateway/platforms/whatsapp.py "$HOME/.hermes/venv/src"/*/gateway/platforms/whatsapp.py; do',
         '  [ -f "$cand" ] || continue',
@@ -3363,66 +3369,46 @@ export const hermesAPI = {
         'done <<EOF_FIND',
         '$(find "$HOME/.hermes" -path "*/gateway/platforms/whatsapp.py" -type f 2>/dev/null)',
         'EOF_FIND',
-        '[ -n "$CANDIDATES" ] || { echo "ADAPTER_NOT_FOUND"; exit 0; }',
+        '[ -n "$CANDIDATES" ] || { echo "ADAPTER_NOT_FOUND"; rm -f "$PATCHER"; exit 0; }',
         'PATCHED_PATHS=""',
         'FAILED_PATHS=""',
         'for F in $CANDIDATES; do',
         '  echo "ADAPTER_PATH=$F"',
-        '  if grep -q "RONBOT_NODE_BIN_PATCH_V4" "$F"; then PATCHED_PATHS="$PATCHED_PATHS $F"; continue; fi',
+        // V5 marker AND verified call sites must both be present to skip.
+        '  if grep -q "RONBOT_NODE_BIN_PATCH_V5" "$F" && grep -q "_ronbot_node_bin()" "$F"; then PATCHED_PATHS="$PATCHED_PATHS $F"; continue; fi',
         '  cp "$F" "$F.ronbot.bak" 2>/dev/null || true',
-        '  python3 - "$F" <<\'PY\'',
-        'import sys, re, pathlib',
-        'p = pathlib.Path(sys.argv[1])',
-        'src = p.read_text()',
-        'helper = (',
-        '"\\n# RONBOT_NODE_BIN_PATCH_V4: prefer managed Node for both adapter preflight and bridge launch\\n"',
-        '"def _ronbot_node_bin():\\n"',
-        '"    import os, shutil\\n"',
-        '"    for env_key in (\\"WHATSAPP_NODE_BIN\\", \\"NODE_BIN\\", \\"HERMES_NODE_BIN\\", \\"NODE\\"):\\n"',
-        '"        v = os.environ.get(env_key)\\n"',
-        '"        if v and os.path.isfile(v):\\n"',
-        '"            return v\\n"',
-        '"    home = os.path.expanduser(\\"~\\")\\n"',
-        '"    shim = os.path.join(home, \\".hermes\\", \\"bin\\", \\"node\\")\\n"',
-        '"    if os.path.isfile(shim):\\n"',
-        '"        return shim\\n"',
-        '"    found = shutil.which(\\"node\\")\\n"',
-        '"    return found or \\"node\\"\\n"',
-        ')',
-        'if "def _ronbot_node_bin():" not in src:',
-        '    m = re.search(r"(?ms)^(\\s*\\"\\"\\".*?\\"\\"\\"\\s*\\n)", src)',
-        '    insert_at = m.end() if m else 0',
-        '    src = src[:insert_at] + helper + src[insert_at:]',
-        '# Replace both the adapter preflight and bridge launch so the adapter does not reject WhatsApp before launch.',
-        'src2 = re.sub(r"subprocess\\.run\\(\\s*\\[\\s*([\'\"])(?:node)\\1\\s*,\\s*([\'\"])(?:--version)\\2", "subprocess.run([_ronbot_node_bin(), \\\"--version\\\"", src)',
-        'src2, n1 = re.subn(r"\\[\\s*([\'\"])(?:node)\\1\\s*,", "[_ronbot_node_bin(),", src2)',
-        'src2, n2 = re.subn(r"subprocess\\.(?:Popen|run)\\(\\s*([\'\"])(?:node)\\1\\s*,", lambda m: m.group(0).replace(m.group(1)+"node"+m.group(1), "_ronbot_node_bin()"), src2)',
-        'if (n1 + n2) == 0 and "_ronbot_node_bin()," not in src2:',
-        '    sys.stderr.write("no node launch literal found\\n")',
-        '    sys.exit(2)',
-        'if "RONBOT_NODE_BIN_PATCH_V4" not in src2:',
-        '    if "RONBOT_NODE_BIN_PATCH" in src2:',
-        '        src2 = re.sub(r"RONBOT_NODE_BIN_PATCH(?:_V\\d+)?", "RONBOT_NODE_BIN_PATCH_V4", src2, count=1)',
-        '    else:',
-        '        src2 = "# RONBOT_NODE_BIN_PATCH_V4\\n" + src2',
-        'p.write_text(src2)',
-        'PY',
+        '  PATCH_OUT="$(python3 "$PATCHER" "$F" 2>&1)"',
         '  PATCH_RC=$?',
-        '  if [ "$PATCH_RC" -eq 0 ]; then PATCHED_PATHS="$PATCHED_PATHS $F"; else FAILED_PATHS="$FAILED_PATHS $F"; fi',
+        '  if [ "$PATCH_RC" -ne 0 ]; then',
+        '    echo "PATCH_STDERR=$PATCH_OUT"',
+        '    FAILED_PATHS="$FAILED_PATHS $F"',
+        '    continue',
+        '  fi',
+        // Independently verify call sites exist post-write.
+        '  if ! grep -q "_ronbot_node_bin()" "$F"; then',
+        '    echo "PATCH_VERIFY_FAILED=$F"',
+        '    FAILED_PATHS="$FAILED_PATHS $F"',
+        '    continue',
+        '  fi',
+        '  PATCHED_PATHS="$PATCHED_PATHS $F"',
         'done',
+        'rm -f "$PATCHER"',
         'echo "PATCHED_PATHS=$PATCHED_PATHS"',
         'echo "FAILED_PATHS=$FAILED_PATHS"',
         '[ -z "$FAILED_PATHS" ] || echo "PATCH_FAILED"',
         'exit 0',
       ].join('\n'),
-      { timeout: 15000 },
+      { timeout: 20000 },
     );
     const out = `${r.stdout || ''}\n${r.stderr || ''}`;
     const path = (out.match(/PATCHED_PATHS=(.*)/)?.[1] || out.match(/ADAPTER_PATH=(\S+)/)?.[1] || '').trim() || undefined;
     if (out.includes('ADAPTER_NOT_FOUND')) {
       return { success: true, patched: false, error: 'Installed Hermes WhatsApp adapter not found at the expected paths.' };
     }
-    if (out.includes('PATCH_FAILED')) return { success: false, patched: false, path, error: out.split('\n').slice(-8).join('\n').trim() };
+    if (out.includes('PATCH_DECODE_FAILED')) {
+      return { success: false, patched: false, error: 'Failed to decode adapter patcher payload on the runtime host.' };
+    }
+    if (out.includes('PATCH_FAILED')) return { success: false, patched: false, path, error: out.split('\n').slice(-12).join('\n').trim() };
     if (/PATCHED_PATHS=\s*\S/.test(out)) return { success: true, patched: true, path };
     return { success: false, patched: false, path, error: out.split('\n').slice(-6).join('\n').trim() };
   },
