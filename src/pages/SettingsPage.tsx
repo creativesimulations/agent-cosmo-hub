@@ -20,6 +20,9 @@ import {
   Network,
   ChevronDown,
   Box,
+  Users,
+  Keyboard,
+  ExternalLink,
 } from "lucide-react";
 import {
   Select,
@@ -201,6 +204,15 @@ const SettingsPage = () => {
 
   // Sandbox / terminal backend
   const [terminalBackend, setTerminalBackend] = useState<"local" | "docker" | "ssh">("local");
+
+  // Hermes profiles (isolated agent instances)
+  const [profiles, setProfiles] = useState<Array<{ name: string; active?: boolean }>>([]);
+  const [profilesCliAvailable, setProfilesCliAvailable] = useState(true);
+  const [profilesLoading, setProfilesLoading] = useState(false);
+
+  // Busy-input mode — what happens when the user types while the agent is replying
+  const [busyInputMode, setBusyInputMode] = useState<"queue" | "interrupt" | "steer">("queue");
+  const [busyInputSaving, setBusyInputSaving] = useState(false);
 
   useEffect(() => {
     if (!agentConnected) return;
