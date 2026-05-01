@@ -25,6 +25,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 
+import { IntentCard } from "@/components/intents";
+
 const AgentChat = () => {
   const { connected: agentConnected } = useAgentConnection();
   const {
@@ -42,6 +44,7 @@ const AgentChat = () => {
     startNewSession,
     draft,
     setDraft,
+    sendIntentResponse,
   } = useChat();
   const input = draft;
   const setInput = setDraft;
@@ -295,7 +298,11 @@ const AgentChat = () => {
                     </p>
                   )}
                   {(!msg.queued || msg.role === "user" || msg.content) && (
-                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                    <p className="text-sm whitespace-pre-wrap">
+                      {msg.role === "user" && msg.intentResponseSummary
+                        ? msg.intentResponseSummary
+                        : msg.content}
+                    </p>
                   )}
                   {msg.streaming && (
                     <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
@@ -376,6 +383,24 @@ const AgentChat = () => {
                   )}
                   {msg.usedCapabilities && msg.usedCapabilities.length > 0 && msg.role === "assistant" && !msg.streaming && (
                     <CapabilityChips capabilityIds={msg.usedCapabilities} />
+                  )}
+                  {msg.intents && msg.intents.length > 0 && msg.role === "assistant" && (
+                    <div className="mt-2 space-y-2 -mx-1">
+                      {msg.intents.map((intent) => {
+                        const previousResponse = msg.intentResponses?.[intent.id];
+                        return (
+                          <IntentCard
+                            key={intent.id}
+                            intent={intent}
+                            responded={!!previousResponse}
+                            previousResponse={previousResponse}
+                            onRespond={(response) => {
+                              void sendIntentResponse(msg.id, intent, response);
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
                   )}
                   {msg.diagnostics && (msg.missingKey || msg.materializeFailed || msg.content.startsWith("Error") || msg.content.startsWith("Failed")) && (
                     <details className="mt-2 text-[11px] text-muted-foreground/70">

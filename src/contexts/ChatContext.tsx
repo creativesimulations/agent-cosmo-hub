@@ -10,6 +10,12 @@ import { detectToolUnavailable, type ToolUnavailableHit } from "@/lib/toolUnavai
 import { detectToolCalls } from "@/lib/toolUseDetection";
 import { useCapabilities } from "./CapabilitiesContext";
 import { capabilityProbe } from "@/lib/capabilityProbe";
+import {
+  splitIntentsFromText,
+  formatIntentResponse,
+  type AgentIntent,
+  type IntentResponse,
+} from "@/lib/agentIntents";
 
 /**
  * Chat is hoisted into a top-level context so:
@@ -97,6 +103,16 @@ export interface ChatMessage {
   toolUnavailable?: ToolUnavailableHit;
   /** Capability ids the agent invoked (or attempted) during this turn. */
   usedCapabilities?: string[];
+  /** Structured intents the agent emitted in this assistant turn. */
+  intents?: AgentIntent[];
+  /** Per-intent responses already submitted (keyed by intent id). */
+  intentResponses?: Record<string, IntentResponse>;
+  /**
+   * When this user message is the carrier for a `ronbot-intent-response`,
+   * the chat bubble shows this redacted summary instead of the raw JSON
+   * payload (so secrets never appear in chat history).
+   */
+  intentResponseSummary?: string;
 }
 
 interface QueueItem {
@@ -129,6 +145,16 @@ interface ChatContextValue {
   /** In-memory draft for the chat composer — survives tab switches but not app restarts. */
   draft: string;
   setDraft: (value: string) => void;
+  /**
+   * Reply to an agent intent. Stores the response on the carrier assistant
+   * message (so the card renders as locked) and posts a `ronbot-intent-response`
+   * turn back to the agent. The user-bubble shows a redacted summary.
+   */
+  sendIntentResponse: (
+    assistantMsgId: string,
+    intent: AgentIntent,
+    response: IntentResponse,
+  ) => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -645,13 +671,21 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             ? detectToolUnavailable(reply)
             : undefined;
 
+          // ── Agent intents ──
+          // Pull `ronbot-intent` fenced JSON blocks out of the visible reply.
+          // Strips them from the rendered text so the user only sees the
+          // surrounding prose; the cards render alongside the bubble.
+          const split = result.success && !result.missingKey
+            ? splitIntentsFromText(reply)
+            : { text: reply, intents: [] as AgentIntent[], errors: [] };
+
           setMessages((prev) =>
             prev.map((m) =>
               m.id === item.placeholderId
                 ? {
                     ...m,
                     content: result.success && !result.missingKey
-                      ? reply
+                      ? split.text
                       : matFailed
                         ? `Failed to sync your secrets to the agent. Open App Diagnostics for the exact shell error.\n\n${result.stderr || ""}`
                         : result.missingKey
@@ -664,6 +698,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     permissionMismatch,
                     toolUnavailable,
                     usedCapabilities: Array.from(usedCapsThisTurn),
+                    intents: split.intents.length > 0 ? split.intents : undefined,
                   }
                 : m,
             ),
@@ -781,6 +816,43 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     void drainQueue();
   }, [drainQueue]);
 
+  const sendIntentResponse = useCallback(
+    async (assistantMsgId: string, intent: AgentIntent, response: IntentResponse) => {
+      // Lock the card on the carrier message so it can't be re-submitted.
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? {
+                ...m,
+                intentResponses: { ...(m.intentResponses || {}), [intent.id]: response },
+              }
+            : m,
+        ),
+      );
+      const { prompt, summary } = formatIntentResponse(response, intent);
+
+      // Send the prompt as the next user turn, but tag the resulting user
+      // message with `intentResponseSummary` so the UI can render the
+      // redacted summary instead of the raw JSON. We do this by patching
+      // the most recent user message after `sendMessage` enqueues it.
+      const beforeIds = new Set<string>();
+      // Capture current user-msg ids — we'll find the new one by diff.
+      setMessages((prev) => {
+        for (const m of prev) if (m.role === "user") beforeIds.add(m.id);
+        return prev;
+      });
+      await sendMessage(prompt);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.role === "user" && !beforeIds.has(m.id) && m.content === prompt.trim()
+            ? { ...m, intentResponseSummary: summary }
+            : m,
+        ),
+      );
+    },
+    [sendMessage],
+  );
+
   const stop = useCallback(async () => {
     stopRequestedRef.current = true;
     const sid = activeStreamIdRef.current;
@@ -821,6 +893,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         startNewSession,
         draft,
         setDraft,
+        sendIntentResponse,
       }}
     >
       {children}
