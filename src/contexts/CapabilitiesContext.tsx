@@ -23,6 +23,12 @@ import { useSettings } from "./SettingsContext";
 import { usePermissions } from "./PermissionsContext";
 import { useAgentConnection } from "./AgentConnectionContext";
 import { capabilityProbe, type CapabilityProbeResult } from "@/lib/capabilityProbe";
+import {
+  discoverCapabilities,
+  invalidateDiscoveryCache,
+} from "@/lib/capabilities/discovery";
+import type { DiscoveredCapability } from "@/lib/capabilities/types";
+import { SEED_CAPABILITIES } from "@/lib/capabilities/seed";
 
 /**
  * CapabilitiesContext is the runtime façade for the Capability Registry.
@@ -98,6 +104,14 @@ interface CapabilitiesContextValue {
   probeResults: Record<string, CapabilityProbeResult>;
   /** Re-run probes for all web-class capabilities (refreshes badge count). */
   refreshProbes: () => Promise<void>;
+  /**
+   * Live agent-discovered registry: channels, tools, connectors, skills.
+   * Built from `hermes capabilities --json` + installed skills + a seed
+   * fallback. Drives Dashboard tiles, Channels page, slash palette.
+   */
+  discovered: Record<string, DiscoveredCapability>;
+  /** True once at least one Hermes CLI discovery call has succeeded. */
+  discoveryFromHermes: boolean;
 }
 
 const CapabilitiesContext = createContext<CapabilitiesContextValue | null>(null);
