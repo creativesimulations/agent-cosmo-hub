@@ -2424,7 +2424,66 @@ export const hermesAPI = {
     return { success: r.success, content: content || '(no bridge log files found yet)', error: r.success ? undefined : r.stderr };
   },
 
-  /** Stop the messaging gateway */
+  /**
+   * Scan recent gateway + bridge log files for `Unauthorized user: <jid>`
+   * lines and return the unique JIDs / numbers Hermes rejected. The wizard
+   * uses this to surface a one-click "Authorize this sender" action when
+   * finalize fails because the user's own WhatsApp identifier (e.g. an
+   * `@lid` JID) is not in `WHATSAPP_ALLOWED_USERS`.
+   */
+  async findUnauthorizedWhatsAppSenders(maxLines = 400): Promise<{
+    success: boolean;
+    senders: string[];
+    error?: string;
+  }> {
+    const tail = await this.readWhatsAppBridgeLogTail(maxLines).catch((e) => ({
+      success: false,
+      content: '',
+      error: e instanceof Error ? e.message : String(e),
+    }));
+    if (!tail.success) {
+      return { success: false, senders: [], error: tail.error || 'failed to read bridge logs' };
+    }
+    return { success: true, senders: parseUnauthorizedWhatsAppSenders(tail.content || '') };
+  },
+
+  /**
+   * Defensive writer: makes sure `WHATSAPP_ENABLED`, `WHATSAPP_MODE`, and
+   * `WHATSAPP_DEBUG` are present in the secrets store before the gateway
+   * starts (and therefore before `materializeHermesEnv` writes them out
+   * to `~/.hermes/.env`). Never overrides a non-empty existing value
+   * except `WHATSAPP_ENABLED`, which is always forced to `true` here
+   * because this helper only runs when WhatsApp is being opted in.
+   *
+   * Leaves `WHATSAPP_ALLOWED_USERS` untouched if non-empty.
+   */
+  async ensureWhatsAppRuntimeSecrets(opts?: { mode?: string }): Promise<{
+    success: boolean;
+    wrote: string[];
+    error?: string;
+  }> {
+    const wrote: string[] = [];
+    try {
+      const get = async (k: string) => (await secretsStore.get(k)).trim();
+      const enabled = await get('WHATSAPP_ENABLED');
+      if (enabled.toLowerCase() !== 'true') {
+        if (await secretsStore.set('WHATSAPP_ENABLED', 'true')) wrote.push('WHATSAPP_ENABLED');
+      }
+      const mode = await get('WHATSAPP_MODE');
+      if (!mode) {
+        const next = (opts?.mode || 'self-chat').trim() || 'self-chat';
+        if (await secretsStore.set('WHATSAPP_MODE', next)) wrote.push('WHATSAPP_MODE');
+      }
+      const dbg = await get('WHATSAPP_DEBUG');
+      if (!dbg) {
+        if (await secretsStore.set('WHATSAPP_DEBUG', 'true')) wrote.push('WHATSAPP_DEBUG');
+      }
+      return { success: true, wrote };
+    } catch (e) {
+      return { success: false, wrote, error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+
   async stopGateway(): Promise<CommandResult> {
     agentLogs.push({ source: 'gateway', level: 'info', summary: 'Stopping messaging gateway…' });
     const r = await runHermesCli(
