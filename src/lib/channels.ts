@@ -266,7 +266,7 @@ export const CHANNELS: Channel[] = [
       {
         envVar: 'WHATSAPP_ALLOWED_USERS',
         label: 'Who may message the agent',
-        hint: 'Hermes format: E.164 digits only (country code first, no +), comma-separated.',
+        hint: 'E.164 digits (no +), or a WhatsApp JID like 112966246649933@lid or 15551234567@s.whatsapp.net. Comma-separated.',
         inputType: 'text',
         defaultValue: '',
       },
