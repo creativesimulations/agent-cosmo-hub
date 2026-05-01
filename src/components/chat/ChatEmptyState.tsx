@@ -1,17 +1,26 @@
 import { Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
-import { topExamplePrompts, CAPABILITY_CATALOG } from "@/lib/capabilities/catalog";
+import { useMemo } from "react";
+import { useCapabilities } from "@/contexts/CapabilitiesContext";
 
 interface ChatEmptyStateProps {
   onPick: (prompt: string) => void;
 }
 
-const SETUP_SHORTCUTS = CAPABILITY_CATALOG
-  .filter((c) => c.requiresSetup)
-  .slice(0, 6);
-
 const ChatEmptyState = ({ onPick }: ChatEmptyStateProps) => {
-  const examples = topExamplePrompts(6);
+  const { discovered } = useCapabilities();
+
+  const { examples, shortcuts } = useMemo(() => {
+    const all = Object.values(discovered);
+    const ex: string[] = [];
+    for (const c of all) {
+      for (const p of c.examplePrompts ?? []) {
+        if (ex.length < 6 && !ex.includes(p)) ex.push(p);
+      }
+    }
+    const sc = all.filter((c) => c.requiresSetup).slice(0, 6);
+    return { examples: ex, shortcuts: sc };
+  }, [discovered]);
 
   return (
     <motion.div
@@ -48,11 +57,11 @@ const ChatEmptyState = ({ onPick }: ChatEmptyStateProps) => {
           </div>
         )}
 
-        {SETUP_SHORTCUTS.length > 0 && (
+        {shortcuts.length > 0 && (
           <div className="space-y-2 text-left">
             <p className="text-xs uppercase tracking-wide text-muted-foreground/70">Or set something up</p>
             <div className="flex flex-wrap gap-2 justify-center">
-              {SETUP_SHORTCUTS.map((c) => (
+              {shortcuts.map((c) => (
                 <button
                   key={c.id}
                   type="button"

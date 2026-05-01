@@ -2,15 +2,20 @@
  * Slash command palette for the chat composer.
  *
  * Opens when the user types "/" at the start of the chat input. Surfaces
- * the capability catalog as a fuzzy-filterable list. Selecting an entry
- * replaces the input with that capability's `setupPrompt` so the user
- * doesn't have to remember the exact wording — the agent then drives
+ * the live agent capability registry as a fuzzy-filterable list. Selecting
+ * an entry replaces the input with that capability's `setupPrompt` so the
+ * user doesn't have to remember the exact wording — the agent then drives
  * the rest via the intent protocol.
+ *
+ * The list is **not** hard-coded — it's derived from
+ * `useCapabilities().discovered`, so new channels/tools/skills the agent
+ * supports show up automatically.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as Icons from "lucide-react";
-import { CAPABILITY_CATALOG, type CapabilityEntry } from "@/lib/capabilities/catalog";
+import { useCapabilities } from "@/contexts/CapabilitiesContext";
+import type { DiscoveredCapability } from "@/lib/capabilities/types";
 import { cn } from "@/lib/utils";
 
 interface SlashCommandPaletteProps {
@@ -22,12 +27,13 @@ interface SlashCommandPaletteProps {
   onDismiss: () => void;
 }
 
-const resolveIcon = (name: string): React.ComponentType<{ className?: string }> => {
+const resolveIcon = (name?: string): React.ComponentType<{ className?: string }> => {
+  if (!name) return Icons.Sparkles;
   const lib = Icons as unknown as Record<string, React.ComponentType<{ className?: string }>>;
   return lib[name] ?? Icons.Sparkles;
 };
 
-const matches = (entry: CapabilityEntry, query: string): boolean => {
+const matches = (entry: DiscoveredCapability, query: string): boolean => {
   if (!query) return true;
   const q = query.toLowerCase();
   return (
@@ -38,21 +44,24 @@ const matches = (entry: CapabilityEntry, query: string): boolean => {
 };
 
 const SlashCommandPalette = ({ value, onPick, onDismiss }: SlashCommandPaletteProps) => {
+  const { discovered } = useCapabilities();
   const open = value.startsWith("/");
   const query = open ? value.slice(1).trim() : "";
   const filtered = useMemo(
-    () => CAPABILITY_CATALOG.filter((e) => matches(e, query)).slice(0, 8),
-    [query],
+    () =>
+      Object.values(discovered)
+        .filter((e) => matches(e, query))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(0, 8),
+    [query, discovered],
   );
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Reset highlight whenever the visible list changes.
   useEffect(() => {
     setActive(0);
   }, [query, filtered.length]);
 
-  // Listen for keyboard nav while the palette is open.
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
