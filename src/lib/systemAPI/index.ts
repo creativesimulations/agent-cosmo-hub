@@ -111,6 +111,9 @@ export const systemAPI = {
   probeBrowserNavigate: hermesAPI.probeBrowserNavigate.bind(hermesAPI),
   runBrowserSelfTest: hermesAPI.runBrowserSelfTest.bind(hermesAPI),
   discoverCapabilities: hermesAPI.discoverCapabilities.bind(hermesAPI),
+  listMCPServers: hermesAPI.listMCPServers.bind(hermesAPI),
+  listScheduledJobs: hermesAPI.listScheduledJobs.bind(hermesAPI),
+  deleteScheduledJob: hermesAPI.deleteScheduledJob.bind(hermesAPI),
   // Prereqs (extras)
   checkRipgrep: prereqAPI.checkRipgrep.bind(prereqAPI),
   installRipgrep: prereqAPI.installRipgrep.bind(prereqAPI),
