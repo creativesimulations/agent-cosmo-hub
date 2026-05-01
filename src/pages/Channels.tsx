@@ -21,6 +21,17 @@ import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
 import { useCapabilities } from "@/contexts/CapabilitiesContext";
 import { invalidateCapabilityProbeCache } from "@/lib/capabilityProbe";
+import { useNavigate } from "react-router-dom";
+import { useChat } from "@/contexts/ChatContext";
+import { CAPABILITY_CATALOG } from "@/lib/capabilities/catalog";
+
+/**
+ * Channel ids that have been migrated to fully agent-driven setup. The
+ * Channels page no longer opens the ChannelWizard for these — instead it
+ * seeds a chat prompt and the agent drives the rest via the intent
+ * protocol. See .lovable/plan.md (Phase 3) for the rationale.
+ */
+const AGENT_DRIVEN_CHANNELS = new Set<string>(["slack"]);
 
 const ChannelsPage = () => {
   const { refreshProbes } = useCapabilities();
