@@ -816,6 +816,43 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     void drainQueue();
   }, [drainQueue]);
 
+  const sendIntentResponse = useCallback(
+    async (assistantMsgId: string, intent: AgentIntent, response: IntentResponse) => {
+      // Lock the card on the carrier message so it can't be re-submitted.
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? {
+                ...m,
+                intentResponses: { ...(m.intentResponses || {}), [intent.id]: response },
+              }
+            : m,
+        ),
+      );
+      const { prompt, summary } = formatIntentResponse(response, intent);
+
+      // Send the prompt as the next user turn, but tag the resulting user
+      // message with `intentResponseSummary` so the UI can render the
+      // redacted summary instead of the raw JSON. We do this by patching
+      // the most recent user message after `sendMessage` enqueues it.
+      const beforeIds = new Set<string>();
+      // Capture current user-msg ids — we'll find the new one by diff.
+      setMessages((prev) => {
+        for (const m of prev) if (m.role === "user") beforeIds.add(m.id);
+        return prev;
+      });
+      await sendMessage(prompt);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.role === "user" && !beforeIds.has(m.id) && m.content === prompt.trim()
+            ? { ...m, intentResponseSummary: summary }
+            : m,
+        ),
+      );
+    },
+    [sendMessage],
+  );
+
   const stop = useCallback(async () => {
     stopRequestedRef.current = true;
     const sid = activeStreamIdRef.current;
