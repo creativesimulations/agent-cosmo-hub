@@ -5804,4 +5804,43 @@ model: ${options.model || 'openrouter/auto'}
     const w = await this.writeConfig(body);
     return { success: w.success, error: w.success ? undefined : (w.error || 'write failed') };
   },
+
+  /**
+   * Launch Hermes' own web dashboard.
+   *
+   * Hermes ships a built-in dashboard that owns deep config, key/session
+   * management, and gateway internals. We don't duplicate those — we delegate.
+   * The CLI typically prints a URL like `http://127.0.0.1:PORT` and (on most
+   * platforms) auto-opens the browser. We capture stdout briefly to extract
+   * the URL so the UI can also offer a manual link.
+   */
+  async launchHermesDashboard(): Promise<{
+    success: boolean;
+    cliAvailable: boolean;
+    url?: string;
+    error?: string;
+  }> {
+    if (!isElectron()) return { success: false, cliAvailable: false, error: 'Desktop only' };
+    // Probe `--help` first — quick check that the subcommand exists.
+    const help = await runHermesCli('hermes dashboard --help 2>&1', { timeout: 8000 }).catch(
+      () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+    );
+    const helpText = `${help.stdout || ''}\n${help.stderr || ''}`.toLowerCase();
+    if (!help.success && !/dashboard/.test(helpText)) {
+      return { success: false, cliAvailable: false, error: 'hermes dashboard subcommand not available' };
+    }
+    // Spawn the dashboard. Use a short timeout so we don't block — the
+    // dashboard itself runs as a long-lived server, but it usually prints
+    // the URL within a second or two.
+    const r = await runHermesCli('hermes dashboard 2>&1 & sleep 2; echo "RONBOT_DASHBOARD_PROBE_DONE"', {
+      timeout: 6000,
+    }).catch(() => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult));
+    const text = `${r.stdout || ''}\n${r.stderr || ''}`;
+    const urlMatch = text.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?[^\s'"`]*/i);
+    return {
+      success: true,
+      cliAvailable: true,
+      url: urlMatch?.[0],
+    };
+  },
 };

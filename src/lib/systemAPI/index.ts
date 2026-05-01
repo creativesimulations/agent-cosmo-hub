@@ -119,6 +119,7 @@ export const systemAPI = {
   getInsights: hermesAPI.getInsights.bind(hermesAPI),
   getBusyInputMode: hermesAPI.getBusyInputMode.bind(hermesAPI),
   setBusyInputMode: hermesAPI.setBusyInputMode.bind(hermesAPI),
+  launchHermesDashboard: hermesAPI.launchHermesDashboard.bind(hermesAPI),
   // Prereqs (extras)
   checkRipgrep: prereqAPI.checkRipgrep.bind(prereqAPI),
   installRipgrep: prereqAPI.installRipgrep.bind(prereqAPI),

@@ -121,7 +121,7 @@ const Dashboard = () => {
           <Button
             variant="ghost"
             className="text-primary hover:text-primary"
-            onClick={() => window.location.hash = "#/"}
+            onClick={() => window.location.hash = "#/install"}
           >
             Go to Setup
           </Button>
