@@ -298,7 +298,11 @@ const AgentChat = () => {
                     </p>
                   )}
                   {(!msg.queued || msg.role === "user" || msg.content) && (
-                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                    <p className="text-sm whitespace-pre-wrap">
+                      {msg.role === "user" && msg.intentResponseSummary
+                        ? msg.intentResponseSummary
+                        : msg.content}
+                    </p>
                   )}
                   {msg.streaming && (
                     <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
