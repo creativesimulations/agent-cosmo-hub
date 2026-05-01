@@ -10,6 +10,13 @@ import { detectToolUnavailable, type ToolUnavailableHit } from "@/lib/toolUnavai
 import { detectToolCalls } from "@/lib/toolUseDetection";
 import { useCapabilities } from "./CapabilitiesContext";
 import { capabilityProbe } from "@/lib/capabilityProbe";
+import {
+  IntentStreamParser,
+  splitIntentsFromText,
+  formatIntentResponse,
+  type AgentIntent,
+  type IntentResponse,
+} from "@/lib/agentIntents";
 
 /**
  * Chat is hoisted into a top-level context so:
