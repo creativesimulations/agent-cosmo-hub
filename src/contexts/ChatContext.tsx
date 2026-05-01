@@ -146,6 +146,16 @@ interface ChatContextValue {
   /** In-memory draft for the chat composer — survives tab switches but not app restarts. */
   draft: string;
   setDraft: (value: string) => void;
+  /**
+   * Reply to an agent intent. Stores the response on the carrier assistant
+   * message (so the card renders as locked) and posts a `ronbot-intent-response`
+   * turn back to the agent. The user-bubble shows a redacted summary.
+   */
+  sendIntentResponse: (
+    assistantMsgId: string,
+    intent: AgentIntent,
+    response: IntentResponse,
+  ) => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
