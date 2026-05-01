@@ -130,6 +130,26 @@ export interface DoneIntent extends IntentBase {
   message?: string;
 }
 
+/**
+ * Pairing-code approval. Used by Hermes channels that surface a one-time
+ * code the user must read off another device (Matrix, iMessage/BlueBubbles,
+ * Signal device link, etc.) and confirm. The agent renders the code and
+ * waits for the user to approve or reject — no QR scanning, no clipboard.
+ */
+export interface PairingApproveIntent extends IntentBase {
+  type: 'pairing_approve';
+  /** The pairing code to display prominently (e.g. "AB12-CD34"). */
+  pairingCode: string;
+  /** Optional channel/platform name shown in the header (e.g. "Matrix"). */
+  platform?: string;
+  /** Optional short instructions ("Enter this code on your phone…"). */
+  instructions?: string;
+  /** Button text for the approve action. Defaults to "Approve". */
+  approveLabel?: string;
+  /** Button text for the reject action. Defaults to "Reject". */
+  rejectLabel?: string;
+}
+
 export type AgentIntent =
   | CredentialRequestIntent
   | ConfirmIntent
@@ -138,7 +158,8 @@ export type AgentIntent =
   | OAuthOpenIntent
   | FilePickIntent
   | ProgressIntent
-  | DoneIntent;
+  | DoneIntent
+  | PairingApproveIntent;
 
 /** Reply the renderer posts back as a `ronbot-intent-response` block. */
 export interface IntentResponse {
@@ -212,6 +233,9 @@ export const validateIntent = (raw: unknown): AgentIntent => {
       return raw as unknown as ProgressIntent;
     case 'done':
       return raw as unknown as DoneIntent;
+    case 'pairing_approve':
+      if (!isStr(raw.pairingCode)) throw new Error('pairing_approve: pairingCode required');
+      return raw as unknown as PairingApproveIntent;
     default:
       throw new Error(`intent: unknown type "${String(raw.type)}"`);
   }
