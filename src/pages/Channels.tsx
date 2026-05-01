@@ -21,9 +21,22 @@ import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
 import { useCapabilities } from "@/contexts/CapabilitiesContext";
 import { invalidateCapabilityProbeCache } from "@/lib/capabilityProbe";
+import { useNavigate } from "react-router-dom";
+import { useChat } from "@/contexts/ChatContext";
+import { CAPABILITY_CATALOG } from "@/lib/capabilities/catalog";
+
+/**
+ * Channel ids that have been migrated to fully agent-driven setup. The
+ * Channels page no longer opens the ChannelWizard for these — instead it
+ * seeds a chat prompt and the agent drives the rest via the intent
+ * protocol. See .lovable/plan.md (Phase 3) for the rationale.
+ */
+const AGENT_DRIVEN_CHANNELS = new Set<string>(["slack"]);
 
 const ChannelsPage = () => {
   const { refreshProbes } = useCapabilities();
+  const navigate = useNavigate();
+  const { setDraft } = useChat();
   const [statuses, setStatuses] = useState<Record<string, ChannelStatus>>(() =>
     Object.fromEntries(CHANNELS.map((c) => [c.id, { state: "loading" } as ChannelStatus])),
   );
@@ -318,6 +331,16 @@ const ChannelsPage = () => {
       toast.info(`${channel.name} requires the ${channel.name} upgrade`, {
         description: "Scroll down to the Premium upgrades section to unlock it.",
       });
+      return;
+    }
+    // Agent-driven channels: hand off to chat. The agent emits intent cards
+    // (credentials, confirms, QR) inline — the app no longer owns a wizard.
+    if (AGENT_DRIVEN_CHANNELS.has(channel.id)) {
+      const entry = CAPABILITY_CATALOG.find((c) => c.id === channel.id);
+      const prompt =
+        entry?.setupPrompt ?? `Set up ${channel.name} so I can message you from ${channel.name}.`;
+      setDraft(prompt);
+      navigate("/chat");
       return;
     }
     if (channel.id === "whatsapp" && statuses[channel.id]?.state === "configured" && !whatsappResetPending) {
