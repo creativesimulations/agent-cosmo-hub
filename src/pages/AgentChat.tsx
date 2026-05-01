@@ -384,6 +384,24 @@ const AgentChat = () => {
                   {msg.usedCapabilities && msg.usedCapabilities.length > 0 && msg.role === "assistant" && !msg.streaming && (
                     <CapabilityChips capabilityIds={msg.usedCapabilities} />
                   )}
+                  {msg.intents && msg.intents.length > 0 && msg.role === "assistant" && (
+                    <div className="mt-2 space-y-2 -mx-1">
+                      {msg.intents.map((intent) => {
+                        const previousResponse = msg.intentResponses?.[intent.id];
+                        return (
+                          <IntentCard
+                            key={intent.id}
+                            intent={intent}
+                            responded={!!previousResponse}
+                            previousResponse={previousResponse}
+                            onRespond={(response) => {
+                              void sendIntentResponse(msg.id, intent, response);
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
                   {msg.diagnostics && (msg.missingKey || msg.materializeFailed || msg.content.startsWith("Error") || msg.content.startsWith("Failed")) && (
                     <details className="mt-2 text-[11px] text-muted-foreground/70">
                       <summary className="cursor-pointer hover:text-muted-foreground">Diagnostics</summary>
