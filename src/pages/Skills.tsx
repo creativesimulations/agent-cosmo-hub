@@ -21,6 +21,7 @@ import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 import BrowserBackendBadge from "@/components/skills/BrowserBackendBadge";
 import ActionableError from "@/components/ui/ActionableError";
 import { getUpgrade, isUpgradeUnlocked } from "@/lib/licenses";
+import { cn } from "@/lib/utils";
 
 type Skill = {
   name: string;
