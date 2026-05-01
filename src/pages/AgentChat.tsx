@@ -494,6 +494,12 @@ const AgentChat = () => {
               if (input.startsWith("/")) setInput(input.slice(1));
             }}
           />
+          {backgroundMode && (
+            <div className="mb-2 px-3 py-1.5 rounded-md border border-accent/30 bg-accent/10 text-[11px] text-accent flex items-center gap-2">
+              <Moon className="w-3 h-3" />
+              Next message will run as a background task. Toggle off above to send normally.
+            </div>
+          )}
           <form
             onSubmit={(e) => { e.preventDefault(); void handleSend(); }}
             className="flex gap-2 items-end"
