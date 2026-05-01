@@ -273,6 +273,50 @@ const SettingsPage = () => {
     };
   }, [agentConnected]);
 
+  // Load profiles + busy-input mode once the agent is connected. Both are
+  // best-effort: profiles falls back to ["default"], busy-input falls back
+  // to "queue" if the config block isn't present.
+  useEffect(() => {
+    if (!agentConnected) return;
+    let cancelled = false;
+    void (async () => {
+      setProfilesLoading(true);
+      const [pr, mode] = await Promise.all([
+        systemAPI.listProfiles(),
+        systemAPI.getBusyInputMode(),
+      ]);
+      if (cancelled) return;
+      setProfiles(pr.profiles);
+      setProfilesCliAvailable(pr.cliAvailable);
+      setBusyInputMode(mode);
+      setProfilesLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [agentConnected]);
+
+  const handleBusyInputModeChange = async (next: "queue" | "interrupt" | "steer") => {
+    setBusyInputSaving(true);
+    const prev = busyInputMode;
+    setBusyInputMode(next); // optimistic
+    const r = await systemAPI.setBusyInputMode(next);
+    setBusyInputSaving(false);
+    if (r.success) {
+      setSettingsError("");
+      toast.success(`Typing while busy: ${next}`, {
+        description:
+          next === "queue"
+            ? "New messages will queue and run after the current reply."
+            : next === "interrupt"
+              ? "New messages will interrupt the current reply."
+              : "New messages will steer the current reply mid-flight.",
+      });
+    } else {
+      setBusyInputMode(prev);
+      setSettingsError(r.error || "Could not save busy-input mode");
+      toast.error("Couldn't save", { description: r.error });
+    }
+  };
+
   const handleSaveName = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
