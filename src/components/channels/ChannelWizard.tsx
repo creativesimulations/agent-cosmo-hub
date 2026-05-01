@@ -103,6 +103,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [testResult, setTestResult] = useState<"idle" | "ok" | "fail">("idle");
   const [testError, setTestError] = useState<string>("");
   const [formError, setFormError] = useState<string>("");
+  const [waUnauthorizedSenders, setWaUnauthorizedSenders] = useState<string[]>([]);
+  const [waAuthorizing, setWaAuthorizing] = useState(false);
 
   /** WhatsApp: session folder probe + in-app QR stream */
   const [waPairedChecked, setWaPairedChecked] = useState(false);
