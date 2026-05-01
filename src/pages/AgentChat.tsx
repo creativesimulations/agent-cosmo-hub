@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 
 import { IntentCard } from "@/components/intents";
 import ChatEmptyState from "@/components/chat/ChatEmptyState";
+import SlashCommandPalette from "@/components/chat/SlashCommandPalette";
 
 const AgentChat = () => {
   const { connected: agentConnected } = useAgentConnection();
