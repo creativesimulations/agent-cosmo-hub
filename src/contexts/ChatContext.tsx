@@ -11,7 +11,6 @@ import { detectToolCalls } from "@/lib/toolUseDetection";
 import { useCapabilities } from "./CapabilitiesContext";
 import { capabilityProbe } from "@/lib/capabilityProbe";
 import {
-  IntentStreamParser,
   splitIntentsFromText,
   formatIntentResponse,
   type AgentIntent,
