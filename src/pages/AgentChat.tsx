@@ -44,6 +44,7 @@ const AgentChat = () => {
     startNewSession,
     draft,
     setDraft,
+    sendIntentResponse,
   } = useChat();
   const input = draft;
   const setInput = setDraft;
