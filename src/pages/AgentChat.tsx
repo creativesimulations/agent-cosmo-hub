@@ -424,7 +424,17 @@ const AgentChat = () => {
           </div>
         )}
 
-        <div className="p-4 border-t border-white/5">
+        <div className="p-4 border-t border-white/5 relative">
+          <SlashCommandPalette
+            value={input}
+            onPick={(prompt) => {
+              setInput(prompt);
+              textareaRef.current?.focus();
+            }}
+            onDismiss={() => {
+              if (input.startsWith("/")) setInput(input.slice(1));
+            }}
+          />
           <form
             onSubmit={(e) => { e.preventDefault(); void handleSend(); }}
             className="flex gap-2 items-end"
@@ -437,8 +447,8 @@ const AgentChat = () => {
               placeholder={
                 agentConnected
                   ? isStreaming || queuedCount > 0
-                    ? "Type to queue another message…  (Shift+Enter for newline)"
-                    : "Message your agent…  (Shift+Enter for newline)"
+                    ? "Type to queue another message…  (Shift+Enter for newline · / for shortcuts)"
+                    : "Message your agent…  (Shift+Enter for newline · / for shortcuts)"
                   : "Agent not connected"
               }
               className="bg-background/50 border-white/10 focus:border-primary/50 flex-1 min-h-[44px] max-h-[200px] resize-none py-2.5"
