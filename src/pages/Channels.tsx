@@ -31,7 +31,13 @@ import { CAPABILITY_CATALOG } from "@/lib/capabilities/catalog";
  * seeds a chat prompt and the agent drives the rest via the intent
  * protocol. See .lovable/plan.md (Phase 3) for the rationale.
  */
-const AGENT_DRIVEN_CHANNELS = new Set<string>(["slack"]);
+const AGENT_DRIVEN_CHANNELS = new Set<string>([
+  "slack",
+  "telegram",
+  "discord",
+  "signal",
+  "whatsapp",
+]);
 
 const ChannelsPage = () => {
   const { refreshProbes } = useCapabilities();
