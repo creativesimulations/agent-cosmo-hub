@@ -35,6 +35,8 @@ const AGENT_DRIVEN_CHANNELS = new Set<string>(["slack"]);
 
 const ChannelsPage = () => {
   const { refreshProbes } = useCapabilities();
+  const navigate = useNavigate();
+  const { setDraft } = useChat();
   const [statuses, setStatuses] = useState<Record<string, ChannelStatus>>(() =>
     Object.fromEntries(CHANNELS.map((c) => [c.id, { state: "loading" } as ChannelStatus])),
   );
