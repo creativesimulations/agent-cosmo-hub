@@ -17,6 +17,7 @@ import {
   Bot,
   Network,
   CalendarClock,
+  BarChart3,
 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import NotificationCenter from "@/components/NotificationCenter";
@@ -37,6 +38,7 @@ const advancedNavItems = [
   { path: "/skills", icon: Sparkles, label: "Skills & Tools" },
   { path: "/mcp", icon: Network, label: "MCP Servers" },
   { path: "/scheduled", icon: CalendarClock, label: "Scheduled" },
+  { path: "/insights", icon: BarChart3, label: "Insights" },
   { path: "/models", icon: Cpu, label: "LLM Config" },
   { path: "/secrets", icon: KeyRound, label: "Secrets" },
   { path: "/agents", icon: Bot, label: "Sub-Agents" },
