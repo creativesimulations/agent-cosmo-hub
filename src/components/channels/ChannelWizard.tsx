@@ -1670,7 +1670,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 <div className="rounded-lg border border-border/60 bg-background/30 p-4 space-y-4">
                   <div className="space-y-1">
                     <Label htmlFor="wa-phone-e164" className="text-xs">
-                      Allowed WhatsApp numbers (E.164, comma-separated) <span className="text-destructive">*</span>
+                      Allowed WhatsApp senders <span className="text-destructive">*</span>
                     </Label>
                     <Input
                       id="wa-phone-e164"
@@ -1678,16 +1678,19 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                       inputMode="text"
                       value={values.WHATSAPP_ALLOWED_USERS || ""}
                       onChange={(e) => {
-                        const raw = e.target.value.replace(/[^\d,\s]/g, "");
+                        // Allow digits, comma, whitespace, '@', '.', and lowercase letters
+                        // so users can paste JIDs like 112966246649933@lid or
+                        // 15551234567@s.whatsapp.net alongside plain E.164 numbers.
+                        const raw = e.target.value.replace(/[^\d,\s@.a-z]/gi, "");
                         setValues((v) => ({ ...v, WHATSAPP_ALLOWED_USERS: raw }));
                       }}
-                      placeholder="15551234567,447700900123"
+                      placeholder="15551234567,112966246649933@lid"
                       autoComplete="off"
                       spellCheck={false}
                       className="bg-background/50 font-mono text-sm"
                     />
                     <p className="text-[11px] text-muted-foreground">
-                      Digits only per number (country code first, no +). Use commas to allow multiple numbers.
+                      E.164 digits (no +), or a WhatsApp JID like <code className="font-mono">112966246649933@lid</code> or <code className="font-mono">15551234567@s.whatsapp.net</code>. Comma-separated.
                     </p>
                   </div>
                 </div>
