@@ -675,6 +675,89 @@ const SettingsPage = () => {
         </div>
       </SettingsSection>
 
+      {/* ─── Profiles ───────────────────────────────────────────── */}
+      {agentConnected && (
+        <SettingsSection icon={Users} title="Profiles">
+          <p className="text-sm text-muted-foreground">
+            Profiles are isolated agent instances — each has its own config, secrets, and skills.
+            Useful when you want a personal agent and a separate work one. Switching profiles is
+            done from chat so the agent can hand off cleanly.
+          </p>
+          {profilesLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-3">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading profiles…
+            </div>
+          ) : !profilesCliAvailable ? (
+            <div className="text-xs text-muted-foreground py-2">
+              Your installed agent doesn't expose the profiles CLI yet. You're running the default
+              profile. To set up another, ask the agent in chat — it'll create the new profile
+              directory and copy your starter config.
+            </div>
+          ) : (
+            <div className="space-y-2 -mt-1">
+              {profiles.map((p) => (
+                <div
+                  key={p.name}
+                  className={cn(
+                    "flex items-center justify-between gap-3 px-3 py-2 rounded-md border",
+                    p.active
+                      ? "border-primary/40 bg-primary/10"
+                      : "border-border bg-background/30",
+                  )}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Users className={cn("w-4 h-4 shrink-0", p.active ? "text-primary" : "text-muted-foreground")} />
+                    <span className="text-sm font-medium text-foreground truncate">{p.name}</span>
+                    {p.active && (
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-primary">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <p className="text-[11px] text-muted-foreground pt-1">
+                Need to create or switch profiles? Ask the agent — e.g. "create a 'work' profile and
+                switch to it".
+              </p>
+            </div>
+          )}
+        </SettingsSection>
+      )}
+
+      {/* ─── Busy-input mode ───────────────────────────────────── */}
+      {agentConnected && (
+        <SettingsSection icon={Keyboard} title="Typing while the agent is busy">
+          <p className="text-sm text-muted-foreground">
+            What should happen when you send a new message while the agent is still replying?
+          </p>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Behavior</Label>
+            <Select
+              value={busyInputMode}
+              onValueChange={(v) => void handleBusyInputModeChange(v as "queue" | "interrupt" | "steer")}
+              disabled={busyInputSaving}
+            >
+              <SelectTrigger className="w-full sm:w-72 bg-background/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="queue">Queue (run after the current reply)</SelectItem>
+                <SelectItem value="interrupt">Interrupt (cancel the current reply)</SelectItem>
+                <SelectItem value="steer">Steer (inject the new message mid-reply)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {busyInputMode === "queue"
+                ? "Default. Your new message waits its turn — nothing is lost."
+                : busyInputMode === "interrupt"
+                  ? "The agent stops what it's doing and starts the new message immediately."
+                  : "Power-user mode. The agent reads your new message while still replying and tries to incorporate it."}
+            </p>
+          </div>
+        </SettingsSection>
+      )}
+
       {/* ─── Advanced ───────────────────────────────────────────── */}
       <SettingsSection icon={AlertTriangle} title="Advanced">
         <div className="-mt-2">
