@@ -14,6 +14,7 @@ import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
 import type { Channel } from "@/lib/channels";
+import { isValidWhatsAppAllowEntry } from "@/lib/channels";
 import ActionableError from "@/components/ui/ActionableError";
 import { useSudoPrompt } from "@/contexts/SudoPromptContext";
 import { useCapabilities } from "@/contexts/CapabilitiesContext";
@@ -43,8 +44,8 @@ const normalizeAllowedUsers = (value: string): string =>
     .sort()
     .join(",");
 
-/** E.164: country code first, 7–15 digits total, no +. */
-const E164_PHONE_ONLY = /^[1-9]\d{6,14}$/;
+/** Validate a single WhatsApp allowlist entry (E.164 digits OR @lid / @s.whatsapp.net JID). */
+const isWaAllowEntryValid = (s: string): boolean => isValidWhatsAppAllowEntry(s);
 
 const stripAnsiLike = (value: string): string => {
   const ESC = String.fromCharCode(27);
@@ -100,6 +101,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
   const [testResult, setTestResult] = useState<"idle" | "ok" | "fail">("idle");
   const [testError, setTestError] = useState<string>("");
   const [formError, setFormError] = useState<string>("");
+  const [waUnauthorizedSenders, setWaUnauthorizedSenders] = useState<string[]>([]);
+  const [waAuthorizing, setWaAuthorizing] = useState(false);
 
   /** WhatsApp: session folder probe + in-app QR stream */
   const [waPairedChecked, setWaPairedChecked] = useState(false);
@@ -282,7 +285,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     const raw = (values.WHATSAPP_ALLOWED_USERS || "").trim();
     const entries = raw.split(",").map((p) => p.trim()).filter(Boolean);
     if (entries.length === 0) return false;
-    return base && entries.every((n) => E164_PHONE_ONLY.test(n));
+    return base && entries.every((n) => isWaAllowEntryValid(n));
   }, [channel.credentials, channel.id, values]);
   const waModeCurrent = (values.WHATSAPP_MODE || "").trim();
   const waAllowedUsersCurrent = normalizeAllowedUsers(values.WHATSAPP_ALLOWED_USERS || "");
@@ -445,9 +448,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           .split(",")
           .map((p) => p.trim())
           .filter(Boolean);
-        if (entries.length === 0 || !entries.every((n) => E164_PHONE_ONLY.test(n))) {
+        if (entries.length === 0 || !entries.every((n) => isWaAllowEntryValid(n))) {
           const msg =
-            "Enter one or more E.164 numbers (digits only, country code first), comma-separated. Example: 15551234567,447700900123";
+            "Enter one or more allowed senders, comma-separated. Each entry must be E.164 digits (e.g. 15551234567) or a WhatsApp JID (e.g. 112966246649933@lid or 15551234567@s.whatsapp.net).";
           setFormError(msg);
           toast.error("Valid allowlist required", { description: msg });
           return false;
@@ -1290,6 +1293,77 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   };
 
+  // When a WhatsApp finalize error is shown, scan recent gateway/bridge
+  // logs for "Unauthorized user: <jid>" entries that aren't already in
+  // the allowlist — surface them so the user can authorize with one click.
+  useEffect(() => {
+    if (channel.id !== "whatsapp" || !formError) {
+      setWaUnauthorizedSenders([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await systemAPI.findUnauthorizedWhatsAppSenders(400);
+        if (cancelled || !r.success) return;
+        const current = new Set(
+          (values.WHATSAPP_ALLOWED_USERS || "")
+            .split(",")
+            .map((p) => p.trim())
+            .filter(Boolean),
+        );
+        const fresh = r.senders.filter((s) => !current.has(s));
+        setWaUnauthorizedSenders(fresh);
+      } catch {
+        /* non-fatal */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [channel.id, formError, values.WHATSAPP_ALLOWED_USERS]);
+
+  const authorizeUnauthorizedSenders = async () => {
+    if (waUnauthorizedSenders.length === 0 || waAuthorizing) return;
+    setWaAuthorizing(true);
+    try {
+      const existing = (values.WHATSAPP_ALLOWED_USERS || "")
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean);
+      const merged = Array.from(new Set([...existing, ...waUnauthorizedSenders]));
+      const next = merged.join(",");
+      const ok = await systemAPI.secrets.set("WHATSAPP_ALLOWED_USERS", next);
+      if (!ok) {
+        toast.error("Failed to update allowlist");
+        return;
+      }
+      setValues((v) => ({ ...v, WHATSAPP_ALLOWED_USERS: next }));
+      await systemAPI.ensureWhatsAppRuntimeSecrets().catch(() => undefined);
+      await systemAPI.materializeEnv().catch(() => undefined);
+      await systemAPI.stopGateway().catch(() => undefined);
+      const start = await systemAPI.startGateway().catch((e) => ({
+        success: false,
+        stdout: "",
+        stderr: e instanceof Error ? e.message : String(e),
+        code: 1,
+      }));
+      if (start.success) {
+        toast.success("Authorized — gateway restarted", {
+          description: `Added ${waUnauthorizedSenders.length} sender(s) to the allowlist.`,
+        });
+        setFormError("");
+        setWaUnauthorizedSenders([]);
+      } else {
+        toast.error("Gateway restart failed", {
+          description: (start.stderr || "").split("\n")[0] || "See gateway logs.",
+        });
+      }
+    } finally {
+      setWaAuthorizing(false);
+    }
+  };
+
   useEffect(() => {
     if (!waPairingActive) return;
     const timer = window.setInterval(() => {
@@ -1535,6 +1609,44 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           />
         )}
 
+        {formError && channel.id === "whatsapp" && waUnauthorizedSenders.length > 0 && (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+              <div className="space-y-1 flex-1 min-w-0">
+                <p className="text-xs font-medium text-foreground">
+                  Unrecognised WhatsApp sender detected
+                </p>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Hermes rejected message(s) from the following sender(s) because they're not in
+                  your allowlist. Click below to add them and restart the gateway.
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {waUnauthorizedSenders.map((s) => (
+                    <li key={s} className="font-mono text-[11px] text-foreground/90 break-all">
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              disabled={waAuthorizing}
+              onClick={authorizeUnauthorizedSenders}
+            >
+              {waAuthorizing ? (
+                <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> Authorizing…</>
+              ) : (
+                <>Authorize {waUnauthorizedSenders.length === 1 ? "this sender" : `these ${waUnauthorizedSenders.length} senders`}</>
+              )}
+            </Button>
+          </div>
+        )}
+
         {formError && waOtherGatewayLogs.length > 0 && (
           <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2 text-xs">
             <button
@@ -1667,7 +1779,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                 <div className="rounded-lg border border-border/60 bg-background/30 p-4 space-y-4">
                   <div className="space-y-1">
                     <Label htmlFor="wa-phone-e164" className="text-xs">
-                      Allowed WhatsApp numbers (E.164, comma-separated) <span className="text-destructive">*</span>
+                      Allowed WhatsApp senders <span className="text-destructive">*</span>
                     </Label>
                     <Input
                       id="wa-phone-e164"
@@ -1675,16 +1787,19 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
                       inputMode="text"
                       value={values.WHATSAPP_ALLOWED_USERS || ""}
                       onChange={(e) => {
-                        const raw = e.target.value.replace(/[^\d,\s]/g, "");
+                        // Allow digits, comma, whitespace, '@', '.', and lowercase letters
+                        // so users can paste JIDs like 112966246649933@lid or
+                        // 15551234567@s.whatsapp.net alongside plain E.164 numbers.
+                        const raw = e.target.value.replace(/[^\d,\s@.a-z]/gi, "");
                         setValues((v) => ({ ...v, WHATSAPP_ALLOWED_USERS: raw }));
                       }}
-                      placeholder="15551234567,447700900123"
+                      placeholder="15551234567,112966246649933@lid"
                       autoComplete="off"
                       spellCheck={false}
                       className="bg-background/50 font-mono text-sm"
                     />
                     <p className="text-[11px] text-muted-foreground">
-                      Digits only per number (country code first, no +). Use commas to allow multiple numbers.
+                      E.164 digits (no +), or a WhatsApp JID like <code className="font-mono">112966246649933@lid</code> or <code className="font-mono">15551234567@s.whatsapp.net</code>. Comma-separated.
                     </p>
                   </div>
                 </div>

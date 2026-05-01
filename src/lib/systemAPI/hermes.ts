@@ -187,6 +187,127 @@ async function ensureHermesChatCaps(): Promise<void> {
 }
 
 
+/**
+ * Python source that rewrites the installed Hermes WhatsApp adapter so the
+ * bridge launches via the managed Node shim instead of bare `node`.
+ *
+ * Authored as a normal multi-line JS template literal — real newlines, real
+ * quotes, no `\\s` / `\\[` gymnastics — and shipped to the runtime as a
+ * base64-encoded payload (decoded into a temp file before `python3` runs
+ * it). This avoids three layers of shell + heredoc + cmd.exe escaping that
+ * previously corrupted the regex literals.
+ *
+ * Exported so unit tests can `python3 -c "compile(open(p).read(),p,'exec')"`
+ * the source without having to run the full shell pipeline.
+ */
+export const WHATSAPP_ADAPTER_PATCH_PY = `import sys, re, pathlib
+
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+
+PATCH_MARKER = "RONBOT_NODE_BIN_PATCH_V5"
+
+helper = (
+    "\\n# " + PATCH_MARKER + ": prefer managed Node for both adapter preflight and bridge launch\\n"
+    "def _ronbot_node_bin():\\n"
+    "    import os, shutil\\n"
+    "    for env_key in ('WHATSAPP_NODE_BIN', 'NODE_BIN', 'HERMES_NODE_BIN', 'NODE'):\\n"
+    "        v = os.environ.get(env_key)\\n"
+    "        if v and os.path.isfile(v):\\n"
+    "            return v\\n"
+    "    home = os.path.expanduser('~')\\n"
+    "    shim = os.path.join(home, '.hermes', 'bin', 'node')\\n"
+    "    if os.path.isfile(shim):\\n"
+    "        return shim\\n"
+    "    found = shutil.which('node')\\n"
+    "    return found or 'node'\\n"
+)
+
+# 1) Insert the helper (after the leading module docstring if any).
+if "def _ronbot_node_bin():" not in src:
+    m = re.search(r'(?ms)^(\\s*"""[\\s\\S]*?"""\\s*\\n)', src)
+    insert_at = m.end() if m else 0
+    src = src[:insert_at] + helper + src[insert_at:]
+
+# 2) Rewrite every literal "node" token used to launch the runtime.
+#    a) subprocess.run(["node", "--version", ...])
+#    b) subprocess.Popen(["node", bridge_path, ...])
+#    c) subprocess.run("node", ...)  (rare, but keep parity with prior patch)
+def _replace_list_node(match):
+    quote = match.group(1)
+    return match.group(0).replace(quote + "node" + quote, "_ronbot_node_bin()")
+
+src2, n_list = re.subn(
+    r'subprocess\\.(?:Popen|run)\\(\\s*\\[\\s*([\\'"])node\\1',
+    _replace_list_node,
+    src,
+)
+
+def _replace_str_node(match):
+    quote = match.group(1)
+    return match.group(0).replace(quote + "node" + quote, "_ronbot_node_bin()")
+
+src2, n_str = re.subn(
+    r'subprocess\\.(?:Popen|run)\\(\\s*([\\'"])node\\1',
+    _replace_str_node,
+    src2,
+)
+
+# Defensive: bare ["node", ...] literals not preceded by subprocess.* but
+# still passed to a launcher in some adapter variants.
+src2, n_bare = re.subn(
+    r'\\[\\s*([\\'"])node\\1\\s*,',
+    lambda mm: '[_ronbot_node_bin(),',
+    src2,
+)
+
+total = n_list + n_str + n_bare
+if total == 0 and "_ronbot_node_bin()" not in src2:
+    sys.stderr.write("no node launch literal found\\n")
+    sys.exit(2)
+
+# 3) Stamp the marker so subsequent runs detect the V5 patch.
+if PATCH_MARKER not in src2:
+    src2 = re.sub(
+        r'RONBOT_NODE_BIN_PATCH(?:_V\\d+)?',
+        PATCH_MARKER,
+        src2,
+        count=1,
+    )
+    if PATCH_MARKER not in src2:
+        src2 = "# " + PATCH_MARKER + "\\n" + src2
+
+# 4) Verify call sites actually exist before writing.
+if "_ronbot_node_bin()" not in src2:
+    sys.stderr.write("patch produced no call sites\\n")
+    sys.exit(3)
+
+p.write_text(src2)
+print("PATCH_OK total=" + str(total))
+`;
+
+/**
+ * Extract unique WhatsApp sender identifiers (E.164 digits or JIDs) from
+ * gateway/bridge log text emitted as `Unauthorized user: <jid>` warnings.
+ *
+ * Pure function — exported so unit tests can validate it without mocking
+ * the runtime. Preserves first-seen order and de-duplicates.
+ */
+export const parseUnauthorizedWhatsAppSenders = (logText: string): string[] => {
+  if (!logText) return [];
+  const re = /Unauthorized user:\s*([A-Za-z0-9.@_-]+)/g;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(logText)) !== null) {
+    const id = (m[1] || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+};
+
 const runHermesShell = async (
   script: string,
   options?: Record<string, unknown> & { onStreamId?: (id: string) => void; displayCommand?: string },
@@ -1906,6 +2027,20 @@ export const hermesAPI = {
         return failed;
       }
     }
+    // If WhatsApp is opted in (allowlist set OR previously enabled), make
+    // sure WHATSAPP_ENABLED / WHATSAPP_MODE / WHATSAPP_DEBUG are present in
+    // the secrets store BEFORE materializeHermesEnv writes them out — older
+    // wizard runs sometimes left these blank, producing a gateway that
+    // started without ever creating the WhatsApp adapter.
+    try {
+      const allow = (await secretsStore.get('WHATSAPP_ALLOWED_USERS')).trim();
+      const enabledSecret = (await secretsStore.get('WHATSAPP_ENABLED')).trim();
+      if (allow.length > 0 || enabledSecret.toLowerCase() === 'true') {
+        await this.ensureWhatsAppRuntimeSecrets().catch(() => undefined);
+      }
+    } catch {
+      /* non-fatal */
+    }
     await materializeHermesEnv();
     const env = await this.readEnvFile().catch(() => ({} as Record<string, string>));
     if ((env.WHATSAPP_ENABLED || '').trim().toLowerCase() === 'true') {
@@ -2303,7 +2438,66 @@ export const hermesAPI = {
     return { success: r.success, content: content || '(no bridge log files found yet)', error: r.success ? undefined : r.stderr };
   },
 
-  /** Stop the messaging gateway */
+  /**
+   * Scan recent gateway + bridge log files for `Unauthorized user: <jid>`
+   * lines and return the unique JIDs / numbers Hermes rejected. The wizard
+   * uses this to surface a one-click "Authorize this sender" action when
+   * finalize fails because the user's own WhatsApp identifier (e.g. an
+   * `@lid` JID) is not in `WHATSAPP_ALLOWED_USERS`.
+   */
+  async findUnauthorizedWhatsAppSenders(maxLines = 400): Promise<{
+    success: boolean;
+    senders: string[];
+    error?: string;
+  }> {
+    const tail = await this.readWhatsAppBridgeLogTail(maxLines).catch((e) => ({
+      success: false,
+      content: '',
+      error: e instanceof Error ? e.message : String(e),
+    }));
+    if (!tail.success) {
+      return { success: false, senders: [], error: tail.error || 'failed to read bridge logs' };
+    }
+    return { success: true, senders: parseUnauthorizedWhatsAppSenders(tail.content || '') };
+  },
+
+  /**
+   * Defensive writer: makes sure `WHATSAPP_ENABLED`, `WHATSAPP_MODE`, and
+   * `WHATSAPP_DEBUG` are present in the secrets store before the gateway
+   * starts (and therefore before `materializeHermesEnv` writes them out
+   * to `~/.hermes/.env`). Never overrides a non-empty existing value
+   * except `WHATSAPP_ENABLED`, which is always forced to `true` here
+   * because this helper only runs when WhatsApp is being opted in.
+   *
+   * Leaves `WHATSAPP_ALLOWED_USERS` untouched if non-empty.
+   */
+  async ensureWhatsAppRuntimeSecrets(opts?: { mode?: string }): Promise<{
+    success: boolean;
+    wrote: string[];
+    error?: string;
+  }> {
+    const wrote: string[] = [];
+    try {
+      const get = async (k: string) => (await secretsStore.get(k)).trim();
+      const enabled = await get('WHATSAPP_ENABLED');
+      if (enabled.toLowerCase() !== 'true') {
+        if (await secretsStore.set('WHATSAPP_ENABLED', 'true')) wrote.push('WHATSAPP_ENABLED');
+      }
+      const mode = await get('WHATSAPP_MODE');
+      if (!mode) {
+        const next = (opts?.mode || 'self-chat').trim() || 'self-chat';
+        if (await secretsStore.set('WHATSAPP_MODE', next)) wrote.push('WHATSAPP_MODE');
+      }
+      const dbg = await get('WHATSAPP_DEBUG');
+      if (!dbg) {
+        if (await secretsStore.set('WHATSAPP_DEBUG', 'true')) wrote.push('WHATSAPP_DEBUG');
+      }
+      return { success: true, wrote };
+    } catch (e) {
+      return { success: false, wrote, error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+
   async stopGateway(): Promise<CommandResult> {
     agentLogs.push({ source: 'gateway', level: 'info', summary: 'Stopping messaging gateway…' });
     const r = await runHermesCli(
@@ -3250,9 +3444,15 @@ export const hermesAPI = {
     error?: string;
   }> {
     if (!isElectron()) return { success: true, patched: false };
+    // Ship the Python patcher as a base64 blob so its regex literals don't
+    // have to survive bash heredoc + cmd.exe + JS-string escaping.
+    const patcherB64 = encodeScript(WHATSAPP_ADAPTER_PATCH_PY);
     const r = await runHermesShell(
       [
         'set +e',
+        `PATCH_B64=${JSON.stringify(patcherB64)}`,
+        'PATCHER="$(mktemp -t ronbot-wa-patch.XXXXXX.py 2>/dev/null || echo "/tmp/ronbot-wa-patch.$$.py")"',
+        'echo "$PATCH_B64" | base64 -d > "$PATCHER" || { echo "PATCH_DECODE_FAILED"; exit 0; }',
         'CANDIDATES=""',
         'for cand in "$HOME/.hermes/hermes-agent/gateway/platforms/whatsapp.py" "$HOME/.hermes/venv/lib"/python*/site-packages/gateway/platforms/whatsapp.py "$HOME/.hermes/venv/src"/*/gateway/platforms/whatsapp.py; do',
         '  [ -f "$cand" ] || continue',
@@ -3264,66 +3464,46 @@ export const hermesAPI = {
         'done <<EOF_FIND',
         '$(find "$HOME/.hermes" -path "*/gateway/platforms/whatsapp.py" -type f 2>/dev/null)',
         'EOF_FIND',
-        '[ -n "$CANDIDATES" ] || { echo "ADAPTER_NOT_FOUND"; exit 0; }',
+        '[ -n "$CANDIDATES" ] || { echo "ADAPTER_NOT_FOUND"; rm -f "$PATCHER"; exit 0; }',
         'PATCHED_PATHS=""',
         'FAILED_PATHS=""',
         'for F in $CANDIDATES; do',
         '  echo "ADAPTER_PATH=$F"',
-        '  if grep -q "RONBOT_NODE_BIN_PATCH_V4" "$F"; then PATCHED_PATHS="$PATCHED_PATHS $F"; continue; fi',
+        // V5 marker AND verified call sites must both be present to skip.
+        '  if grep -q "RONBOT_NODE_BIN_PATCH_V5" "$F" && grep -q "_ronbot_node_bin()" "$F"; then PATCHED_PATHS="$PATCHED_PATHS $F"; continue; fi',
         '  cp "$F" "$F.ronbot.bak" 2>/dev/null || true',
-        '  python3 - "$F" <<\'PY\'',
-        'import sys, re, pathlib',
-        'p = pathlib.Path(sys.argv[1])',
-        'src = p.read_text()',
-        'helper = (',
-        '"\\n# RONBOT_NODE_BIN_PATCH_V4: prefer managed Node for both adapter preflight and bridge launch\\n"',
-        '"def _ronbot_node_bin():\\n"',
-        '"    import os, shutil\\n"',
-        '"    for env_key in (\\"WHATSAPP_NODE_BIN\\", \\"NODE_BIN\\", \\"HERMES_NODE_BIN\\", \\"NODE\\"):\\n"',
-        '"        v = os.environ.get(env_key)\\n"',
-        '"        if v and os.path.isfile(v):\\n"',
-        '"            return v\\n"',
-        '"    home = os.path.expanduser(\\"~\\")\\n"',
-        '"    shim = os.path.join(home, \\".hermes\\", \\"bin\\", \\"node\\")\\n"',
-        '"    if os.path.isfile(shim):\\n"',
-        '"        return shim\\n"',
-        '"    found = shutil.which(\\"node\\")\\n"',
-        '"    return found or \\"node\\"\\n"',
-        ')',
-        'if "def _ronbot_node_bin():" not in src:',
-        '    m = re.search(r"(?ms)^(\\s*\\"\\"\\".*?\\"\\"\\"\\s*\\n)", src)',
-        '    insert_at = m.end() if m else 0',
-        '    src = src[:insert_at] + helper + src[insert_at:]',
-        '# Replace both the adapter preflight and bridge launch so the adapter does not reject WhatsApp before launch.',
-        'src2 = re.sub(r"subprocess\\.run\\(\\s*\\[\\s*([\'\"])(?:node)\\1\\s*,\\s*([\'\"])(?:--version)\\2", "subprocess.run([_ronbot_node_bin(), \\\"--version\\\"", src)',
-        'src2, n1 = re.subn(r"\\[\\s*([\'\"])(?:node)\\1\\s*,", "[_ronbot_node_bin(),", src2)',
-        'src2, n2 = re.subn(r"subprocess\\.(?:Popen|run)\\(\\s*([\'\"])(?:node)\\1\\s*,", lambda m: m.group(0).replace(m.group(1)+"node"+m.group(1), "_ronbot_node_bin()"), src2)',
-        'if (n1 + n2) == 0 and "_ronbot_node_bin()," not in src2:',
-        '    sys.stderr.write("no node launch literal found\\n")',
-        '    sys.exit(2)',
-        'if "RONBOT_NODE_BIN_PATCH_V4" not in src2:',
-        '    if "RONBOT_NODE_BIN_PATCH" in src2:',
-        '        src2 = re.sub(r"RONBOT_NODE_BIN_PATCH(?:_V\\d+)?", "RONBOT_NODE_BIN_PATCH_V4", src2, count=1)',
-        '    else:',
-        '        src2 = "# RONBOT_NODE_BIN_PATCH_V4\\n" + src2',
-        'p.write_text(src2)',
-        'PY',
+        '  PATCH_OUT="$(python3 "$PATCHER" "$F" 2>&1)"',
         '  PATCH_RC=$?',
-        '  if [ "$PATCH_RC" -eq 0 ]; then PATCHED_PATHS="$PATCHED_PATHS $F"; else FAILED_PATHS="$FAILED_PATHS $F"; fi',
+        '  if [ "$PATCH_RC" -ne 0 ]; then',
+        '    echo "PATCH_STDERR=$PATCH_OUT"',
+        '    FAILED_PATHS="$FAILED_PATHS $F"',
+        '    continue',
+        '  fi',
+        // Independently verify call sites exist post-write.
+        '  if ! grep -q "_ronbot_node_bin()" "$F"; then',
+        '    echo "PATCH_VERIFY_FAILED=$F"',
+        '    FAILED_PATHS="$FAILED_PATHS $F"',
+        '    continue',
+        '  fi',
+        '  PATCHED_PATHS="$PATCHED_PATHS $F"',
         'done',
+        'rm -f "$PATCHER"',
         'echo "PATCHED_PATHS=$PATCHED_PATHS"',
         'echo "FAILED_PATHS=$FAILED_PATHS"',
         '[ -z "$FAILED_PATHS" ] || echo "PATCH_FAILED"',
         'exit 0',
       ].join('\n'),
-      { timeout: 15000 },
+      { timeout: 20000 },
     );
     const out = `${r.stdout || ''}\n${r.stderr || ''}`;
     const path = (out.match(/PATCHED_PATHS=(.*)/)?.[1] || out.match(/ADAPTER_PATH=(\S+)/)?.[1] || '').trim() || undefined;
     if (out.includes('ADAPTER_NOT_FOUND')) {
       return { success: true, patched: false, error: 'Installed Hermes WhatsApp adapter not found at the expected paths.' };
     }
-    if (out.includes('PATCH_FAILED')) return { success: false, patched: false, path, error: out.split('\n').slice(-8).join('\n').trim() };
+    if (out.includes('PATCH_DECODE_FAILED')) {
+      return { success: false, patched: false, error: 'Failed to decode adapter patcher payload on the runtime host.' };
+    }
+    if (out.includes('PATCH_FAILED')) return { success: false, patched: false, path, error: out.split('\n').slice(-12).join('\n').trim() };
     if (/PATCHED_PATHS=\s*\S/.test(out)) return { success: true, patched: true, path };
     return { success: false, patched: false, path, error: out.split('\n').slice(-6).join('\n').trim() };
   },
