@@ -398,11 +398,14 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
       pendingDecisionsCount,
       probeResults,
       refreshProbes,
+      discovered,
+      discoveryFromHermes,
     }),
     [
       registry, policy, setPolicy, resetAll, recentlyUsed, readinessFor, rediscover, gate, recordUse,
       pendingDecision, openCapabilityDecision, closePendingDecision, grantSession,
       pendingDecisionsCount, probeResults, refreshProbes,
+      discovered, discoveryFromHermes,
     ],
   );
 
