@@ -13,6 +13,7 @@ import { CapabilitiesProvider } from "./contexts/CapabilitiesContext";
 import ApprovalDialog from "./components/permissions/ApprovalDialog";
 import PermissionsBridge from "./components/permissions/PermissionsBridge";
 import Index from "./pages/Index";
+import RootRoute from "./pages/RootRoute";
 import Dashboard from "./pages/Dashboard";
 import SubAgents from "./pages/SubAgents";
 import LLMConfig from "./pages/LLMConfig";
@@ -51,7 +52,8 @@ const App = () => (
         <ChatProvider>
         <Routes>
           <Route element={<AppLayout />}>
-            <Route path="/" element={<Index />} />
+            <Route path="/" element={<RootRoute />} />
+            <Route path="/install" element={<Index />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/agents" element={<SubAgents />} />
             <Route path="/models" element={<LLMConfig />} />
