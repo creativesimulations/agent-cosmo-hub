@@ -5436,4 +5436,65 @@ model: ${options.model || 'openrouter/auto'}
       doctorReportsBrowser,
     };
   },
+
+  /**
+   * Ask the Hermes CLI for everything it can do — channels, tools,
+   * connectors, MCP servers, media providers — in a single JSON blob.
+   *
+   * This is best-effort: older Hermes versions may not support
+   * `hermes capabilities --json`, in which case we fall back to the
+   * narrower `hermes channels list --json` / `hermes tools list --json`
+   * commands. If those also fail (or we're in browser dev mode), the
+   * caller falls back to the static seed catalog.
+   *
+   * Shape returned (when at least one call succeeds):
+   *   {
+   *     ok: true,
+   *     channels?:   Array<{ id, name, requiredEnv?, docsUrl?, ... }>,
+   *     tools?:      Array<{ id, name, category?, ... }>,
+   *     connectors?: Array<{ id, name, ... }>,
+   *     mcp?:        Array<{ name, command, ... }>,
+   *   }
+   */
+  async discoverCapabilities(): Promise<{
+    ok: boolean;
+    raw?: Record<string, unknown>;
+    error?: string;
+  }> {
+    if (!isElectron()) return { ok: false, error: 'browser-mode' };
+    // Prefer a single rich command if Hermes supports it.
+    const unified = await runHermesCli('hermes capabilities --json 2>/dev/null', { timeout: 15000 }).catch(
+      () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+    );
+    if (unified.success && unified.stdout.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(unified.stdout) as Record<string, unknown>;
+        return { ok: true, raw: parsed };
+      } catch { /* fall through */ }
+    }
+    // Fallback: parallel narrower CLI calls. Each is allowed to fail.
+    const [channelsR, toolsR] = await Promise.all([
+      runHermesCli('hermes channels list --json 2>/dev/null', { timeout: 15000 }).catch(
+        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+      ),
+      runHermesCli('hermes tools list --json 2>/dev/null', { timeout: 15000 }).catch(
+        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+      ),
+    ]);
+    const raw: Record<string, unknown> = {};
+    let any = false;
+    const tryParse = (key: string, r: CommandResult) => {
+      if (!r.success) return;
+      const t = r.stdout.trim();
+      if (!t) return;
+      try {
+        raw[key] = JSON.parse(t);
+        any = true;
+      } catch { /* ignore */ }
+    };
+    tryParse('channels', channelsR);
+    tryParse('tools', toolsR);
+    if (any) return { ok: true, raw };
+    return { ok: false, error: 'hermes capabilities CLI unavailable' };
+  },
 };
