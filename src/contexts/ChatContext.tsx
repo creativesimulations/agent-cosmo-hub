@@ -104,6 +104,16 @@ export interface ChatMessage {
   toolUnavailable?: ToolUnavailableHit;
   /** Capability ids the agent invoked (or attempted) during this turn. */
   usedCapabilities?: string[];
+  /** Structured intents the agent emitted in this assistant turn. */
+  intents?: AgentIntent[];
+  /** Per-intent responses already submitted (keyed by intent id). */
+  intentResponses?: Record<string, IntentResponse>;
+  /**
+   * When this user message is the carrier for a `ronbot-intent-response`,
+   * the chat bubble shows this redacted summary instead of the raw JSON
+   * payload (so secrets never appear in chat history).
+   */
+  intentResponseSummary?: string;
 }
 
 interface QueueItem {
