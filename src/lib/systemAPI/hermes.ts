@@ -187,6 +187,105 @@ async function ensureHermesChatCaps(): Promise<void> {
 }
 
 
+/**
+ * Python source that rewrites the installed Hermes WhatsApp adapter so the
+ * bridge launches via the managed Node shim instead of bare `node`.
+ *
+ * Authored as a normal multi-line JS template literal — real newlines, real
+ * quotes, no `\\s` / `\\[` gymnastics — and shipped to the runtime as a
+ * base64-encoded payload (decoded into a temp file before `python3` runs
+ * it). This avoids three layers of shell + heredoc + cmd.exe escaping that
+ * previously corrupted the regex literals.
+ *
+ * Exported so unit tests can `python3 -c "compile(open(p).read(),p,'exec')"`
+ * the source without having to run the full shell pipeline.
+ */
+export const WHATSAPP_ADAPTER_PATCH_PY = `import sys, re, pathlib
+
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+
+PATCH_MARKER = "RONBOT_NODE_BIN_PATCH_V5"
+
+helper = (
+    "\\n# " + PATCH_MARKER + ": prefer managed Node for both adapter preflight and bridge launch\\n"
+    "def _ronbot_node_bin():\\n"
+    "    import os, shutil\\n"
+    "    for env_key in ('WHATSAPP_NODE_BIN', 'NODE_BIN', 'HERMES_NODE_BIN', 'NODE'):\\n"
+    "        v = os.environ.get(env_key)\\n"
+    "        if v and os.path.isfile(v):\\n"
+    "            return v\\n"
+    "    home = os.path.expanduser('~')\\n"
+    "    shim = os.path.join(home, '.hermes', 'bin', 'node')\\n"
+    "    if os.path.isfile(shim):\\n"
+    "        return shim\\n"
+    "    found = shutil.which('node')\\n"
+    "    return found or 'node'\\n"
+)
+
+# 1) Insert the helper (after the leading module docstring if any).
+if "def _ronbot_node_bin():" not in src:
+    m = re.search(r'(?ms)^(\\s*"""[\\s\\S]*?"""\\s*\\n)', src)
+    insert_at = m.end() if m else 0
+    src = src[:insert_at] + helper + src[insert_at:]
+
+# 2) Rewrite every literal "node" token used to launch the runtime.
+#    a) subprocess.run(["node", "--version", ...])
+#    b) subprocess.Popen(["node", bridge_path, ...])
+#    c) subprocess.run("node", ...)  (rare, but keep parity with prior patch)
+def _replace_list_node(match):
+    quote = match.group(1)
+    return match.group(0).replace(quote + "node" + quote, "_ronbot_node_bin()")
+
+src2, n_list = re.subn(
+    r'subprocess\\.(?:Popen|run)\\(\\s*\\[\\s*([\\'"])node\\1',
+    _replace_list_node,
+    src,
+)
+
+def _replace_str_node(match):
+    quote = match.group(1)
+    return match.group(0).replace(quote + "node" + quote, "_ronbot_node_bin()")
+
+src2, n_str = re.subn(
+    r'subprocess\\.(?:Popen|run)\\(\\s*([\\'"])node\\1',
+    _replace_str_node,
+    src2,
+)
+
+# Defensive: bare ["node", ...] literals not preceded by subprocess.* but
+# still passed to a launcher in some adapter variants.
+src2, n_bare = re.subn(
+    r'\\[\\s*([\\'"])node\\1\\s*,',
+    lambda mm: '[_ronbot_node_bin(),',
+    src2,
+)
+
+total = n_list + n_str + n_bare
+if total == 0 and "_ronbot_node_bin()" not in src2:
+    sys.stderr.write("no node launch literal found\\n")
+    sys.exit(2)
+
+# 3) Stamp the marker so subsequent runs detect the V5 patch.
+if PATCH_MARKER not in src2:
+    src2 = re.sub(
+        r'RONBOT_NODE_BIN_PATCH(?:_V\\d+)?',
+        PATCH_MARKER,
+        src2,
+        count=1,
+    )
+    if PATCH_MARKER not in src2:
+        src2 = "# " + PATCH_MARKER + "\\n" + src2
+
+# 4) Verify call sites actually exist before writing.
+if "_ronbot_node_bin()" not in src2:
+    sys.stderr.write("patch produced no call sites\\n")
+    sys.exit(3)
+
+p.write_text(src2)
+print("PATCH_OK total=" + str(total))
+`;
+
 const runHermesShell = async (
   script: string,
   options?: Record<string, unknown> & { onStreamId?: (id: string) => void; displayCommand?: string },
