@@ -1366,6 +1366,8 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   };
 
+  useEffect(() => {
+    if (!waPairingActive) return;
     const timer = window.setInterval(() => {
       const elapsed = Date.now() - (waLastOutputAtRef.current || 0);
       if (elapsed < 15000) return;
