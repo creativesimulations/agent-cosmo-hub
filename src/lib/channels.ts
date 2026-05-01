@@ -16,6 +16,24 @@
  * strict E.164 allowlist in the wizard.
  */
 
+/**
+ * Accepts identifiers that Hermes recognises in `WHATSAPP_ALLOWED_USERS`:
+ *   - E.164 digits (no +): `15551234567`
+ *   - WhatsApp `@lid` JID:  `112966246649933@lid`
+ *   - WhatsApp standard JID: `15551234567@s.whatsapp.net`
+ *
+ * Hermes compares stored allowlist entries verbatim against the JID emitted
+ * by Baileys, so we keep the original text — we only validate the shape.
+ */
+export const isValidWhatsAppAllowEntry = (value: string): boolean => {
+  const v = (value || '').trim();
+  if (!v) return false;
+  if (/^[1-9]\d{6,14}$/.test(v)) return true;
+  if (/^\d{6,20}@lid$/.test(v)) return true;
+  if (/^\d{6,20}@s\.whatsapp\.net$/.test(v)) return true;
+  return false;
+};
+
 import type { LucideIcon } from 'lucide-react';
 import { Send, MessageSquare, Phone, Hash, Lock } from 'lucide-react';
 
