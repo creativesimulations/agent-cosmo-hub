@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Puzzle, AlertCircle, CheckCircle2, Loader2, RefreshCw, Search, Package, Wrench,
-  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal, Globe, Plus, Sparkles, ExternalLink,
+  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal, Globe, Plus, Sparkles, ExternalLink, Box,
 } from "lucide-react";
 import InstallSkillDialog from "@/components/skills/InstallSkillDialog";
 import GlassCard from "@/components/ui/GlassCard";
@@ -51,6 +51,8 @@ const Skills = () => {
   const [actionError, setActionError] = useState<string>("");
   const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
   const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
+  const [plugins, setPlugins] = useState<Array<{ name: string; enabled?: boolean; description?: string; source?: string }>>([]);
+  const [pluginsCliAvailable, setPluginsCliAvailable] = useState(true);
 
   // Read ?focus=<capId> from the URL — drives a scroll + highlight of any
   // skill rows whose names match the capability's candidate skill list.
@@ -73,11 +75,12 @@ const Skills = () => {
     }
     setLoading(true);
     setError(null);
-    const [result, cfg, sec, googleworkspace] = await Promise.all([
+    const [result, cfg, sec, googleworkspace, pluginsR] = await Promise.all([
       systemAPI.listSkills(),
       systemAPI.getSkillsConfig(),
       secretsStore.list(),
       isUpgradeUnlocked("googleworkspace"),
+      systemAPI.listPlugins(),
     ]);
     if (result.success) {
       setSkills(result.skills);
@@ -88,6 +91,8 @@ const Skills = () => {
     setDisabledSet(new Set(cfg.disabled));
     setSecretKeys(new Set(sec.keys || []));
     setUnlocks({ googleworkspace });
+    setPlugins(pluginsR.plugins);
+    setPluginsCliAvailable(pluginsR.cliAvailable);
     setLoading(false);
   }, [agentConnected]);
 
