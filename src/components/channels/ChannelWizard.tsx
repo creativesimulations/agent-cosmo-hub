@@ -44,8 +44,6 @@ const normalizeAllowedUsers = (value: string): string =>
     .sort()
     .join(",");
 
-/** E.164: country code first, 7–15 digits total, no +. Kept for any legacy callers. */
-const E164_PHONE_ONLY = /^[1-9]\d{6,14}$/;
 /** Validate a single WhatsApp allowlist entry (E.164 digits OR @lid / @s.whatsapp.net JID). */
 const isWaAllowEntryValid = (s: string): boolean => isValidWhatsAppAllowEntry(s);
 
