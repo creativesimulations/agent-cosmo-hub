@@ -333,6 +333,16 @@ const ChannelsPage = () => {
       });
       return;
     }
+    // Agent-driven channels: hand off to chat. The agent emits intent cards
+    // (credentials, confirms, QR) inline — the app no longer owns a wizard.
+    if (AGENT_DRIVEN_CHANNELS.has(channel.id)) {
+      const entry = CAPABILITY_CATALOG.find((c) => c.id === channel.id);
+      const prompt =
+        entry?.setupPrompt ?? `Set up ${channel.name} so I can message you from ${channel.name}.`;
+      setDraft(prompt);
+      navigate("/chat");
+      return;
+    }
     if (channel.id === "whatsapp" && statuses[channel.id]?.state === "configured" && !whatsappResetPending) {
       setWhatsappResetOpen(true);
       return;
