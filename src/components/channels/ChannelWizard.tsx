@@ -1611,6 +1611,44 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           />
         )}
 
+        {formError && channel.id === "whatsapp" && waUnauthorizedSenders.length > 0 && (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+              <div className="space-y-1 flex-1 min-w-0">
+                <p className="text-xs font-medium text-foreground">
+                  Unrecognised WhatsApp sender detected
+                </p>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Hermes rejected message(s) from the following sender(s) because they're not in
+                  your allowlist. Click below to add them and restart the gateway.
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {waUnauthorizedSenders.map((s) => (
+                    <li key={s} className="font-mono text-[11px] text-foreground/90 break-all">
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              disabled={waAuthorizing}
+              onClick={authorizeUnauthorizedSenders}
+            >
+              {waAuthorizing ? (
+                <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> Authorizing…</>
+              ) : (
+                <>Authorize {waUnauthorizedSenders.length === 1 ? "this sender" : `these ${waUnauthorizedSenders.length} senders`}</>
+              )}
+            </Button>
+          </div>
+        )}
+
         {formError && waOtherGatewayLogs.length > 0 && (
           <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2 text-xs">
             <button
