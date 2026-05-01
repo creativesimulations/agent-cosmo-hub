@@ -1295,8 +1295,77 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     }
   };
 
+  // When a WhatsApp finalize error is shown, scan recent gateway/bridge
+  // logs for "Unauthorized user: <jid>" entries that aren't already in
+  // the allowlist — surface them so the user can authorize with one click.
   useEffect(() => {
-    if (!waPairingActive) return;
+    if (channel.id !== "whatsapp" || !formError) {
+      setWaUnauthorizedSenders([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await systemAPI.findUnauthorizedWhatsAppSenders(400);
+        if (cancelled || !r.success) return;
+        const current = new Set(
+          (values.WHATSAPP_ALLOWED_USERS || "")
+            .split(",")
+            .map((p) => p.trim())
+            .filter(Boolean),
+        );
+        const fresh = r.senders.filter((s) => !current.has(s));
+        setWaUnauthorizedSenders(fresh);
+      } catch {
+        /* non-fatal */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [channel.id, formError, values.WHATSAPP_ALLOWED_USERS]);
+
+  const authorizeUnauthorizedSenders = async () => {
+    if (waUnauthorizedSenders.length === 0 || waAuthorizing) return;
+    setWaAuthorizing(true);
+    try {
+      const existing = (values.WHATSAPP_ALLOWED_USERS || "")
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean);
+      const merged = Array.from(new Set([...existing, ...waUnauthorizedSenders]));
+      const next = merged.join(",");
+      const ok = await systemAPI.secrets.set("WHATSAPP_ALLOWED_USERS", next);
+      if (!ok) {
+        toast.error("Failed to update allowlist");
+        return;
+      }
+      setValues((v) => ({ ...v, WHATSAPP_ALLOWED_USERS: next }));
+      await systemAPI.ensureWhatsAppRuntimeSecrets().catch(() => undefined);
+      await systemAPI.materializeEnv().catch(() => undefined);
+      await systemAPI.stopGateway().catch(() => undefined);
+      const start = await systemAPI.startGateway().catch((e) => ({
+        success: false,
+        stdout: "",
+        stderr: e instanceof Error ? e.message : String(e),
+        code: 1,
+      }));
+      if (start.success) {
+        toast.success("Authorized — gateway restarted", {
+          description: `Added ${waUnauthorizedSenders.length} sender(s) to the allowlist.`,
+        });
+        setFormError("");
+        setWaUnauthorizedSenders([]);
+      } else {
+        toast.error("Gateway restart failed", {
+          description: (start.stderr || "").split("\n")[0] || "See gateway logs.",
+        });
+      }
+    } finally {
+      setWaAuthorizing(false);
+    }
+  };
+
     const timer = window.setInterval(() => {
       const elapsed = Date.now() - (waLastOutputAtRef.current || 0);
       if (elapsed < 15000) return;
