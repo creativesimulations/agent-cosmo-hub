@@ -286,6 +286,28 @@ p.write_text(src2)
 print("PATCH_OK total=" + str(total))
 `;
 
+/**
+ * Extract unique WhatsApp sender identifiers (E.164 digits or JIDs) from
+ * gateway/bridge log text emitted as `Unauthorized user: <jid>` warnings.
+ *
+ * Pure function — exported so unit tests can validate it without mocking
+ * the runtime. Preserves first-seen order and de-duplicates.
+ */
+export const parseUnauthorizedWhatsAppSenders = (logText: string): string[] => {
+  if (!logText) return [];
+  const re = /Unauthorized user:\s*([A-Za-z0-9.@_-]+)/g;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(logText)) !== null) {
+    const id = (m[1] || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+};
+
 const runHermesShell = async (
   script: string,
   options?: Record<string, unknown> & { onStreamId?: (id: string) => void; displayCommand?: string },
