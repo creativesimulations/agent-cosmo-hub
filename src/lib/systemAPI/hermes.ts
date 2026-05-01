@@ -5629,4 +5629,179 @@ model: ${options.model || 'openrouter/auto'}
     );
     return { success: r.success, error: r.success ? undefined : (r.stderr || r.stdout || 'delete failed').slice(0, 400) };
   },
+
+  /**
+   * List Hermes profiles (isolated agent instances).
+   * Each profile has its own ~/.hermes-<name>/ directory with separate
+   * config, secrets, and skills. The active profile is shown with `active: true`.
+   * Falls back to a single "default" profile if the CLI doesn't support profiles.
+   */
+  async listProfiles(): Promise<{
+    success: boolean;
+    profiles: Array<{ name: string; active?: boolean; path?: string }>;
+    cliAvailable: boolean;
+    error?: string;
+  }> {
+    if (!isElectron()) return { success: true, profiles: [{ name: 'default', active: true }], cliAvailable: false };
+    const probes = [
+      'hermes profile list --json 2>/dev/null',
+      'hermes profiles list --json 2>/dev/null',
+    ];
+    for (const probe of probes) {
+      const r = await runHermesCli(probe, { timeout: 15000 }).catch(
+        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+      );
+      const text = (r.stdout || '').trim();
+      if (r.success && text.startsWith('[')) {
+        try {
+          const arr = JSON.parse(text) as Array<Record<string, unknown>>;
+          const profiles = arr.map((e) => ({
+            name: typeof e.name === 'string' ? e.name : 'default',
+            active: typeof e.active === 'boolean' ? e.active : undefined,
+            path: typeof e.path === 'string' ? e.path : undefined,
+          })).filter((p) => p.name);
+          return { success: true, profiles, cliAvailable: true };
+        } catch { /* try next */ }
+      }
+    }
+    return { success: true, profiles: [{ name: 'default', active: true }], cliAvailable: false };
+  },
+
+  /**
+   * List installed Hermes plugins (extensions registered via `hermes plugins`).
+   * Returns name, enabled state, and source. Empty success when CLI is unavailable.
+   */
+  async listPlugins(): Promise<{
+    success: boolean;
+    plugins: Array<{ name: string; enabled?: boolean; source?: string; description?: string }>;
+    cliAvailable: boolean;
+    error?: string;
+  }> {
+    if (!isElectron()) return { success: true, plugins: [], cliAvailable: false };
+    const probes = [
+      'hermes plugins list --json 2>/dev/null',
+      'hermes plugin list --json 2>/dev/null',
+    ];
+    for (const probe of probes) {
+      const r = await runHermesCli(probe, { timeout: 15000 }).catch(
+        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+      );
+      const text = (r.stdout || '').trim();
+      if (r.success && text.startsWith('[')) {
+        try {
+          const arr = JSON.parse(text) as Array<Record<string, unknown>>;
+          const plugins = arr.map((e) => ({
+            name: typeof e.name === 'string' ? e.name : '',
+            enabled: typeof e.enabled === 'boolean' ? e.enabled : undefined,
+            source: typeof e.source === 'string' ? e.source : undefined,
+            description: typeof e.description === 'string' ? e.description : undefined,
+          })).filter((p) => p.name);
+          return { success: true, plugins, cliAvailable: true };
+        } catch { /* try next */ }
+      }
+    }
+    return { success: true, plugins: [], cliAvailable: false };
+  },
+
+  /**
+   * Read agent activity insights — token/cost/session totals.
+   * Tries `hermes insights --json`. Returns a normalized summary; when the
+   * CLI doesn't expose it, returns cliAvailable=false so the page can show
+   * an empty state instead of an error.
+   */
+  async getInsights(): Promise<{
+    success: boolean;
+    cliAvailable: boolean;
+    insights?: {
+      sessionsLast7d?: number;
+      messagesLast7d?: number;
+      tokensIn?: number;
+      tokensOut?: number;
+      costUsd?: number;
+      topChannels?: Array<{ name: string; count: number }>;
+      topSkills?: Array<{ name: string; count: number }>;
+      raw?: Record<string, unknown>;
+    };
+    error?: string;
+  }> {
+    if (!isElectron()) return { success: true, cliAvailable: false };
+    const probes = [
+      'hermes insights --json 2>/dev/null',
+      'hermes stats --json 2>/dev/null',
+      'hermes usage --json 2>/dev/null',
+    ];
+    for (const probe of probes) {
+      const r = await runHermesCli(probe, { timeout: 20000 }).catch(
+        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+      );
+      const text = (r.stdout || '').trim();
+      if (r.success && (text.startsWith('{') || text.startsWith('['))) {
+        try {
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+          const arr = (v: unknown): Array<{ name: string; count: number }> | undefined => {
+            if (!Array.isArray(v)) return undefined;
+            const out = v
+              .map((e) => {
+                const o = e as Record<string, unknown>;
+                const name = typeof o.name === 'string' ? o.name : typeof o.id === 'string' ? o.id : '';
+                const count = typeof o.count === 'number' ? o.count : typeof o.value === 'number' ? o.value : 0;
+                return { name, count };
+              })
+              .filter((e) => e.name);
+            return out.length ? out : undefined;
+          };
+          return {
+            success: true,
+            cliAvailable: true,
+            insights: {
+              sessionsLast7d: num(parsed.sessions_last_7d ?? parsed.sessionsLast7d),
+              messagesLast7d: num(parsed.messages_last_7d ?? parsed.messagesLast7d),
+              tokensIn: num(parsed.tokens_in ?? parsed.tokensIn),
+              tokensOut: num(parsed.tokens_out ?? parsed.tokensOut),
+              costUsd: num(parsed.cost_usd ?? parsed.costUsd),
+              topChannels: arr(parsed.top_channels ?? parsed.topChannels),
+              topSkills: arr(parsed.top_skills ?? parsed.topSkills),
+              raw: parsed,
+            },
+          };
+        } catch { /* try next */ }
+      }
+    }
+    return { success: true, cliAvailable: false };
+  },
+
+  /**
+   * Read the current `display.busy_input_mode` from config.yaml.
+   * Hermes supports: 'interrupt' | 'queue' | 'steer'. Defaults to 'queue'.
+   */
+  async getBusyInputMode(): Promise<'interrupt' | 'queue' | 'steer'> {
+    const cfg = await this.readConfig();
+    if (!cfg.success || !cfg.content) return 'queue';
+    const m = cfg.content.match(/^display:\s*\n(?:[ \t]+.*\n)*?[ \t]+busy_input_mode:\s*([a-z]+)/im);
+    const v = m?.[1]?.toLowerCase();
+    if (v === 'interrupt' || v === 'queue' || v === 'steer') return v;
+    return 'queue';
+  },
+
+  /** Persist `display.busy_input_mode` in config.yaml. */
+  async setBusyInputMode(mode: 'interrupt' | 'queue' | 'steer'): Promise<{ success: boolean; error?: string }> {
+    const cfg = await this.readConfig();
+    let body = cfg.success && cfg.content ? cfg.content : '';
+    // If a display: block already exists, replace any busy_input_mode under it;
+    // otherwise append a fresh block.
+    if (/^display:\s*$/m.test(body)) {
+      const blockRe = /^(display:\s*\n(?:[ \t]+.*\n)*)/m;
+      body = body.replace(blockRe, (block) => {
+        if (/busy_input_mode:/m.test(block)) {
+          return block.replace(/busy_input_mode:\s*\S+/m, `busy_input_mode: ${mode}`);
+        }
+        return block.trimEnd() + `\n  busy_input_mode: ${mode}\n`;
+      });
+    } else {
+      body = body.trimEnd() + `\n\ndisplay:\n  busy_input_mode: ${mode}\n`;
+    }
+    const w = await this.writeConfig(body);
+    return { success: w.success, error: w.success ? undefined : (w.error || 'write failed') };
+  },
 };
