@@ -14,6 +14,7 @@ import { ExternalLink, ArrowLeft, ArrowRight, Loader2, CheckCircle2, AlertCircle
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
 import type { Channel } from "@/lib/channels";
+import { isValidWhatsAppAllowEntry } from "@/lib/channels";
 import ActionableError from "@/components/ui/ActionableError";
 import { useSudoPrompt } from "@/contexts/SudoPromptContext";
 import { useCapabilities } from "@/contexts/CapabilitiesContext";
@@ -43,8 +44,10 @@ const normalizeAllowedUsers = (value: string): string =>
     .sort()
     .join(",");
 
-/** E.164: country code first, 7–15 digits total, no +. */
+/** E.164: country code first, 7–15 digits total, no +. Kept for any legacy callers. */
 const E164_PHONE_ONLY = /^[1-9]\d{6,14}$/;
+/** Validate a single WhatsApp allowlist entry (E.164 digits OR @lid / @s.whatsapp.net JID). */
+const isWaAllowEntryValid = (s: string): boolean => isValidWhatsAppAllowEntry(s);
 
 const stripAnsiLike = (value: string): string => {
   const ESC = String.fromCharCode(27);
@@ -282,7 +285,7 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
     const raw = (values.WHATSAPP_ALLOWED_USERS || "").trim();
     const entries = raw.split(",").map((p) => p.trim()).filter(Boolean);
     if (entries.length === 0) return false;
-    return base && entries.every((n) => E164_PHONE_ONLY.test(n));
+    return base && entries.every((n) => isWaAllowEntryValid(n));
   }, [channel.credentials, channel.id, values]);
   const waModeCurrent = (values.WHATSAPP_MODE || "").trim();
   const waAllowedUsersCurrent = normalizeAllowedUsers(values.WHATSAPP_ALLOWED_USERS || "");
@@ -445,9 +448,9 @@ const ChannelWizard = ({ channel, open, onClose, onComplete }: ChannelWizardProp
           .split(",")
           .map((p) => p.trim())
           .filter(Boolean);
-        if (entries.length === 0 || !entries.every((n) => E164_PHONE_ONLY.test(n))) {
+        if (entries.length === 0 || !entries.every((n) => isWaAllowEntryValid(n))) {
           const msg =
-            "Enter one or more E.164 numbers (digits only, country code first), comma-separated. Example: 15551234567,447700900123";
+            "Enter one or more allowed senders, comma-separated. Each entry must be E.164 digits (e.g. 15551234567) or a WhatsApp JID (e.g. 112966246649933@lid or 15551234567@s.whatsapp.net).";
           setFormError(msg);
           toast.error("Valid allowlist required", { description: msg });
           return false;
