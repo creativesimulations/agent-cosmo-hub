@@ -25,6 +25,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 
+import { IntentCard } from "@/components/intents";
+
 const AgentChat = () => {
   const { connected: agentConnected } = useAgentConnection();
   const {
