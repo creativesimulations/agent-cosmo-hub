@@ -28,6 +28,8 @@ import BackupRestore from "./pages/BackupRestore";
 import Diagnostics from "./pages/Diagnostics";
 import Upgrades from "./pages/Upgrades";
 import Advanced from "./pages/Advanced";
+import MCPServers from "./pages/MCPServers";
+import Scheduled from "./pages/Scheduled";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -66,6 +68,8 @@ const App = () => (
             <Route path="/updates" element={<UpdateManager />} />
             <Route path="/backups" element={<BackupRestore />} />
             <Route path="/diagnostics" element={<Diagnostics />} />
+            <Route path="/mcp" element={<MCPServers />} />
+            <Route path="/scheduled" element={<Scheduled />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

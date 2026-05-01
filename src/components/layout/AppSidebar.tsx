@@ -15,6 +15,8 @@ import {
   House,
   ChevronDown,
   Bot,
+  Network,
+  CalendarClock,
 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import NotificationCenter from "@/components/NotificationCenter";
@@ -33,6 +35,8 @@ const primaryNavItems = [
 const advancedNavItems = [
   { path: "/advanced", icon: Bot, label: "Advanced" },
   { path: "/skills", icon: Sparkles, label: "Skills & Tools" },
+  { path: "/mcp", icon: Network, label: "MCP Servers" },
+  { path: "/scheduled", icon: CalendarClock, label: "Scheduled" },
   { path: "/models", icon: Cpu, label: "LLM Config" },
   { path: "/secrets", icon: KeyRound, label: "Secrets" },
   { path: "/agents", icon: Bot, label: "Sub-Agents" },
