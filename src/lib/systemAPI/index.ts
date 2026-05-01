@@ -81,6 +81,8 @@ export const systemAPI = {
   getWhatsAppGatewayHealth: hermesAPI.getWhatsAppGatewayHealth.bind(hermesAPI),
   getWhatsAppBridgeStatus: hermesAPI.getWhatsAppBridgeStatus.bind(hermesAPI),
   readWhatsAppBridgeLogTail: hermesAPI.readWhatsAppBridgeLogTail.bind(hermesAPI),
+  findUnauthorizedWhatsAppSenders: hermesAPI.findUnauthorizedWhatsAppSenders.bind(hermesAPI),
+  ensureWhatsAppRuntimeSecrets: hermesAPI.ensureWhatsAppRuntimeSecrets.bind(hermesAPI),
   testChannel: hermesAPI.testChannel.bind(hermesAPI),
   isWhatsAppPaired: hermesAPI.isWhatsAppPaired.bind(hermesAPI),
   getWhatsAppSessionFileCount: hermesAPI.getWhatsAppSessionFileCount.bind(hermesAPI),
