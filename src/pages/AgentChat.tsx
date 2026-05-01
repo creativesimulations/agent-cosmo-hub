@@ -2,7 +2,7 @@ import { useRef, useEffect, useState } from "react";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { useChat } from "@/contexts/ChatContext";
 import { motion } from "framer-motion";
-import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw, Square, Clock, Network, ShieldAlert, Wrench, Globe } from "lucide-react";
+import { MessageSquare, Send, Bot, User, Loader2, AlertCircle, KeyRound, Trash2, X, RotateCcw, Square, Clock, Network, ShieldAlert, Wrench, Globe, Mic, Moon } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -58,6 +58,13 @@ const AgentChat = () => {
   const [browserSetupOpen, setBrowserSetupOpen] = useState(false);
   const [secretKeys, setSecretKeys] = useState<Set<string>>(new Set());
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  // Voice mode + background-session toggles. These ride alongside chat — turning
+  // them on prepends a hint to the next outgoing message that the agent's
+  // intent layer interprets (`/voice on`, `/background <prompt>`). They reset
+  // automatically after sending so the user doesn't have to remember to flip
+  // them back.
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [backgroundMode, setBackgroundMode] = useState(false);
 
   // Detect whether *any* browser backend is configured to drive the
   // first-run banner. Re-checks when the dialog closes.
@@ -122,9 +129,23 @@ const AgentChat = () => {
     // Allow sending while a previous reply is in-flight — the ChatContext
     // worker will queue prompts and process them in strict order.
     if (!input.trim() || !agentConnected) return;
-    const text = input;
+    let text = input;
+    // Background mode wraps the prompt with the agent's `/background` directive
+    // so it runs detached. Reset the toggle after each send.
+    if (backgroundMode) {
+      text = `/background ${text}`;
+      setBackgroundMode(false);
+    }
     setInput("");
     await sendMessage(text);
+  };
+
+  // Voice mode toggle — sends a one-shot directive to the agent. The agent
+  // owns TTS/STT; we just flip the switch.
+  const handleToggleVoice = async (next: boolean) => {
+    setVoiceMode(next);
+    if (!agentConnected) return;
+    await sendMessage(next ? "/voice on" : "/voice off");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -169,6 +190,44 @@ const AgentChat = () => {
           </p>
         </div>
         <div className="flex items-center gap-1">
+          <Button
+            variant={voiceMode ? "default" : "ghost"}
+            size="sm"
+            className={cn(
+              "transition-colors",
+              voiceMode
+                ? "bg-primary/20 text-primary hover:bg-primary/30 border border-primary/30"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => { void handleToggleVoice(!voiceMode); }}
+            disabled={!agentConnected}
+            title={voiceMode ? "Voice mode is on — click to turn off" : "Talk to your agent out loud (TTS + speech in)"}
+            aria-pressed={voiceMode}
+          >
+            <Mic className="w-4 h-4 mr-1.5" />
+            Voice {voiceMode ? "on" : "off"}
+          </Button>
+          <Button
+            variant={backgroundMode ? "default" : "ghost"}
+            size="sm"
+            className={cn(
+              "transition-colors",
+              backgroundMode
+                ? "bg-accent/20 text-accent hover:bg-accent/30 border border-accent/30"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => setBackgroundMode((v) => !v)}
+            disabled={!agentConnected}
+            title={
+              backgroundMode
+                ? "Next message will run as a background task — toggle off to send normally"
+                : "Send the next message as a background task so it keeps running while you close the app"
+            }
+            aria-pressed={backgroundMode}
+          >
+            <Moon className="w-4 h-4 mr-1.5" />
+            Background
+          </Button>
           {sessionId && (
             <Button
               variant="ghost"
@@ -435,6 +494,12 @@ const AgentChat = () => {
               if (input.startsWith("/")) setInput(input.slice(1));
             }}
           />
+          {backgroundMode && (
+            <div className="mb-2 px-3 py-1.5 rounded-md border border-accent/30 bg-accent/10 text-[11px] text-accent flex items-center gap-2">
+              <Moon className="w-3 h-3" />
+              Next message will run as a background task. Toggle off above to send normally.
+            </div>
+          )}
           <form
             onSubmit={(e) => { e.preventDefault(); void handleSend(); }}
             className="flex gap-2 items-end"

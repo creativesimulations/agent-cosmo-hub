@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Puzzle, AlertCircle, CheckCircle2, Loader2, RefreshCw, Search, Package, Wrench,
-  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal, Globe, Plus, Sparkles, ExternalLink,
+  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal, Globe, Plus, Sparkles, ExternalLink, Box,
 } from "lucide-react";
 import InstallSkillDialog from "@/components/skills/InstallSkillDialog";
 import GlassCard from "@/components/ui/GlassCard";
@@ -21,6 +21,7 @@ import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 import BrowserBackendBadge from "@/components/skills/BrowserBackendBadge";
 import ActionableError from "@/components/ui/ActionableError";
 import { getUpgrade, isUpgradeUnlocked } from "@/lib/licenses";
+import { cn } from "@/lib/utils";
 
 type Skill = {
   name: string;
@@ -51,6 +52,8 @@ const Skills = () => {
   const [actionError, setActionError] = useState<string>("");
   const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
   const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
+  const [plugins, setPlugins] = useState<Array<{ name: string; enabled?: boolean; description?: string; source?: string }>>([]);
+  const [pluginsCliAvailable, setPluginsCliAvailable] = useState(true);
 
   // Read ?focus=<capId> from the URL — drives a scroll + highlight of any
   // skill rows whose names match the capability's candidate skill list.
@@ -73,11 +76,12 @@ const Skills = () => {
     }
     setLoading(true);
     setError(null);
-    const [result, cfg, sec, googleworkspace] = await Promise.all([
+    const [result, cfg, sec, googleworkspace, pluginsR] = await Promise.all([
       systemAPI.listSkills(),
       systemAPI.getSkillsConfig(),
       secretsStore.list(),
       isUpgradeUnlocked("googleworkspace"),
+      systemAPI.listPlugins(),
     ]);
     if (result.success) {
       setSkills(result.skills);
@@ -88,6 +92,8 @@ const Skills = () => {
     setDisabledSet(new Set(cfg.disabled));
     setSecretKeys(new Set(sec.keys || []));
     setUnlocks({ googleworkspace });
+    setPlugins(pluginsR.plugins);
+    setPluginsCliAvailable(pluginsR.cliAvailable);
     setLoading(false);
   }, [agentConnected]);
 
@@ -392,6 +398,54 @@ const Skills = () => {
           className="pl-9 bg-background/50 border-white/10"
         />
       </div>
+
+      {pluginsCliAvailable && plugins.length > 0 && (
+        <GlassCard className="p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 rounded-md bg-primary/15 text-primary flex items-center justify-center shrink-0">
+                <Box className="w-4.5 h-4.5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Plugins</h3>
+                <p className="text-xs text-muted-foreground">
+                  Extensions registered with the agent. Install or remove via chat —
+                  e.g. "install the foo plugin".
+                </p>
+              </div>
+            </div>
+            <Badge variant="outline" className="border-white/10 text-muted-foreground text-[10px]">
+              {plugins.length} installed
+            </Badge>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-2">
+            {plugins.map((p) => (
+              <div
+                key={p.name}
+                className="flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-border bg-background/30"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
+                  {p.description && (
+                    <p className="text-[11px] text-muted-foreground truncate">{p.description}</p>
+                  )}
+                </div>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "text-[10px] shrink-0",
+                    p.enabled === false
+                      ? "border-muted-foreground/20 text-muted-foreground"
+                      : "border-success/30 text-success",
+                  )}
+                >
+                  {p.enabled === false ? "Disabled" : "Enabled"}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
 
       <GlassCard className={`p-4 space-y-3 ${googleWorkspaceUnlocked ? "" : "border-primary/30 bg-primary/5"}`}>
         <div className="flex items-start justify-between gap-3 flex-wrap">

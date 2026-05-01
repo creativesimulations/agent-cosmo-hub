@@ -20,6 +20,9 @@ import {
   Network,
   ChevronDown,
   Box,
+  Users,
+  Keyboard,
+  ExternalLink,
 } from "lucide-react";
 import {
   Select,
@@ -202,6 +205,15 @@ const SettingsPage = () => {
   // Sandbox / terminal backend
   const [terminalBackend, setTerminalBackend] = useState<"local" | "docker" | "ssh">("local");
 
+  // Hermes profiles (isolated agent instances)
+  const [profiles, setProfiles] = useState<Array<{ name: string; active?: boolean }>>([]);
+  const [profilesCliAvailable, setProfilesCliAvailable] = useState(true);
+  const [profilesLoading, setProfilesLoading] = useState(false);
+
+  // Busy-input mode — what happens when the user types while the agent is replying
+  const [busyInputMode, setBusyInputMode] = useState<"queue" | "interrupt" | "steer">("queue");
+  const [busyInputSaving, setBusyInputSaving] = useState(false);
+
   useEffect(() => {
     if (!agentConnected) return;
     let cancelled = false;
@@ -260,6 +272,50 @@ const SettingsPage = () => {
       cancelled = true;
     };
   }, [agentConnected]);
+
+  // Load profiles + busy-input mode once the agent is connected. Both are
+  // best-effort: profiles falls back to ["default"], busy-input falls back
+  // to "queue" if the config block isn't present.
+  useEffect(() => {
+    if (!agentConnected) return;
+    let cancelled = false;
+    void (async () => {
+      setProfilesLoading(true);
+      const [pr, mode] = await Promise.all([
+        systemAPI.listProfiles(),
+        systemAPI.getBusyInputMode(),
+      ]);
+      if (cancelled) return;
+      setProfiles(pr.profiles);
+      setProfilesCliAvailable(pr.cliAvailable);
+      setBusyInputMode(mode);
+      setProfilesLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [agentConnected]);
+
+  const handleBusyInputModeChange = async (next: "queue" | "interrupt" | "steer") => {
+    setBusyInputSaving(true);
+    const prev = busyInputMode;
+    setBusyInputMode(next); // optimistic
+    const r = await systemAPI.setBusyInputMode(next);
+    setBusyInputSaving(false);
+    if (r.success) {
+      setSettingsError("");
+      toast.success(`Typing while busy: ${next}`, {
+        description:
+          next === "queue"
+            ? "New messages will queue and run after the current reply."
+            : next === "interrupt"
+              ? "New messages will interrupt the current reply."
+              : "New messages will steer the current reply mid-flight.",
+      });
+    } else {
+      setBusyInputMode(prev);
+      setSettingsError(r.error || "Could not save busy-input mode");
+      toast.error("Couldn't save", { description: r.error });
+    }
+  };
 
   const handleSaveName = async () => {
     const trimmed = name.trim();
@@ -618,6 +674,89 @@ const SettingsPage = () => {
           </p>
         </div>
       </SettingsSection>
+
+      {/* ─── Profiles ───────────────────────────────────────────── */}
+      {agentConnected && (
+        <SettingsSection icon={Users} title="Profiles">
+          <p className="text-sm text-muted-foreground">
+            Profiles are isolated agent instances — each has its own config, secrets, and skills.
+            Useful when you want a personal agent and a separate work one. Switching profiles is
+            done from chat so the agent can hand off cleanly.
+          </p>
+          {profilesLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-3">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading profiles…
+            </div>
+          ) : !profilesCliAvailable ? (
+            <div className="text-xs text-muted-foreground py-2">
+              Your installed agent doesn't expose the profiles CLI yet. You're running the default
+              profile. To set up another, ask the agent in chat — it'll create the new profile
+              directory and copy your starter config.
+            </div>
+          ) : (
+            <div className="space-y-2 -mt-1">
+              {profiles.map((p) => (
+                <div
+                  key={p.name}
+                  className={cn(
+                    "flex items-center justify-between gap-3 px-3 py-2 rounded-md border",
+                    p.active
+                      ? "border-primary/40 bg-primary/10"
+                      : "border-border bg-background/30",
+                  )}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Users className={cn("w-4 h-4 shrink-0", p.active ? "text-primary" : "text-muted-foreground")} />
+                    <span className="text-sm font-medium text-foreground truncate">{p.name}</span>
+                    {p.active && (
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-primary">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <p className="text-[11px] text-muted-foreground pt-1">
+                Need to create or switch profiles? Ask the agent — e.g. "create a 'work' profile and
+                switch to it".
+              </p>
+            </div>
+          )}
+        </SettingsSection>
+      )}
+
+      {/* ─── Busy-input mode ───────────────────────────────────── */}
+      {agentConnected && (
+        <SettingsSection icon={Keyboard} title="Typing while the agent is busy">
+          <p className="text-sm text-muted-foreground">
+            What should happen when you send a new message while the agent is still replying?
+          </p>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Behavior</Label>
+            <Select
+              value={busyInputMode}
+              onValueChange={(v) => void handleBusyInputModeChange(v as "queue" | "interrupt" | "steer")}
+              disabled={busyInputSaving}
+            >
+              <SelectTrigger className="w-full sm:w-72 bg-background/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="queue">Queue (run after the current reply)</SelectItem>
+                <SelectItem value="interrupt">Interrupt (cancel the current reply)</SelectItem>
+                <SelectItem value="steer">Steer (inject the new message mid-reply)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {busyInputMode === "queue"
+                ? "Default. Your new message waits its turn — nothing is lost."
+                : busyInputMode === "interrupt"
+                  ? "The agent stops what it's doing and starts the new message immediately."
+                  : "Power-user mode. The agent reads your new message while still replying and tries to incorporate it."}
+            </p>
+          </div>
+        </SettingsSection>
+      )}
 
       {/* ─── Advanced ───────────────────────────────────────────── */}
       <SettingsSection icon={AlertTriangle} title="Advanced">

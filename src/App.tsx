@@ -30,6 +30,7 @@ import Upgrades from "./pages/Upgrades";
 import Advanced from "./pages/Advanced";
 import MCPServers from "./pages/MCPServers";
 import Scheduled from "./pages/Scheduled";
+import Insights from "./pages/Insights";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -70,6 +71,7 @@ const App = () => (
             <Route path="/diagnostics" element={<Diagnostics />} />
             <Route path="/mcp" element={<MCPServers />} />
             <Route path="/scheduled" element={<Scheduled />} />
+            <Route path="/insights" element={<Insights />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

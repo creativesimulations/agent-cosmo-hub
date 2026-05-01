@@ -154,4 +154,10 @@ export const SEED_CAPABILITIES: DiscoveredCapability[] = [
   tool("code-execution", "Run code", "Code2",
        "Execute Python or shell snippets in a sandbox.",
        "Show me how I can ask you to run a quick script for me.", "developer"),
+
+  // ── Automation ──
+  tool("webhooks", "Webhooks", "Webhook",
+       "Trigger your agent from any web service over HTTP.",
+       "Set up a webhook so external services can trigger you over HTTP.",
+       "other", true),
 ];

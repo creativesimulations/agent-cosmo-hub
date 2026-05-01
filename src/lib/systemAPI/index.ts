@@ -114,6 +114,11 @@ export const systemAPI = {
   listMCPServers: hermesAPI.listMCPServers.bind(hermesAPI),
   listScheduledJobs: hermesAPI.listScheduledJobs.bind(hermesAPI),
   deleteScheduledJob: hermesAPI.deleteScheduledJob.bind(hermesAPI),
+  listProfiles: hermesAPI.listProfiles.bind(hermesAPI),
+  listPlugins: hermesAPI.listPlugins.bind(hermesAPI),
+  getInsights: hermesAPI.getInsights.bind(hermesAPI),
+  getBusyInputMode: hermesAPI.getBusyInputMode.bind(hermesAPI),
+  setBusyInputMode: hermesAPI.setBusyInputMode.bind(hermesAPI),
   // Prereqs (extras)
   checkRipgrep: prereqAPI.checkRipgrep.bind(prereqAPI),
   installRipgrep: prereqAPI.installRipgrep.bind(prereqAPI),
