@@ -3344,6 +3344,7 @@ export const hermesAPI = {
    */
   async patchHermesWhatsAppAdapterForNode(): Promise<{
     success: boolean;
+// _PLACEHOLDER_NOOP_
     patched: boolean;
     path?: string;
     error?: string;
