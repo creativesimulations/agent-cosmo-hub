@@ -1,4 +1,4 @@
-import { Lock, Loader2, AlertCircle, RotateCcw } from "lucide-react";
+import { Lock, Loader2, AlertCircle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -14,21 +14,9 @@ interface ChannelCardProps {
   channel: Channel;
   status: ChannelStatus;
   onSetUp: () => void;
-  /** WhatsApp: when fully configured, surface a "Reset WhatsApp…" action instead of Reconfigure. */
-  whatsappResetOnly?: boolean;
-  onResetWhatsApp?: () => void;
-  /** Disable the Reset button after the user has triggered a reset, until they click Set up again. */
-  whatsappResetPending?: boolean;
 }
 
-const ChannelCard = ({
-  channel,
-  status,
-  onSetUp,
-  whatsappResetOnly,
-  onResetWhatsApp,
-  whatsappResetPending,
-}: ChannelCardProps) => {
+const ChannelCard = ({ channel, status, onSetUp }: ChannelCardProps) => {
   const Icon = channel.icon;
 
   const statusBadge = () => {
@@ -67,7 +55,7 @@ const ChannelCard = ({
     return (
       <span
         className="inline-flex items-center gap-1 text-[11px] text-warning"
-        title={status.attentionReason || "Configured but not connected. Reconfigure to relink."}
+        title={status.attentionReason || "Configured but not connected. Ask your agent in chat to reconnect."}
       >
         <AlertCircle className="w-3 h-3" /> Attention
       </span>
@@ -99,17 +87,6 @@ const ChannelCard = ({
           <Button variant="outline" size="sm" onClick={onSetUp} className="w-full">
             <Lock className="w-3.5 h-3.5 mr-1.5" /> Unlock
           </Button>
-        ) : whatsappResetOnly && onResetWhatsApp ? (
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full border-destructive/50 text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={onResetWhatsApp}
-            disabled={status.state === "loading" || !!whatsappResetPending}
-          >
-            <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
-            {whatsappResetPending ? "Reset — click Set up" : "Reset WhatsApp…"}
-          </Button>
         ) : (
           <Button
             variant={status.state === "not-configured" ? "default" : "outline"}
@@ -118,7 +95,7 @@ const ChannelCard = ({
             className={cn("w-full", status.state === "not-configured" && "gradient-primary text-primary-foreground")}
             disabled={status.state === "loading"}
           >
-            {status.state === "configured" ? "Reconfigure" : "Set up"}
+            {status.state === "configured" ? "Reconfigure in chat" : "Set up"}
           </Button>
         )}
       </div>
