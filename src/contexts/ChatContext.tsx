@@ -893,6 +893,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         startNewSession,
         draft,
         setDraft,
+        sendIntentResponse,
       }}
     >
       {children}
