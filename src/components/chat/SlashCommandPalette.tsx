@@ -102,13 +102,15 @@ const SlashCommandPalette = ({ value, onPick, onDismiss }: SlashCommandPalettePr
     const merged: Record<string, DiscoveredCapability> = {};
     for (const c of BUILTIN_COMMANDS) merged[c.id] = c;
     for (const [id, c] of Object.entries(discovered)) merged[id] = c;
+    const builtinIds = new Set(BUILTIN_COMMANDS.map((b) => b.id));
     return Object.values(merged)
       .filter((e) => matches(e, query))
       .sort((a, b) => {
-        // Built-ins float to the top when query is empty so they're discoverable.
-        const aBuiltin = BUILTIN_COMMANDS.some((b) => b.id === a.id) ? 0 : 1;
-        const bBuiltin = BUILTIN_COMMANDS.some((b) => b.id === b.id && b.id === a.id) ? 0 : 1;
-        if (!query && aBuiltin !== bBuiltin) return aBuiltin - bBuiltin;
+        if (!query) {
+          const aB = builtinIds.has(a.id) ? 0 : 1;
+          const bB = builtinIds.has(b.id) ? 0 : 1;
+          if (aB !== bB) return aB - bB;
+        }
         return a.name.localeCompare(b.name);
       })
       .slice(0, 10);
