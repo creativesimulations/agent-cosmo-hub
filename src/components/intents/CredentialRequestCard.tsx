@@ -48,8 +48,8 @@ const CredentialRequestCard = ({ intent, onRespond, responded, previousResponse 
       for (const [key, raw] of Object.entries(values)) {
         const v = raw.trim();
         if (!v) continue;
-        const r = await secretsStore.set(key, v);
-        if (!r.success) throw new Error(r.error || `Failed to store ${key}`);
+        const ok = await secretsStore.set(key, v);
+        if (!ok) throw new Error(`Failed to store ${key}`);
       }
       // Materialize into ~/.hermes/.env unless explicitly disabled.
       if (intent.materialize !== false) {
