@@ -26,6 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { IntentCard } from "@/components/intents";
+import ChatEmptyState from "@/components/chat/ChatEmptyState";
 
 const AgentChat = () => {
   const { connected: agentConnected } = useAgentConnection();
@@ -242,9 +243,12 @@ const AgentChat = () => {
         ) : (
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.length === 0 && (
-              <div className="flex-1 flex items-center justify-center h-full">
-                <p className="text-sm text-muted-foreground/40">Send a message to start the conversation</p>
-              </div>
+              <ChatEmptyState
+                onPick={(prompt) => {
+                  setInput(prompt);
+                  textareaRef.current?.focus();
+                }}
+              />
             )}
             {messages.map((msg) => (
               <motion.div
