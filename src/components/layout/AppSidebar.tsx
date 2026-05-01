@@ -18,6 +18,7 @@ import {
   Network,
   CalendarClock,
   BarChart3,
+  Download,
 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import NotificationCenter from "@/components/NotificationCenter";
@@ -34,6 +35,7 @@ const primaryNavItems = [
 ];
 
 const advancedNavItems = [
+  { path: "/dashboard", icon: Activity, label: "Dashboard" },
   { path: "/advanced", icon: Bot, label: "Advanced" },
   { path: "/skills", icon: Sparkles, label: "Skills & Tools" },
   { path: "/mcp", icon: Network, label: "MCP Servers" },
@@ -47,6 +49,7 @@ const advancedNavItems = [
   { path: "/backups", icon: Archive, label: "Backups" },
   { path: "/diagnostics", icon: Activity, label: "App Diagnostics" },
   { path: "/terminal", icon: Terminal, label: "Terminal" },
+  { path: "/install", icon: Download, label: "Setup & Install" },
 ];
 
 const AppSidebar = () => {
