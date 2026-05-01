@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { systemAPI } from "@/lib/systemAPI";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import AgentPowerCard from "@/components/dashboard/AgentPowerCard";
+import CapabilityGallery from "@/components/dashboard/CapabilityGallery";
 
 /** Parse `hermes status` output into a flat key/value map. */
 const parseStatusOutput = (stdout: string) => {
@@ -209,6 +210,8 @@ const Dashboard = () => {
           </div>
         </GlassCard>
       </div>
+
+      <CapabilityGallery />
     </div>
   );
 };
