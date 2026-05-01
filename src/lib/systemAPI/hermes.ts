@@ -2027,6 +2027,20 @@ export const hermesAPI = {
         return failed;
       }
     }
+    // If WhatsApp is opted in (allowlist set OR previously enabled), make
+    // sure WHATSAPP_ENABLED / WHATSAPP_MODE / WHATSAPP_DEBUG are present in
+    // the secrets store BEFORE materializeHermesEnv writes them out — older
+    // wizard runs sometimes left these blank, producing a gateway that
+    // started without ever creating the WhatsApp adapter.
+    try {
+      const allow = (await secretsStore.get('WHATSAPP_ALLOWED_USERS')).trim();
+      const enabledSecret = (await secretsStore.get('WHATSAPP_ENABLED')).trim();
+      if (allow.length > 0 || enabledSecret.toLowerCase() === 'true') {
+        await this.ensureWhatsAppRuntimeSecrets().catch(() => undefined);
+      }
+    } catch {
+      /* non-fatal */
+    }
     await materializeHermesEnv();
     const env = await this.readEnvFile().catch(() => ({} as Record<string, string>));
     if ((env.WHATSAPP_ENABLED || '').trim().toLowerCase() === 'true') {
