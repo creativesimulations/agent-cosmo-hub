@@ -23,6 +23,12 @@ import { useSettings } from "./SettingsContext";
 import { usePermissions } from "./PermissionsContext";
 import { useAgentConnection } from "./AgentConnectionContext";
 import { capabilityProbe, type CapabilityProbeResult } from "@/lib/capabilityProbe";
+import {
+  discoverCapabilities,
+  invalidateDiscoveryCache,
+} from "@/lib/capabilities/discovery";
+import type { DiscoveredCapability } from "@/lib/capabilities/types";
+import { SEED_CAPABILITIES } from "@/lib/capabilities/seed";
 
 /**
  * CapabilitiesContext is the runtime façade for the Capability Registry.
@@ -98,6 +104,14 @@ interface CapabilitiesContextValue {
   probeResults: Record<string, CapabilityProbeResult>;
   /** Re-run probes for all web-class capabilities (refreshes badge count). */
   refreshProbes: () => Promise<void>;
+  /**
+   * Live agent-discovered registry: channels, tools, connectors, skills.
+   * Built from `hermes capabilities --json` + installed skills + a seed
+   * fallback. Drives Dashboard tiles, Channels page, slash palette.
+   */
+  discovered: Record<string, DiscoveredCapability>;
+  /** True once at least one Hermes CLI discovery call has succeeded. */
+  discoveryFromHermes: boolean;
 }
 
 const CapabilitiesContext = createContext<CapabilitiesContextValue | null>(null);
@@ -113,6 +127,14 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
   const [storedSecretKeys, setStoredSecretKeys] = useState<string[]>([]);
   const [observedTools, setObservedTools] = useState<string[]>([]);
   const [recentlyUsed, setRecentlyUsed] = useState<Record<string, ObservedToolUse>>({});
+  // Agent-discovered capability registry (channels, tools, connectors, skills).
+  // Seeded synchronously so the UI never blanks; replaced by live discovery.
+  const [discovered, setDiscovered] = useState<Record<string, DiscoveredCapability>>(() => {
+    const seed: Record<string, DiscoveredCapability> = {};
+    for (const c of SEED_CAPABILITIES) seed[c.id] = { ...c };
+    return seed;
+  });
+  const [discoveryFromHermes, setDiscoveryFromHermes] = useState(false);
   // Session grants live in sessionStorage so they survive HMR but not a real reload.
   const sessionGrantsRef = useRef<Set<string>>(new Set());
 
@@ -154,6 +176,13 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
         setStoredSecretKeys(r.keys);
       }
     } catch { /* best effort */ }
+    // Refresh agent-discovered capability registry (channels, tools, …).
+    try {
+      invalidateDiscoveryCache();
+      const result = await discoverCapabilities({ force: true });
+      setDiscovered(result.capabilities);
+      setDiscoveryFromHermes(result.fromHermes);
+    } catch { /* best effort — seed stays */ }
   }, []);
 
   useEffect(() => {
@@ -369,11 +398,14 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
       pendingDecisionsCount,
       probeResults,
       refreshProbes,
+      discovered,
+      discoveryFromHermes,
     }),
     [
       registry, policy, setPolicy, resetAll, recentlyUsed, readinessFor, rediscover, gate, recordUse,
       pendingDecision, openCapabilityDecision, closePendingDecision, grantSession,
       pendingDecisionsCount, probeResults, refreshProbes,
+      discovered, discoveryFromHermes,
     ],
   );
 

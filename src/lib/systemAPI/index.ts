@@ -110,6 +110,7 @@ export const systemAPI = {
   revealSkillsFolder: hermesAPI.revealSkillsFolder.bind(hermesAPI),
   probeBrowserNavigate: hermesAPI.probeBrowserNavigate.bind(hermesAPI),
   runBrowserSelfTest: hermesAPI.runBrowserSelfTest.bind(hermesAPI),
+  discoverCapabilities: hermesAPI.discoverCapabilities.bind(hermesAPI),
   // Prereqs (extras)
   checkRipgrep: prereqAPI.checkRipgrep.bind(prereqAPI),
   installRipgrep: prereqAPI.installRipgrep.bind(prereqAPI),

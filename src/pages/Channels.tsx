@@ -1,55 +1,71 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Radio, Sparkles, Loader2 } from "lucide-react";
 import ChannelCard, { ChannelStatus } from "@/components/channels/ChannelCard";
 import UpgradeCard from "@/components/channels/UpgradeCard";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
-import { CHANNELS, Channel } from "@/lib/channels";
 import { UPGRADES, getUpgrade, isUpgradeUnlocked } from "@/lib/licenses";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { useChat } from "@/contexts/ChatContext";
-import { CAPABILITY_CATALOG } from "@/lib/capabilities/catalog";
+import { useCapabilities } from "@/contexts/CapabilitiesContext";
+import { filterByKind } from "@/lib/capabilities/discovery";
+import type { DiscoveredCapability } from "@/lib/capabilities/types";
 
 /**
- * Channels page — purely a directory of available channels. Setup is fully
- * agent-driven via chat: clicking "Set up" seeds a capability prompt into
- * the chat composer and the agent owns credential collection, QR pairing,
- * gateway lifecycle, and runtime repair via the intent protocol.
+ * Channels page — purely a directory of channels the agent supports.
+ *
+ * The list itself is **not** hard-coded: it is derived from the runtime
+ * capability registry (`useCapabilities().discovered`), which is fed by
+ * `hermes capabilities --json` + installed skills + a small seed
+ * fallback. New Hermes channels appear here automatically.
+ *
+ * Setup is fully agent-driven via chat: clicking "Set up" seeds the
+ * capability's setup prompt into the chat composer; the agent owns
+ * credential collection, QR pairing, gateway lifecycle, and runtime
+ * repair via the intent protocol.
  */
+
+/** Premium channels (gated by a license upgrade). Keyed by capability id. */
+const PAID_CHANNELS: Record<string, { upgradeId: string }> = {
+  // No paid channels at present — kept here as the extension point.
+};
+
 const ChannelsPage = () => {
   const navigate = useNavigate();
   const { setDraft } = useChat();
-  const [statuses, setStatuses] = useState<Record<string, ChannelStatus>>(() =>
-    Object.fromEntries(CHANNELS.map((c) => [c.id, { state: "loading" } as ChannelStatus])),
+  const { discovered, discoveryFromHermes } = useCapabilities();
+
+  const channels = useMemo<DiscoveredCapability[]>(
+    () => filterByKind(discovered, ["channel"]).sort((a, b) => a.name.localeCompare(b.name)),
+    [discovered],
   );
+
+  const [statuses, setStatuses] = useState<Record<string, ChannelStatus>>({});
   const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
   const [unlocksLoading, setUnlocksLoading] = useState(true);
   const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
   const googleSetupInFlightRef = useRef(false);
 
-  const getRunningChannels = async (): Promise<string[]> => {
+  const getRunningChannels = async (ids: string[]): Promise<string[]> => {
     try {
       const status = await systemAPI.hermesStatus();
       const out = `${status.stdout || ""}\n${status.stderr || ""}`.toLowerCase();
-      return CHANNELS.filter((c) => out.includes(`${c.id}`) && out.includes("running")).map((c) => c.id);
+      return ids.filter((id) => out.includes(id) && out.includes("running"));
     } catch {
       return [];
     }
   };
 
-  const isChannelConfigured = (channel: Channel, env: Record<string, string>): boolean => {
-    const required = channel.credentials.filter((c) => !c.optional);
+  const isChannelConfigured = (channel: DiscoveredCapability, env: Record<string, string>): boolean => {
+    const required = channel.requiredSecrets;
     if (required.length === 0) {
-      // Channels with no required env keys (e.g. WhatsApp/QR-based) — let
-      // the agent own configured-state. From the app's perspective they
-      // start as "not-configured" and become "configured" only once the
-      // agent reports the channel is enabled in the gateway.
-      const enabledKey = `${channel.id.toUpperCase()}_ENABLED`;
+      // QR-based / no-key channels (e.g. WhatsApp): ENABLED flag is the signal.
+      const enabledKey = `${channel.id.toUpperCase().replace(/-/g, "_")}_ENABLED`;
       return (env[enabledKey] || "").trim().toLowerCase() === "true";
     }
-    return required.every((c) => !!env[c.envVar] && env[c.envVar].trim().length > 0);
+    return required.every((k) => !!env[k] && env[k].trim().length > 0);
   };
 
   const refresh = useCallback(async () => {
@@ -61,11 +77,13 @@ const ChannelsPage = () => {
     setUnlocksLoading(false);
 
     const env = await systemAPI.readEnvFile();
-    const runningChannels = await getRunningChannels();
+    const ids = channels.map((c) => c.id);
+    const running = await getRunningChannels(ids);
 
     const next: Record<string, ChannelStatus> = {};
-    for (const channel of CHANNELS) {
-      if (channel.tier === "paid" && !unlockMap[channel.upgradeId!]) {
+    for (const channel of channels) {
+      const paid = PAID_CHANNELS[channel.id];
+      if (paid && !unlockMap[paid.upgradeId]) {
         next[channel.id] = { state: "locked" };
         continue;
       }
@@ -73,36 +91,30 @@ const ChannelsPage = () => {
       if (!configured) {
         next[channel.id] = { state: "not-configured" };
       } else {
-        const running = runningChannels.includes(channel.id);
-        next[channel.id] = { state: "configured", running };
+        next[channel.id] = { state: "configured", running: running.includes(channel.id) };
       }
     }
     setStatuses(next);
-  }, []);
+  }, [channels]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const handleSetUp = (channel: Channel) => {
-    if (channel.tier === "paid" && !unlocks[channel.upgradeId!]) {
-      toast.info(`${channel.name} requires the ${channel.name} upgrade`, {
+  const handleSetUp = (channel: DiscoveredCapability) => {
+    const paid = PAID_CHANNELS[channel.id];
+    if (paid && !unlocks[paid.upgradeId]) {
+      toast.info(`${channel.name} requires an upgrade`, {
         description: "Scroll down to the Premium upgrades section to unlock it.",
       });
       return;
     }
-    // All channel setup flows are agent-driven. Hand off to chat with a
-    // seeded prompt; the agent emits intent cards (credentials, confirms,
-    // QR codes, OAuth) inline.
-    const entry = CAPABILITY_CATALOG.find((c) => c.id === channel.id);
-    const prompt =
-      entry?.setupPrompt ?? `Set up ${channel.name} so I can message you from ${channel.name}.`;
-    setDraft(prompt);
+    setDraft(channel.setupPrompt);
     navigate("/chat");
   };
 
-  const free = CHANNELS.filter((c) => c.tier === "free");
-  const paid = CHANNELS.filter((c) => c.tier === "paid");
+  const free = channels.filter((c) => !PAID_CHANNELS[c.id]);
+  const paid = channels.filter((c) => PAID_CHANNELS[c.id]);
   const googleWorkspaceUpgrade = getUpgrade("googleworkspace");
   const googleWorkspaceUnlocked = !!unlocks.googleworkspace;
   const showGoogleWorkspaceInUpgrades = !googleWorkspaceUnlocked;
@@ -140,6 +152,11 @@ const ChannelsPage = () => {
           Let your agent message you through the apps you already use. Click "Set up" — your agent
           will walk you through it in chat.
         </p>
+        {!discoveryFromHermes && (
+          <p className="text-[11px] text-muted-foreground/70 mt-1">
+            Showing well-known channels. Connect your agent to see the full live list.
+          </p>
+        )}
       </div>
 
       {/* Available channels */}
@@ -151,7 +168,10 @@ const ChannelsPage = () => {
           {free.map((c) => (
             <ChannelCard
               key={c.id}
-              channel={c}
+              id={c.id}
+              name={c.name}
+              tagline={c.oneLiner}
+              icon={c.icon}
               status={statuses[c.id] ?? { state: "loading" }}
               onSetUp={() => handleSetUp(c)}
             />
@@ -192,7 +212,6 @@ const ChannelsPage = () => {
         </div>
       </section>
 
-      {/* Paid channels (only render if any exist) */}
       {paid.length > 0 && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground/70 flex items-center gap-2">
@@ -203,7 +222,10 @@ const ChannelsPage = () => {
             {paid.map((c) => (
               <ChannelCard
                 key={c.id}
-                channel={c}
+                id={c.id}
+                name={c.name}
+                tagline={c.oneLiner}
+                icon={c.icon}
                 status={statuses[c.id] ?? { state: "loading" }}
                 onSetUp={() => handleSetUp(c)}
               />

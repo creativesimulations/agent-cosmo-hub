@@ -4,7 +4,9 @@ import * as Icons from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { useChat } from "@/contexts/ChatContext";
-import { groupCatalog, type CapabilityEntry } from "@/lib/capabilities/catalog";
+import { useCapabilities } from "@/contexts/CapabilitiesContext";
+import { groupByCategory } from "@/lib/capabilities/discovery";
+import type { DiscoveredCapability, DiscoveredCategory } from "@/lib/capabilities/types";
 import { cn } from "@/lib/utils";
 
 interface CapabilityGalleryProps {
@@ -16,12 +18,23 @@ interface CapabilityGalleryProps {
   subheading?: string;
 }
 
-const resolveIcon = (name: string): React.ComponentType<{ className?: string }> => {
+const CATEGORY_LABELS: Record<DiscoveredCategory, { label: string; description: string }> = {
+  communication: { label: "Communication", description: "Talk to your agent through the apps you already use" },
+  productivity:  { label: "Productivity",  description: "Email, calendar, docs, and task tools" },
+  knowledge:     { label: "Knowledge",     description: "Search the web and read content" },
+  computer:      { label: "Your computer", description: "Files, terminal, and local automation" },
+  media:         { label: "Media",         description: "Images, audio, and video" },
+  developer:     { label: "Developer",     description: "Code, repos, and dev tooling" },
+  other:         { label: "More",          description: "Skills and tools your agent has installed" },
+};
+
+const resolveIcon = (name?: string): React.ComponentType<{ className?: string }> => {
+  if (!name) return Icons.Sparkles;
   const lib = Icons as unknown as Record<string, React.ComponentType<{ className?: string }>>;
   return lib[name] ?? Icons.Sparkles;
 };
 
-const CapabilityTile = ({ entry, compact }: { entry: CapabilityEntry; compact?: boolean }) => {
+const CapabilityTile = ({ entry, compact }: { entry: DiscoveredCapability; compact?: boolean }) => {
   const navigate = useNavigate();
   const { setDraft } = useChat();
   const Icon = resolveIcon(entry.icon);
@@ -72,7 +85,8 @@ const CapabilityTile = ({ entry, compact }: { entry: CapabilityEntry; compact?: 
 };
 
 const CapabilityGallery = ({ compact, heading, subheading }: CapabilityGalleryProps) => {
-  const groups = groupCatalog();
+  const { discovered, discoveryFromHermes } = useCapabilities();
+  const groups = groupByCategory(Object.values(discovered));
 
   return (
     <GlassCard className="space-y-5">
@@ -83,27 +97,35 @@ const CapabilityGallery = ({ compact, heading, subheading }: CapabilityGalleryPr
         <p className="text-sm text-muted-foreground">
           {subheading ?? "Click any tile to ask the agent to set it up — it will guide you step by step in chat."}
         </p>
+        {!discoveryFromHermes && (
+          <p className="text-[11px] text-muted-foreground/70">
+            Showing well-known capabilities. Connect your agent to see the full live list.
+          </p>
+        )}
       </div>
 
       <div className="space-y-6">
-        {groups.map((group) => (
-          <section key={group.category} className="space-y-2">
-            <div className="flex items-baseline gap-2">
-              <h3 className="text-sm font-semibold text-foreground/90">{group.label}</h3>
-              <span className="text-xs text-muted-foreground/70">{group.description}</span>
-            </div>
-            <div className={cn(
-              "grid gap-2",
-              compact
-                ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
-                : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4",
-            )}>
-              {group.entries.map((entry) => (
-                <CapabilityTile key={entry.id} entry={entry} compact={compact} />
-              ))}
-            </div>
-          </section>
-        ))}
+        {groups.map((group) => {
+          const label = CATEGORY_LABELS[group.category];
+          return (
+            <section key={group.category} className="space-y-2">
+              <div className="flex items-baseline gap-2">
+                <h3 className="text-sm font-semibold text-foreground/90">{label.label}</h3>
+                <span className="text-xs text-muted-foreground/70">{label.description}</span>
+              </div>
+              <div className={cn(
+                "grid gap-2",
+                compact
+                  ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
+                  : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4",
+              )}>
+                {group.entries.map((entry) => (
+                  <CapabilityTile key={entry.id} entry={entry} compact={compact} />
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </div>
 
       <div className="pt-3 border-t border-white/5 flex items-center justify-between">

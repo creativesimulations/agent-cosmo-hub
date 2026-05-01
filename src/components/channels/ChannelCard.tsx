@@ -1,8 +1,8 @@
-import { Lock, Loader2, AlertCircle } from "lucide-react";
+import { Lock, Loader2, AlertCircle, Radio } from "lucide-react";
+import * as Icons from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { Channel } from "@/lib/channels";
 
 export type ChannelStatus =
   | { state: "loading" }
@@ -11,13 +11,28 @@ export type ChannelStatus =
   | { state: "configured"; running: boolean; starting?: boolean; attentionReason?: string };
 
 interface ChannelCardProps {
-  channel: Channel;
+  /** Stable id (used by parent for status lookups). */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** One-line tagline. */
+  tagline: string;
+  /** Lucide icon name (resolved at render). */
+  icon?: string;
+  /** Optional setup difficulty hint. */
+  difficulty?: string;
   status: ChannelStatus;
   onSetUp: () => void;
 }
 
-const ChannelCard = ({ channel, status, onSetUp }: ChannelCardProps) => {
-  const Icon = channel.icon;
+const resolveIcon = (name?: string): React.ComponentType<{ className?: string }> => {
+  if (!name) return Radio;
+  const lib = Icons as unknown as Record<string, React.ComponentType<{ className?: string }>>;
+  return lib[name] ?? Radio;
+};
+
+const ChannelCard = ({ id: _id, name, tagline, icon, difficulty, status, onSetUp }: ChannelCardProps) => {
+  const Icon = resolveIcon(icon);
 
   const statusBadge = () => {
     if (status.state === "loading") {
@@ -77,9 +92,11 @@ const ChannelCard = ({ channel, status, onSetUp }: ChannelCardProps) => {
       </div>
 
       <div className="space-y-1">
-        <h3 className="text-base font-semibold text-foreground">{channel.name}</h3>
-        <p className="text-xs text-muted-foreground leading-relaxed">{channel.tagline}</p>
-        <p className="text-[11px] text-muted-foreground/70">Setup difficulty: {channel.difficulty}</p>
+        <h3 className="text-base font-semibold text-foreground">{name}</h3>
+        <p className="text-xs text-muted-foreground leading-relaxed">{tagline}</p>
+        {difficulty && (
+          <p className="text-[11px] text-muted-foreground/70">Setup difficulty: {difficulty}</p>
+        )}
       </div>
 
       <div className="flex flex-col gap-2 mt-auto">
