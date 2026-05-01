@@ -13,6 +13,7 @@ export {
   type FilePickIntent,
   type ProgressIntent,
   type DoneIntent,
+  type PairingApproveIntent,
 } from './protocol';
 export { splitIntentsFromText, IntentStreamParser } from './parser';
 export { formatIntentResponse, type FormattedIntentResponse } from './responder';

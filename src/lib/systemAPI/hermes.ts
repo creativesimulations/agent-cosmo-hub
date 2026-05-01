@@ -5497,4 +5497,136 @@ model: ${options.model || 'openrouter/auto'}
     if (any) return { ok: true, raw };
     return { ok: false, error: 'hermes capabilities CLI unavailable' };
   },
+
+  /**
+   * List configured MCP (Model Context Protocol) servers.
+   *
+   * Tries `hermes mcp list --json` first; falls back to parsing the
+   * `mcp_servers:` block from `~/.hermes/config.yaml`. Returns a normalized
+   * shape regardless of source so the UI doesn't have to care.
+   */
+  async listMCPServers(): Promise<{
+    success: boolean;
+    servers: Array<{ name: string; command?: string; args?: string[]; enabled?: boolean; transport?: string }>;
+    error?: string;
+  }> {
+    if (!isElectron()) return { success: true, servers: [] };
+    const cli = await runHermesCli('hermes mcp list --json 2>/dev/null', { timeout: 15000 }).catch(
+      () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+    );
+    if (cli.success && cli.stdout.trim().startsWith('[')) {
+      try {
+        const arr = JSON.parse(cli.stdout) as Array<Record<string, unknown>>;
+        const servers = arr
+          .map((e) => ({
+            name: typeof e.name === 'string' ? e.name : '',
+            command: typeof e.command === 'string' ? e.command : undefined,
+            args: Array.isArray(e.args) ? (e.args.filter((x) => typeof x === 'string') as string[]) : undefined,
+            enabled: typeof e.enabled === 'boolean' ? e.enabled : undefined,
+            transport: typeof e.transport === 'string' ? e.transport : undefined,
+          }))
+          .filter((s) => s.name);
+        return { success: true, servers };
+      } catch { /* fall through */ }
+    }
+    // Fallback: scan config.yaml for `mcp_servers:` / `mcpServers:`.
+    const cfg = await this.readConfig();
+    if (!cfg.success || !cfg.content) {
+      return { success: false, servers: [], error: cli.stderr || 'hermes mcp CLI unavailable and no config' };
+    }
+    const servers: Array<{ name: string; command?: string; args?: string[]; enabled?: boolean }> = [];
+    const lines = cfg.content.split('\n');
+    let inBlock = false;
+    let baseIndent = -1;
+    let current: { name: string; command?: string; args?: string[]; enabled?: boolean } | null = null;
+    for (const line of lines) {
+      if (/^(mcp_servers|mcpServers):\s*$/.test(line)) { inBlock = true; baseIndent = -1; continue; }
+      if (!inBlock) continue;
+      if (/^\S/.test(line) && line.trim()) { inBlock = false; if (current) servers.push(current); current = null; continue; }
+      const indentMatch = line.match(/^(\s+)(\S.*)?$/);
+      if (!indentMatch) continue;
+      const indent = indentMatch[1].length;
+      if (baseIndent < 0 && indentMatch[2]) baseIndent = indent;
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const newServer = trimmed.match(/^([A-Za-z0-9_.-]+):\s*$/);
+      if (newServer && indent === baseIndent) {
+        if (current) servers.push(current);
+        current = { name: newServer[1] };
+        continue;
+      }
+      if (!current) continue;
+      const cmd = trimmed.match(/^command:\s*['"]?(.+?)['"]?$/);
+      if (cmd) { current.command = cmd[1]; continue; }
+      const en = trimmed.match(/^enabled:\s*(true|false)$/i);
+      if (en) { current.enabled = en[1].toLowerCase() === 'true'; continue; }
+    }
+    if (current) servers.push(current);
+    return { success: true, servers };
+  },
+
+  /**
+   * List scheduled (cron-like) agent jobs.
+   *
+   * Hermes ships a built-in scheduler; CLI surface varies by version. We
+   * try `hermes cron list --json`, then `hermes schedule list --json`. If
+   * neither exists, we return an empty success so the UI shows the empty
+   * state with a "create job" prompt that the agent can fulfill via chat.
+   */
+  async listScheduledJobs(): Promise<{
+    success: boolean;
+    jobs: Array<{ id: string; description: string; schedule?: string; nextRun?: string; enabled?: boolean }>;
+    error?: string;
+    cliAvailable: boolean;
+  }> {
+    if (!isElectron()) return { success: true, jobs: [], cliAvailable: false };
+    const probes = [
+      'hermes cron list --json 2>/dev/null',
+      'hermes schedule list --json 2>/dev/null',
+      'hermes scheduled list --json 2>/dev/null',
+    ];
+    for (const probe of probes) {
+      const r = await runHermesCli(probe, { timeout: 15000 }).catch(
+        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+      );
+      const text = (r.stdout || '').trim();
+      if (r.success && text.startsWith('[')) {
+        try {
+          const arr = JSON.parse(text) as Array<Record<string, unknown>>;
+          const jobs = arr.map((e, i) => ({
+            id: typeof e.id === 'string' ? e.id : `job-${i}`,
+            description:
+              typeof e.description === 'string' ? e.description :
+              typeof e.task === 'string' ? e.task :
+              typeof e.prompt === 'string' ? e.prompt :
+              typeof e.name === 'string' ? e.name : '(no description)',
+            schedule: typeof e.schedule === 'string' ? e.schedule :
+                      typeof e.cron === 'string' ? e.cron : undefined,
+            nextRun: typeof e.nextRun === 'string' ? e.nextRun :
+                     typeof e.next_run === 'string' ? e.next_run : undefined,
+            enabled: typeof e.enabled === 'boolean' ? e.enabled : undefined,
+          }));
+          return { success: true, jobs, cliAvailable: true };
+        } catch { /* try next */ }
+      }
+    }
+    return { success: true, jobs: [], cliAvailable: false };
+  },
+
+  /** Delete a scheduled job by id. Best-effort across CLI variants. */
+  async deleteScheduledJob(id: string): Promise<{ success: boolean; error?: string }> {
+    if (!isElectron()) return { success: false, error: 'browser-mode' };
+    const safe = id.replace(/[^A-Za-z0-9_.-]/g, '');
+    if (!safe) return { success: false, error: 'invalid job id' };
+    const r = await runHermesCli(
+      [
+        `hermes cron delete ${safe} 2>&1`,
+        `|| hermes cron remove ${safe} 2>&1`,
+        `|| hermes schedule delete ${safe} 2>&1`,
+        `|| hermes scheduled delete ${safe} 2>&1`,
+      ].join(' '),
+      { timeout: 15000 },
+    );
+    return { success: r.success, error: r.success ? undefined : (r.stderr || r.stdout || 'delete failed').slice(0, 400) };
+  },
 };

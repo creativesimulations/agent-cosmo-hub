@@ -20,6 +20,7 @@ import OAuthCard from './OAuthCard';
 import FilePickCard from './FilePickCard';
 import ProgressCard from './ProgressCard';
 import DoneCard from './DoneCard';
+import PairingCard from './PairingCard';
 
 export interface IntentCardProps {
   intent: AgentIntent;
@@ -72,6 +73,10 @@ const IntentCard = ({ intent, onRespond, responded, previousResponse }: IntentCa
       return <ProgressCard intent={intent} />;
     case 'done':
       return <DoneCard intent={intent} />;
+    case 'pairing_approve':
+      return (
+        <PairingCard intent={intent} onRespond={respond} responded={responded} previousResponse={previousResponse} />
+      );
     default:
       return null;
   }

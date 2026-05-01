@@ -33,6 +33,54 @@ const resolveIcon = (name?: string): React.ComponentType<{ className?: string }>
   return lib[name] ?? Icons.Sparkles;
 };
 
+/**
+ * Built-in agent meta-commands. These are not "capabilities" the agent
+ * provides via discovery — they're directives the user gives the agent
+ * (switch to voice mode, run in background, show usage analytics). The
+ * agent owns the actual behavior; the palette just seeds the prompt.
+ */
+const BUILTIN_COMMANDS: DiscoveredCapability[] = [
+  {
+    id: "voice",
+    kind: "tool",
+    name: "Voice mode",
+    oneLiner: "Talk to the agent out loud — speech in and speech out.",
+    icon: "Mic",
+    category: "media",
+    requiresSetup: false,
+    requiredSecrets: [],
+    optionalSecrets: [],
+    setupPrompt: "Switch to voice mode — I want to talk to you out loud.",
+    source: "seed",
+  },
+  {
+    id: "background",
+    kind: "tool",
+    name: "Background session",
+    oneLiner: "Run a long task while I close the app.",
+    icon: "Moon",
+    category: "computer",
+    requiresSetup: false,
+    requiredSecrets: [],
+    optionalSecrets: [],
+    setupPrompt: "Run this in the background so I can close the app and you keep working.",
+    source: "seed",
+  },
+  {
+    id: "insights",
+    kind: "tool",
+    name: "Insights",
+    oneLiner: "Show me what you've been doing — usage, sessions, channels.",
+    icon: "BarChart3",
+    category: "knowledge",
+    requiresSetup: false,
+    requiredSecrets: [],
+    optionalSecrets: [],
+    setupPrompt: "Give me a summary of what you've been doing — recent activity, busiest channels, anything I should know about.",
+    source: "seed",
+  },
+];
+
 const matches = (entry: DiscoveredCapability, query: string): boolean => {
   if (!query) return true;
   const q = query.toLowerCase();
@@ -47,14 +95,26 @@ const SlashCommandPalette = ({ value, onPick, onDismiss }: SlashCommandPalettePr
   const { discovered } = useCapabilities();
   const open = value.startsWith("/");
   const query = open ? value.slice(1).trim() : "";
-  const filtered = useMemo(
-    () =>
-      Object.values(discovered)
-        .filter((e) => matches(e, query))
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .slice(0, 8),
-    [query, discovered],
-  );
+  const filtered = useMemo(() => {
+    // Merge built-ins first (so /voice, /background, /insights show even
+    // before discovery runs). Discovered entries override any built-in
+    // with the same id.
+    const merged: Record<string, DiscoveredCapability> = {};
+    for (const c of BUILTIN_COMMANDS) merged[c.id] = c;
+    for (const [id, c] of Object.entries(discovered)) merged[id] = c;
+    const builtinIds = new Set(BUILTIN_COMMANDS.map((b) => b.id));
+    return Object.values(merged)
+      .filter((e) => matches(e, query))
+      .sort((a, b) => {
+        if (!query) {
+          const aB = builtinIds.has(a.id) ? 0 : 1;
+          const bB = builtinIds.has(b.id) ? 0 : 1;
+          if (aB !== bB) return aB - bB;
+        }
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 10);
+  }, [query, discovered]);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
