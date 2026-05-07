@@ -5568,65 +5568,38 @@ model: ${options.model || 'openrouter/auto'}
   /**
    * List scheduled (cron-like) agent jobs.
    *
-   * Hermes ships a built-in scheduler; CLI surface varies by version. We
-   * try `hermes cron list --json`, then `hermes schedule list --json`. If
-   * neither exists, we return an empty success so the UI shows the empty
-   * state with a "create job" prompt that the agent can fulfill via chat.
+   * Per the official Hermes CLI reference, the only real command is
+   * `hermes cron list` — there is no `--json` flag and the `schedule` /
+   * `scheduled` aliases do not exist. We parse the human-readable table.
+   *
+   * Expected lines look roughly like:
+   *   ID         SCHEDULE        NEXT RUN              PROMPT
+   *   abc123     */15 * * * *    2026-05-07 12:30:00   Check the build
+   * We are tolerant of column reordering and extra whitespace.
    */
   async listScheduledJobs(): Promise<{
     success: boolean;
-    jobs: Array<{ id: string; description: string; schedule?: string; nextRun?: string; enabled?: boolean }>;
+    jobs: Array<{ id: string; description: string; schedule?: string; nextRun?: string; recurring?: boolean; enabled?: boolean }>;
     error?: string;
     cliAvailable: boolean;
   }> {
     if (!isElectron()) return { success: true, jobs: [], cliAvailable: false };
-    const probes = [
-      'hermes cron list --json 2>/dev/null',
-      'hermes schedule list --json 2>/dev/null',
-      'hermes scheduled list --json 2>/dev/null',
-    ];
-    for (const probe of probes) {
-      const r = await runHermesCli(probe, { timeout: 15000 }).catch(
-        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
-      );
-      const text = (r.stdout || '').trim();
-      if (r.success && text.startsWith('[')) {
-        try {
-          const arr = JSON.parse(text) as Array<Record<string, unknown>>;
-          const jobs = arr.map((e, i) => ({
-            id: typeof e.id === 'string' ? e.id : `job-${i}`,
-            description:
-              typeof e.description === 'string' ? e.description :
-              typeof e.task === 'string' ? e.task :
-              typeof e.prompt === 'string' ? e.prompt :
-              typeof e.name === 'string' ? e.name : '(no description)',
-            schedule: typeof e.schedule === 'string' ? e.schedule :
-                      typeof e.cron === 'string' ? e.cron : undefined,
-            nextRun: typeof e.nextRun === 'string' ? e.nextRun :
-                     typeof e.next_run === 'string' ? e.next_run : undefined,
-            enabled: typeof e.enabled === 'boolean' ? e.enabled : undefined,
-          }));
-          return { success: true, jobs, cliAvailable: true };
-        } catch { /* try next */ }
-      }
+    const r = await runHermesCli('hermes cron list 2>&1', { timeout: 15000 }).catch(
+      () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+    );
+    if (!r.success) {
+      return { success: true, jobs: [], cliAvailable: false };
     }
-    return { success: true, jobs: [], cliAvailable: false };
+    const jobs = parseCronListOutput(r.stdout || '');
+    return { success: true, jobs, cliAvailable: true };
   },
 
-  /** Delete a scheduled job by id. Best-effort across CLI variants. */
+  /** Delete a scheduled job by id. Uses `hermes cron remove <id>`. */
   async deleteScheduledJob(id: string): Promise<{ success: boolean; error?: string }> {
     if (!isElectron()) return { success: false, error: 'browser-mode' };
     const safe = id.replace(/[^A-Za-z0-9_.-]/g, '');
     if (!safe) return { success: false, error: 'invalid job id' };
-    const r = await runHermesCli(
-      [
-        `hermes cron delete ${safe} 2>&1`,
-        `|| hermes cron remove ${safe} 2>&1`,
-        `|| hermes schedule delete ${safe} 2>&1`,
-        `|| hermes scheduled delete ${safe} 2>&1`,
-      ].join(' '),
-      { timeout: 15000 },
-    );
+    const r = await runHermesCli(`hermes cron remove ${safe} 2>&1`, { timeout: 15000 });
     return { success: r.success, error: r.success ? undefined : (r.stderr || r.stdout || 'delete failed').slice(0, 400) };
   },
 
