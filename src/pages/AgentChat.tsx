@@ -508,6 +508,31 @@ const AgentChat = () => {
               Next message will run as a background task. Toggle off above to send normally.
             </div>
           )}
+          {personalityRestartPending && (
+            <div className="mb-2 px-3 py-1.5 rounded-md border border-primary/30 bg-primary/10 text-[11px] text-primary flex items-center justify-between gap-2">
+              <span>Personality changes apply on the next agent restart.</span>
+              <span className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await systemAPI.restartAgent().catch(() => undefined);
+                    clearPersonalityRestart();
+                  }}
+                  className="px-2 py-0.5 rounded-sm bg-primary/20 hover:bg-primary/30 text-primary"
+                >
+                  Restart now
+                </button>
+                <button
+                  type="button"
+                  onClick={clearPersonalityRestart}
+                  className="px-1.5 py-0.5 text-primary/70 hover:text-primary"
+                  aria-label="Dismiss"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            </div>
+          )}
           <form
             onSubmit={(e) => { e.preventDefault(); void handleSend(); }}
             className="flex gap-2 items-end"
