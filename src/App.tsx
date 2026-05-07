@@ -12,9 +12,9 @@ import { PermissionsProvider } from "./contexts/PermissionsContext";
 import { CapabilitiesProvider } from "./contexts/CapabilitiesContext";
 import ApprovalDialog from "./components/permissions/ApprovalDialog";
 import PermissionsBridge from "./components/permissions/PermissionsBridge";
+import WelcomeDialog from "./components/companion/WelcomeDialog";
 import Index from "./pages/Index";
 import RootRoute from "./pages/RootRoute";
-import Dashboard from "./pages/Dashboard";
 import SubAgents from "./pages/SubAgents";
 import LLMConfig from "./pages/LLMConfig";
 import Secrets from "./pages/Secrets";
@@ -23,13 +23,10 @@ import SettingsPage from "./pages/SettingsPage";
 import TerminalPage from "./pages/TerminalPage";
 import AgentChat from "./pages/AgentChat";
 import Channels from "./pages/Channels";
-import LogViewer from "./pages/LogViewer";
 import UpdateManager from "./pages/UpdateManager";
 import BackupRestore from "./pages/BackupRestore";
 import Diagnostics from "./pages/Diagnostics";
 import Upgrades from "./pages/Upgrades";
-import Advanced from "./pages/Advanced";
-import MCPServers from "./pages/MCPServers";
 import Scheduled from "./pages/Scheduled";
 import Insights from "./pages/Insights";
 import NotFound from "./pages/NotFound";
@@ -50,11 +47,11 @@ const App = () => (
         <CapabilitiesProvider>
         <InstallProvider>
         <ChatProvider>
+        <WelcomeDialog />
         <Routes>
           <Route element={<AppLayout />}>
             <Route path="/" element={<RootRoute />} />
             <Route path="/install" element={<Index />} />
-            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/agents" element={<SubAgents />} />
             <Route path="/models" element={<LLMConfig />} />
             <Route path="/secrets" element={<Secrets />} />
@@ -65,13 +62,10 @@ const App = () => (
             <Route path="/terminal" element={<TerminalPage />} />
             <Route path="/chat" element={<AgentChat />} />
             <Route path="/channels" element={<Channels />} />
-            <Route path="/advanced" element={<Advanced />} />
-            <Route path="/logs" element={<LogViewer />} />
             <Route path="/upgrades" element={<Upgrades />} />
             <Route path="/updates" element={<UpdateManager />} />
             <Route path="/backups" element={<BackupRestore />} />
             <Route path="/diagnostics" element={<Diagnostics />} />
-            <Route path="/mcp" element={<MCPServers />} />
             <Route path="/scheduled" element={<Scheduled />} />
             <Route path="/insights" element={<Insights />} />
           </Route>

@@ -5843,4 +5843,24 @@ model: ${options.model || 'openrouter/auto'}
       url: urlMatch?.[0],
     };
   },
+
+  /**
+   * Stop + restart the agent. Best-effort: kills any running hermes
+   * processes, then re-issues `hermes status` to warm the agent back up.
+   * Used by the personality flow to apply base-file edits.
+   */
+  async restartAgent(): Promise<{ success: boolean; error?: string }> {
+    if (!isElectron()) return { success: false, error: 'Desktop only' };
+    await runHermesShell(
+      [
+        'pkill -f "hermes chat" 2>/dev/null || true',
+        'pkill -f "hermes gateway" 2>/dev/null || true',
+        'pkill -f "hermes$" 2>/dev/null || true',
+        'sleep 1',
+      ].join('\n'),
+      { timeout: 10000 },
+    ).catch(() => undefined);
+    const r = await this.status().catch(() => ({ success: false } as CommandResult));
+    return { success: r.success !== false, error: r.success === false ? r.stderr || 'restart failed' : undefined };
+  },
 };
