@@ -142,8 +142,10 @@ const AgentChat = () => {
       text = `/background ${text}`;
       setBackgroundMode(false);
     }
+    const wasPersonalityDraft = text.trimStart().startsWith(PERSONALITY_PREFIX);
     setInput("");
     await sendMessage(text);
+    if (wasPersonalityDraft) markPersonalityDraftSent();
   };
 
   // Voice mode toggle — sends a one-shot directive to the agent. The agent
