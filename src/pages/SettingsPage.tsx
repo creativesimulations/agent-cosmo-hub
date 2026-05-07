@@ -23,6 +23,7 @@ import {
   Users,
   Keyboard,
   ExternalLink,
+  Sparkles,
 } from "lucide-react";
 import {
   Select,
@@ -64,6 +65,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import ActionableError from "@/components/ui/ActionableError";
+import PersonalityDialog from "@/components/settings/PersonalityDialog";
 
 /** A labelled toggle row — keeps the page readable when there are 8+ settings. */
 const ToggleRow = ({
@@ -213,6 +215,8 @@ const SettingsPage = () => {
   // Busy-input mode — what happens when the user types while the agent is replying
   const [busyInputMode, setBusyInputMode] = useState<"queue" | "interrupt" | "steer">("queue");
   const [busyInputSaving, setBusyInputSaving] = useState(false);
+
+  const [personalityOpen, setPersonalityOpen] = useState(false);
 
   useEffect(() => {
     if (!agentConnected) return;
@@ -508,6 +512,35 @@ const SettingsPage = () => {
           Install and connect an agent to set its name.
         </GlassCard>
       )}
+
+      {/* ─── Agent Personality ───────────────────────────────── */}
+      {agentConnected && (
+        <SettingsSection icon={Sparkles} title="Agent Personality">
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Tell the agent how you'd like it to think, talk, and behave.
+              The agent will edit its own base files based on your direction —
+              it can do a much better job of writing its own personality
+              than a static form.
+            </p>
+            <div className="flex items-start gap-2 p-3 rounded-md border border-warning/30 bg-warning/5 text-xs">
+              <AlertCircle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
+              <p className="text-muted-foreground">
+                Personality changes won't take effect until the agent is reset.
+                You'll be prompted to restart it once your direction is sent.
+              </p>
+            </div>
+            <Button
+              onClick={() => setPersonalityOpen(true)}
+              className="gradient-primary text-primary-foreground"
+            >
+              <Sparkles className="w-4 h-4 mr-1.5" />
+              Change personality
+            </Button>
+          </div>
+        </SettingsSection>
+      )}
+
 
       {/* ─── General Behavior ─────────────────────────────────── */}
       <SettingsSection icon={Play} title="General Behavior">
