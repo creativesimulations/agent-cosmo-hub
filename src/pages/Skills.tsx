@@ -1,19 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
-  Puzzle, AlertCircle, CheckCircle2, Loader2, RefreshCw, Search, Package, Wrench,
-  ChevronDown, ChevronRight, KeyRound, Power, MoreHorizontal, Globe, Plus, Sparkles, ExternalLink, Box,
+  Puzzle, AlertCircle, Loader2, RefreshCw, Search, Package, Wrench,
+  KeyRound, Globe, Plus, Sparkles, ExternalLink, Box,
 } from "lucide-react";
 import InstallSkillDialog from "@/components/skills/InstallSkillDialog";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
-  DropdownMenuSeparator, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { systemAPI, secretsStore } from "@/lib/systemAPI";
 import { toast } from "sonner";
@@ -21,6 +16,7 @@ import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 import BrowserBackendBadge from "@/components/skills/BrowserBackendBadge";
 import ActionableError from "@/components/ui/ActionableError";
 import { getUpgrade, isUpgradeUnlocked } from "@/lib/licenses";
+import CapabilityGallery from "@/components/dashboard/CapabilityGallery";
 import { cn } from "@/lib/utils";
 
 type Skill = {
@@ -541,162 +537,10 @@ const Skills = () => {
         />
       </GlassCard>
 
-      {loading ? (
-        <GlassCard className="flex items-center justify-center py-16">
-          <div className="text-center space-y-3">
-            <Loader2 className="w-8 h-8 text-primary mx-auto animate-spin" />
-            <p className="text-sm text-muted-foreground">Scanning ~/.hermes/skills…</p>
-          </div>
-        </GlassCard>
-      ) : error ? (
-        <GlassCard className="flex items-center justify-center py-12">
-          <div className="text-center space-y-2 max-w-md">
-            <AlertCircle className="w-8 h-8 text-destructive mx-auto" />
-            <p className="text-sm text-foreground">Couldn't read skills</p>
-            <p className="text-xs text-muted-foreground break-words">{error}</p>
-          </div>
-        </GlassCard>
-      ) : skills.length === 0 ? (
-        <GlassCard className="flex items-center justify-center py-16">
-          <div className="text-center space-y-3 max-w-md">
-            <CheckCircle2 className="w-10 h-10 text-muted-foreground/40 mx-auto" />
-            <p className="text-sm text-foreground">No skills found</p>
-            <p className="text-xs text-muted-foreground/60">
-              Drop skill folders into <code className="text-foreground">~/.hermes/skills/</code> and click Refresh.
-            </p>
-          </div>
-        </GlassCard>
-      ) : filtered.length === 0 ? (
-        <GlassCard className="flex items-center justify-center py-12">
-          <p className="text-sm text-muted-foreground">No skills match "{query}".</p>
-        </GlassCard>
-      ) : (
-        <div className="space-y-6">
-          {grouped.map(([category, items]) => (
-            <div key={category} className="space-y-2">
-              <div className="flex items-baseline gap-2">
-                <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider">
-                  {category}
-                </h2>
-                <span className="text-xs text-muted-foreground">{items.length}</span>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {items.map((skill) => {
-                  const key = `${skill.category}/${skill.name}`;
-                  const isOpen = expanded.has(key);
-                  const isEnabled = !disabledSet.has(skill.name);
-                  const status = statusFor(skill);
-                  const missing = (skill.requiredSecrets ?? []).filter((k) => !secretKeys.has(k));
-                  const present = (skill.requiredSecrets ?? []).filter((k) => secretKeys.has(k));
-                  const toneClass =
-                    status.tone === "ready"
-                      ? "text-success border-success/30 bg-success/5"
-                      : status.tone === "needs"
-                      ? "text-warning border-warning/30 bg-warning/5"
-                      : "text-muted-foreground border-white/10 bg-white/5";
-
-                  return (
-                    <GlassCard
-                      key={key}
-                      variant="subtle"
-                      className="space-y-2"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <button
-                          type="button"
-                          onClick={() => toggleExpand(key)}
-                          className="flex items-center gap-1.5 text-left flex-1 min-w-0 hover:text-primary transition-colors"
-                        >
-                          {isOpen ? <ChevronDown className="w-3.5 h-3.5 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
-                          <span className="text-sm font-medium text-foreground font-mono break-all">
-                            {skill.name}
-                          </span>
-                        </button>
-                        <Switch
-                          checked={isEnabled}
-                          disabled={savingToggle === key}
-                          onCheckedChange={(v) => void handleToggle(skill, v)}
-                          aria-label={`${isEnabled ? "Disable" : "Enable"} ${skill.name}`}
-                        />
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <Badge variant="outline" className={toneClass}>
-                          {status.label}
-                        </Badge>
-                        <Badge
-                          variant="outline"
-                          className={
-                            skill.source === "user"
-                              ? "text-primary border-primary/30 bg-primary/5"
-                              : "text-muted-foreground border-white/10"
-                          }
-                        >
-                          {skill.source}
-                        </Badge>
-                        {(skill.requiredSecrets?.length ?? 0) > 0 && (
-                          <Badge variant="outline" className="text-muted-foreground border-white/10">
-                            <KeyRound className="w-3 h-3 mr-1" />
-                            {skill.requiredSecrets!.length} secret{skill.requiredSecrets!.length === 1 ? "" : "s"}
-                          </Badge>
-                        )}
-                      </div>
-                      {skill.description && !isOpen && (
-                        <p className="text-xs text-muted-foreground line-clamp-2">
-                          {skill.description}
-                        </p>
-                      )}
-                      {isOpen && (
-                        <div className="space-y-3 pt-2 border-t border-white/5">
-                          {skill.description && (
-                            <p className="text-xs text-muted-foreground">{skill.description}</p>
-                          )}
-                          {(skill.requiredSecrets?.length ?? 0) === 0 ? (
-                            <p className="text-[11px] text-muted-foreground/70 italic">
-                              No secrets required.
-                            </p>
-                          ) : (
-                            <div className="space-y-1.5">
-                              <p className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
-                                Required secrets
-                              </p>
-                              {present.map((envVar) => (
-                                <div key={envVar} className="flex items-center justify-between gap-2 text-xs">
-                                  <span className="font-mono text-foreground">{envVar}</span>
-                                  <span className="flex items-center gap-1 text-success">
-                                    <CheckCircle2 className="w-3 h-3" /> Configured
-                                  </span>
-                                </div>
-                              ))}
-                              {missing.map((envVar) => (
-                                <div key={envVar} className="flex items-center justify-between gap-2 text-xs">
-                                  <span className="font-mono text-foreground">{envVar}</span>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-6 px-2 text-warning hover:text-warning hover:bg-warning/10"
-                                    onClick={() => navigate(`/secrets?addKey=${envVar}`)}
-                                  >
-                                    <KeyRound className="w-3 h-3 mr-1" /> Add
-                                  </Button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          {!isEnabled && (
-                            <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-                              <Power className="w-3 h-3" /> Disabled — agent will not call this skill.
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </GlassCard>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <CapabilityGallery
+        heading="What can your agent do?"
+        subheading="Click any tile to ask the agent to set it up — it will guide you step by step in chat."
+      />
 
       <BrowserSetupDialog
         open={browserSetupOpen}
