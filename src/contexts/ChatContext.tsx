@@ -125,36 +125,32 @@ interface QueueItem {
 
 interface ChatContextValue {
   messages: ChatMessage[];
-  /** True while the worker is actively waiting on Hermes for the current turn. */
   isStreaming: boolean;
-  /** Number of user prompts queued behind the active turn (does not include the active one). */
   queuedCount: number;
   unreadCount: number;
   sessionId: string | null;
-  /** Number of sub-agent spawns observed in the in-flight streamed reply. */
   liveSubAgentCount: number;
   sendMessage: (prompt: string) => Promise<void>;
-  /** Interrupt the active reply and discard everything still queued. */
   stop: () => Promise<void>;
   deleteMessage: (id: string) => void;
   clearAll: () => void;
-  /** Reset the unread badge — called when the chat page mounts/focuses. */
   markChatViewed: () => void;
-  /** Start a brand-new Hermes session (drops the resume id). */
   startNewSession: () => void;
-  /** In-memory draft for the chat composer — survives tab switches but not app restarts. */
   draft: string;
   setDraft: (value: string) => void;
-  /**
-   * Reply to an agent intent. Stores the response on the carrier assistant
-   * message (so the card renders as locked) and posts a `ronbot-intent-response`
-   * turn back to the agent. The user-bubble shows a redacted summary.
-   */
   sendIntentResponse: (
     assistantMsgId: string,
     intent: AgentIntent,
     response: IntentResponse,
   ) => Promise<void>;
+  /**
+   * True after a personality-update draft is sent. AgentChat shows a
+   * "restart now to apply" reminder banner. Cleared when the user dismisses
+   * it or restarts the agent.
+   */
+  personalityRestartPending: boolean;
+  markPersonalityDraftSent: () => void;
+  clearPersonalityRestart: () => void;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -197,6 +193,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [draft, setDraft] = useState("");
   const [liveSubAgentCount, setLiveSubAgentCount] = useState(0);
+  const [personalityRestartPending, setPersonalityRestartPending] = useState(false);
   // Honor "Auto-resume last session" — when disabled, we drop any persisted id
   // so the next message starts a fresh Hermes session.
   const [sessionId, setSessionId] = useState<string | null>(() =>
@@ -894,6 +891,9 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         draft,
         setDraft,
         sendIntentResponse,
+        personalityRestartPending,
+        markPersonalityDraftSent: () => setPersonalityRestartPending(true),
+        clearPersonalityRestart: () => setPersonalityRestartPending(false),
       }}
     >
       {children}

@@ -121,6 +121,7 @@ export const systemAPI = {
   setBusyInputMode: hermesAPI.setBusyInputMode.bind(hermesAPI),
   launchHermesDashboard: hermesAPI.launchHermesDashboard.bind(hermesAPI),
   restartAgent: hermesAPI.restartAgent.bind(hermesAPI),
+  writeRonbotAgentRules: hermesAPI.writeRonbotAgentRules.bind(hermesAPI),
   // Prereqs (extras)
   checkRipgrep: prereqAPI.checkRipgrep.bind(prereqAPI),
   installRipgrep: prereqAPI.installRipgrep.bind(prereqAPI),

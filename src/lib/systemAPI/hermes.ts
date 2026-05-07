@@ -5568,73 +5568,45 @@ model: ${options.model || 'openrouter/auto'}
   /**
    * List scheduled (cron-like) agent jobs.
    *
-   * Hermes ships a built-in scheduler; CLI surface varies by version. We
-   * try `hermes cron list --json`, then `hermes schedule list --json`. If
-   * neither exists, we return an empty success so the UI shows the empty
-   * state with a "create job" prompt that the agent can fulfill via chat.
+   * Per the official Hermes CLI reference, the only real command is
+   * `hermes cron list` — there is no `--json` flag and the `schedule` /
+   * `scheduled` aliases do not exist. We parse the human-readable table.
+   *
+   * Expected lines look roughly like:
+   *   ID         SCHEDULE        NEXT RUN              PROMPT
+   *   abc123     star/15 etc     2026-05-07 12:30:00   Check the build
+   * We are tolerant of column reordering and extra whitespace.
    */
   async listScheduledJobs(): Promise<{
     success: boolean;
-    jobs: Array<{ id: string; description: string; schedule?: string; nextRun?: string; enabled?: boolean }>;
+    jobs: Array<{ id: string; description: string; schedule?: string; nextRun?: string; recurring?: boolean; enabled?: boolean }>;
     error?: string;
     cliAvailable: boolean;
   }> {
     if (!isElectron()) return { success: true, jobs: [], cliAvailable: false };
-    const probes = [
-      'hermes cron list --json 2>/dev/null',
-      'hermes schedule list --json 2>/dev/null',
-      'hermes scheduled list --json 2>/dev/null',
-    ];
-    for (const probe of probes) {
-      const r = await runHermesCli(probe, { timeout: 15000 }).catch(
-        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
-      );
-      const text = (r.stdout || '').trim();
-      if (r.success && text.startsWith('[')) {
-        try {
-          const arr = JSON.parse(text) as Array<Record<string, unknown>>;
-          const jobs = arr.map((e, i) => ({
-            id: typeof e.id === 'string' ? e.id : `job-${i}`,
-            description:
-              typeof e.description === 'string' ? e.description :
-              typeof e.task === 'string' ? e.task :
-              typeof e.prompt === 'string' ? e.prompt :
-              typeof e.name === 'string' ? e.name : '(no description)',
-            schedule: typeof e.schedule === 'string' ? e.schedule :
-                      typeof e.cron === 'string' ? e.cron : undefined,
-            nextRun: typeof e.nextRun === 'string' ? e.nextRun :
-                     typeof e.next_run === 'string' ? e.next_run : undefined,
-            enabled: typeof e.enabled === 'boolean' ? e.enabled : undefined,
-          }));
-          return { success: true, jobs, cliAvailable: true };
-        } catch { /* try next */ }
-      }
+    const r = await runHermesCli('hermes cron list 2>&1', { timeout: 15000 }).catch(
+      () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+    );
+    if (!r.success) {
+      return { success: true, jobs: [], cliAvailable: false };
     }
-    return { success: true, jobs: [], cliAvailable: false };
+    const jobs = parseCronListOutput(r.stdout || '');
+    return { success: true, jobs, cliAvailable: true };
   },
 
-  /** Delete a scheduled job by id. Best-effort across CLI variants. */
+  /** Delete a scheduled job by id. Uses `hermes cron remove <id>`. */
   async deleteScheduledJob(id: string): Promise<{ success: boolean; error?: string }> {
     if (!isElectron()) return { success: false, error: 'browser-mode' };
     const safe = id.replace(/[^A-Za-z0-9_.-]/g, '');
     if (!safe) return { success: false, error: 'invalid job id' };
-    const r = await runHermesCli(
-      [
-        `hermes cron delete ${safe} 2>&1`,
-        `|| hermes cron remove ${safe} 2>&1`,
-        `|| hermes schedule delete ${safe} 2>&1`,
-        `|| hermes scheduled delete ${safe} 2>&1`,
-      ].join(' '),
-      { timeout: 15000 },
-    );
+    const r = await runHermesCli(`hermes cron remove ${safe} 2>&1`, { timeout: 15000 });
     return { success: r.success, error: r.success ? undefined : (r.stderr || r.stdout || 'delete failed').slice(0, 400) };
   },
 
   /**
-   * List Hermes profiles (isolated agent instances).
-   * Each profile has its own ~/.hermes-<name>/ directory with separate
-   * config, secrets, and skills. The active profile is shown with `active: true`.
-   * Falls back to a single "default" profile if the CLI doesn't support profiles.
+   * List Hermes profiles via the real CLI: `hermes profile list` (singular,
+   * no `--json`). Output is a human table with the active profile marked
+   * (typically `* default`). Falls back to a single "default" entry.
    */
   async listProfiles(): Promise<{
     success: boolean;
@@ -5643,33 +5615,20 @@ model: ${options.model || 'openrouter/auto'}
     error?: string;
   }> {
     if (!isElectron()) return { success: true, profiles: [{ name: 'default', active: true }], cliAvailable: false };
-    const probes = [
-      'hermes profile list --json 2>/dev/null',
-      'hermes profiles list --json 2>/dev/null',
-    ];
-    for (const probe of probes) {
-      const r = await runHermesCli(probe, { timeout: 15000 }).catch(
-        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
-      );
-      const text = (r.stdout || '').trim();
-      if (r.success && text.startsWith('[')) {
-        try {
-          const arr = JSON.parse(text) as Array<Record<string, unknown>>;
-          const profiles = arr.map((e) => ({
-            name: typeof e.name === 'string' ? e.name : 'default',
-            active: typeof e.active === 'boolean' ? e.active : undefined,
-            path: typeof e.path === 'string' ? e.path : undefined,
-          })).filter((p) => p.name);
-          return { success: true, profiles, cliAvailable: true };
-        } catch { /* try next */ }
-      }
+    const r = await runHermesCli('hermes profile list 2>&1', { timeout: 15000 }).catch(
+      () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+    );
+    if (!r.success) {
+      return { success: true, profiles: [{ name: 'default', active: true }], cliAvailable: false };
     }
-    return { success: true, profiles: [{ name: 'default', active: true }], cliAvailable: false };
+    const profiles = parseProfileListOutput(r.stdout || '');
+    if (!profiles.length) return { success: true, profiles: [{ name: 'default', active: true }], cliAvailable: true };
+    return { success: true, profiles, cliAvailable: true };
   },
 
   /**
-   * List installed Hermes plugins (extensions registered via `hermes plugins`).
-   * Returns name, enabled state, and source. Empty success when CLI is unavailable.
+   * List installed Hermes plugins via `hermes plugins list` (no `--json`).
+   * Parses the human listing for name + enabled flag.
    */
   async listPlugins(): Promise<{
     success: boolean;
@@ -5678,29 +5637,14 @@ model: ${options.model || 'openrouter/auto'}
     error?: string;
   }> {
     if (!isElectron()) return { success: true, plugins: [], cliAvailable: false };
-    const probes = [
-      'hermes plugins list --json 2>/dev/null',
-      'hermes plugin list --json 2>/dev/null',
-    ];
-    for (const probe of probes) {
-      const r = await runHermesCli(probe, { timeout: 15000 }).catch(
-        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
-      );
-      const text = (r.stdout || '').trim();
-      if (r.success && text.startsWith('[')) {
-        try {
-          const arr = JSON.parse(text) as Array<Record<string, unknown>>;
-          const plugins = arr.map((e) => ({
-            name: typeof e.name === 'string' ? e.name : '',
-            enabled: typeof e.enabled === 'boolean' ? e.enabled : undefined,
-            source: typeof e.source === 'string' ? e.source : undefined,
-            description: typeof e.description === 'string' ? e.description : undefined,
-          })).filter((p) => p.name);
-          return { success: true, plugins, cliAvailable: true };
-        } catch { /* try next */ }
-      }
+    const r = await runHermesCli('hermes plugins list 2>&1', { timeout: 15000 }).catch(
+      () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+    );
+    if (!r.success) {
+      return { success: true, plugins: [], cliAvailable: false };
     }
-    return { success: true, plugins: [], cliAvailable: false };
+    const plugins = parsePluginsListOutput(r.stdout || '');
+    return { success: true, plugins, cliAvailable: true };
   },
 
   /**
@@ -5725,50 +5669,13 @@ model: ${options.model || 'openrouter/auto'}
     error?: string;
   }> {
     if (!isElectron()) return { success: true, cliAvailable: false };
-    const probes = [
-      'hermes insights --json 2>/dev/null',
-      'hermes stats --json 2>/dev/null',
-      'hermes usage --json 2>/dev/null',
-    ];
-    for (const probe of probes) {
-      const r = await runHermesCli(probe, { timeout: 20000 }).catch(
-        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
-      );
-      const text = (r.stdout || '').trim();
-      if (r.success && (text.startsWith('{') || text.startsWith('['))) {
-        try {
-          const parsed = JSON.parse(text) as Record<string, unknown>;
-          const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
-          const arr = (v: unknown): Array<{ name: string; count: number }> | undefined => {
-            if (!Array.isArray(v)) return undefined;
-            const out = v
-              .map((e) => {
-                const o = e as Record<string, unknown>;
-                const name = typeof o.name === 'string' ? o.name : typeof o.id === 'string' ? o.id : '';
-                const count = typeof o.count === 'number' ? o.count : typeof o.value === 'number' ? o.value : 0;
-                return { name, count };
-              })
-              .filter((e) => e.name);
-            return out.length ? out : undefined;
-          };
-          return {
-            success: true,
-            cliAvailable: true,
-            insights: {
-              sessionsLast7d: num(parsed.sessions_last_7d ?? parsed.sessionsLast7d),
-              messagesLast7d: num(parsed.messages_last_7d ?? parsed.messagesLast7d),
-              tokensIn: num(parsed.tokens_in ?? parsed.tokensIn),
-              tokensOut: num(parsed.tokens_out ?? parsed.tokensOut),
-              costUsd: num(parsed.cost_usd ?? parsed.costUsd),
-              topChannels: arr(parsed.top_channels ?? parsed.topChannels),
-              topSkills: arr(parsed.top_skills ?? parsed.topSkills),
-              raw: parsed,
-            },
-          };
-        } catch { /* try next */ }
-      }
-    }
-    return { success: true, cliAvailable: false };
+    // Real CLI: `hermes insights [--days N] [--source X]`. No `--json` flag.
+    const r = await runHermesCli('hermes insights --days 30 2>&1', { timeout: 25000 }).catch(
+      () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+    );
+    if (!r.success) return { success: true, cliAvailable: false };
+    const insights = parseInsightsOutput(r.stdout || '');
+    return { success: true, cliAvailable: true, insights };
   },
 
   /**
@@ -5851,16 +5758,220 @@ model: ${options.model || 'openrouter/auto'}
    */
   async restartAgent(): Promise<{ success: boolean; error?: string }> {
     if (!isElectron()) return { success: false, error: 'Desktop only' };
+    // Official restart for the long-lived service.
+    await runHermesCli('hermes gateway restart 2>&1', { timeout: 30000 }).catch(() => undefined);
+    // Drop any stuck streaming chat process so the next turn picks up a
+    // freshly-loaded SOUL.md / config.
     await runHermesShell(
       [
         'pkill -f "hermes chat" 2>/dev/null || true',
-        'pkill -f "hermes gateway" 2>/dev/null || true',
-        'pkill -f "hermes$" 2>/dev/null || true',
         'sleep 1',
       ].join('\n'),
-      { timeout: 10000 },
+      { timeout: 8000 },
     ).catch(() => undefined);
     const r = await this.status().catch(() => ({ success: false } as CommandResult));
     return { success: r.success !== false, error: r.success === false ? r.stderr || 'restart failed' : undefined };
   },
+
+  /**
+   * Write/refresh the Ronbot-owned rules block inside ~/.hermes/AGENTS.md.
+   *
+   * Hermes auto-injects AGENTS.md (alongside SOUL.md and .cursorrules) into
+   * every conversation. We use that to teach the agent ONE thing only — the
+   * Ronbot UI protocol (the `ronbot-intent` fenced JSON envelope and when
+   * to use each intent type). We deliberately do NOT re-explain Hermes
+   * features (cron, skills, MCP) — Hermes already knows those.
+   *
+   * Idempotent: replaces the block in place between
+   * `<!-- ronbot:rules:start -->` and `<!-- ronbot:rules:end -->`,
+   * preserving everything outside it.
+   */
+  async writeRonbotAgentRules(): Promise<{ success: boolean; error?: string }> {
+    if (!isElectron()) return { success: false, error: 'browser-mode' };
+    const path = '$HOME/.hermes/AGENTS.md';
+    const existing = await readHermesFile(path).catch(
+      () => ({ success: false, content: '' }),
+    );
+    const body = existing.success && existing.content ? existing.content : '';
+    const block = RONBOT_RULES_BLOCK;
+    const startTag = '<!-- ronbot:rules:start -->';
+    const endTag = '<!-- ronbot:rules:end -->';
+    let next: string;
+    if (body.includes(startTag) && body.includes(endTag)) {
+      next = body.replace(
+        new RegExp(`${startTag}[\\s\\S]*?${endTag}`),
+        `${startTag}\n${block}\n${endTag}`,
+      );
+      if (next === body) return { success: true };
+    } else {
+      const sep = body.trim() ? '\n\n' : '';
+      next = `${body.trimEnd()}${sep}${startTag}\n${block}\n${endTag}\n`;
+    }
+    return writeHermesFile(path, next, '600');
+  },
+};
+
+/* ─────────────────────  CLI text-output parsers  ───────────────────── */
+
+/**
+ * The Ronbot UI protocol primer that gets injected into AGENTS.md so the
+ * agent knows what fenced JSON blocks the renderer understands. Keep this
+ * purely about the UI contract — never re-document Hermes' own features.
+ */
+const RONBOT_RULES_BLOCK = [
+  '## Ronbot desktop UI protocol',
+  '',
+  'You are running inside the Ronbot desktop control panel. The user chats with',
+  'you through a renderer that understands fenced JSON blocks of the form:',
+  '',
+  '```ronbot-intent',
+  '{ "id": "intent_xyz", "type": "<intent-type>", "title": "Short header", "description": "Optional 1-2 sentence body" }',
+  '```',
+  '',
+  'When you emit one, the renderer hides the JSON and shows an inline UI card.',
+  "The user's reply comes back to you on the next turn as a matching",
+  '```ronbot-intent-response``` block.',
+  '',
+  '**Always prefer an intent card** over a plain prose question whenever the user',
+  'needs to: type a secret, paste a code, scan a QR, choose between options, pick',
+  'a file/folder, confirm a destructive action, or watch a long task progress.',
+  '',
+  'Valid `type` values:',
+  '',
+  '- `credential_request` — collect one or more secrets/text values. Required: `fields: [{ key, label, secret?, hint?, validate?, optional? }]`. Use this for API keys, tokens, anything that should NOT appear in chat history.',
+  '- `confirm` — yes/no. Optional: `confirmLabel`, `cancelLabel`, `destructive`.',
+  '- `choice` — pick one. Required: `options: [{ value, label, description? }]`.',
+  '- `qr_display` — show a QR. Required: `qr` (data URL or raw base64). Optional: `pairingCode`.',
+  '- `oauth_open` — open a URL externally and wait. Required: `url`.',
+  '- `file_pick` — open a file/folder picker. Optional: `pickKind: "file" | "folder"`.',
+  '- `progress` — heartbeat with no input. Optional: `percent` (0-100), `status`.',
+  '- `done` — signal a multi-step setup completed. Optional: `capabilityId`, `message`.',
+  '- `pairing_approve` — display a pairing code the user reads off another device and approves. Required: `pairingCode`.',
+  '',
+  'Rules:',
+  '1. Each intent needs a unique `id` you choose (any string).',
+  "2. Never put real secrets in `description` or anywhere else in chat — only inside the user's `credential_request` response, which the renderer keeps out of chat history.",
+  '3. Identify yourself by the name in `~/.hermes/SOUL.md`, never as "Hermes" or "an AI assistant".',
+  "4. Don't ask the renderer to do things it has no intent for — for everything else, use your normal Hermes tools directly.",
+  '',
+].join('\n');
+
+/** `hermes cron list` parser. Tolerates header rows, ANSI, and reordered cols. */
+export const parseCronListOutput = (
+  text: string,
+): Array<{ id: string; description: string; schedule?: string; nextRun?: string; recurring?: boolean; enabled?: boolean }> => {
+  const out: Array<{ id: string; description: string; schedule?: string; nextRun?: string; recurring?: boolean; enabled?: boolean }> = [];
+  const ansi = /\x1b\[[0-9;]*m/g;
+  const lines = text.split('\n').map((l) => l.replace(ansi, ''));
+  let headerCols: string[] | null = null;
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (!line.trim()) continue;
+    if (/^\s*(no\s+(scheduled\s+)?(cron\s+)?jobs|nothing scheduled)/i.test(line)) {
+      return [];
+    }
+    if (!headerCols && /\bid\b/i.test(line) && /\bschedule\b/i.test(line)) {
+      headerCols = line.trim().split(/\s{2,}/).map((c) => c.toLowerCase());
+      continue;
+    }
+    if (/^[-=─]{3,}/.test(line.trim())) continue;
+    const parts = line.trim().split(/\s{2,}/);
+    if (parts.length < 2) continue;
+    let id = parts[0];
+    let schedule: string | undefined;
+    let nextRun: string | undefined;
+    let description = '';
+    if (headerCols && parts.length >= headerCols.length) {
+      const map: Record<string, string> = {};
+      headerCols.forEach((col, i) => { map[col] = parts[i] ?? ''; });
+      id = map['id'] || id;
+      schedule = map['schedule'] || map['cron'] || undefined;
+      nextRun = map['next run'] || map['next'] || map['next_run'] || undefined;
+      description = map['prompt'] || map['task'] || map['description'] || map['name'] || parts[parts.length - 1];
+    } else {
+      schedule = parts[1];
+      nextRun = parts.length >= 4 ? parts[2] : undefined;
+      description = parts.slice(parts.length >= 4 ? 3 : 2).join(' ');
+    }
+    if (!id || /^id$/i.test(id)) continue;
+    const recurring = !!schedule && /[\s*/]/.test(schedule) && !/^\d{4}-\d{2}-\d{2}/.test(schedule);
+    out.push({
+      id,
+      description: (description || '(no description)').trim(),
+      schedule: schedule?.trim(),
+      nextRun: nextRun?.trim(),
+      recurring,
+    });
+  }
+  return out;
+};
+
+/** `hermes profile list` parser. Active profile usually marked with `*`. */
+export const parseProfileListOutput = (
+  text: string,
+): Array<{ name: string; active?: boolean }> => {
+  const ansi = /\x1b\[[0-9;]*m/g;
+  const out: Array<{ name: string; active?: boolean }> = [];
+  const seen = new Set<string>();
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(ansi, '').trim();
+    if (!line) continue;
+    if (/^(profiles?|name|---|===)/i.test(line)) continue;
+    const m = line.match(/^(\*?)\s*([A-Za-z0-9_.-]+)\b/);
+    if (!m) continue;
+    const name = m[2];
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, active: !!m[1] || /\(active\)/i.test(line) });
+  }
+  return out;
+};
+
+/** `hermes plugins list` parser. */
+export const parsePluginsListOutput = (
+  text: string,
+): Array<{ name: string; enabled?: boolean; description?: string }> => {
+  const ansi = /\x1b\[[0-9;]*m/g;
+  const out: Array<{ name: string; enabled?: boolean; description?: string }> = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(ansi, '').trim();
+    if (!line) continue;
+    if (/^(plugins?|name|---|===)/i.test(line)) continue;
+    if (/^no\s+plugins/i.test(line)) return [];
+    const parts = line.split(/\s{2,}/);
+    const name = parts[0]?.replace(/^[*•]\s*/, '');
+    if (!name || !/^[A-Za-z0-9_.@/-]+$/.test(name)) continue;
+    const rest = parts.slice(1).join(' ');
+    let enabled: boolean | undefined;
+    if (/\b(enabled|on)\b/i.test(rest)) enabled = true;
+    else if (/\b(disabled|off)\b/i.test(rest)) enabled = false;
+    out.push({ name, enabled, description: rest || undefined });
+  }
+  return out;
+};
+
+/** `hermes insights` text-output parser. Matches "Tokens in: 12,345" style. */
+export const parseInsightsOutput = (
+  text: string,
+): {
+  sessionsLast7d?: number;
+  messagesLast7d?: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  costUsd?: number;
+} => {
+  const stripped = text.replace(/\x1b\[[0-9;]*m/g, '');
+  const num = (re: RegExp): number | undefined => {
+    const m = stripped.match(re);
+    if (!m) return undefined;
+    const v = parseFloat(m[1].replace(/[, ]/g, ''));
+    return Number.isFinite(v) ? v : undefined;
+  };
+  return {
+    sessionsLast7d: num(/sessions[^\d-]*([\d,]+)/i),
+    messagesLast7d: num(/messages[^\d-]*([\d,]+)/i),
+    tokensIn: num(/(?:tokens?\s*(?:in|input)|input\s*tokens?)[^\d-]*([\d,]+)/i),
+    tokensOut: num(/(?:tokens?\s*(?:out|output)|output\s*tokens?)[^\d-]*([\d,]+)/i),
+    costUsd: num(/(?:cost|total\s*cost|spend)[^\d-]*\$?\s*([\d,.]+)/i),
+  };
 };
