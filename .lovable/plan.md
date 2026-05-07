@@ -1,154 +1,116 @@
-## Chat-First Companion Dashboard — Final Plan
+## Audit findings
 
-Merges the prior companion-dashboard vision with your latest tweaks. Existing left sidebar structure stays. Home becomes a chat-first view with a right info panel. Advanced group stays but loses 4 tabs.
+I cross-checked every place the app pulls live state about the agent against the official Hermes CLI reference. Several of our calls use subcommand names or `--json` flags that don't exist, so they silently return empty results — which is why parts of the right-hand info panel can look empty even when there is data.
 
----
+### What's wrong today
 
-### 1. Left sidebar — keep current structure, trim Advanced
+1. **Cron jobs (`listScheduledJobs`)** probes `hermes cron list --json`, `hermes schedule list --json`, `hermes scheduled list --json`. Reality: only `hermes cron list` exists, no `--json`. The other two commands don't exist. Panel always shows empty.
+2. **`deleteScheduledJob`** falls back to `hermes schedule delete` / `hermes scheduled delete` — only `hermes cron remove <id>` is real.
+3. **Plugins (`listPlugins`)** uses `hermes plugins list --json` / `hermes plugin list --json`. Real: `hermes plugins list`, no `--json`.
+4. **Profiles (`listProfiles`)** uses `hermes profile list --json` / `hermes profiles list --json`. Real: `hermes profile list`, no `--json`.
+5. **Insights (`getInsights`)** probes `hermes insights --json`, `hermes stats --json`, `hermes usage --json`. Real: `hermes insights [--days N] [--source X]`, no `--json`. `stats`/`usage` don't exist.
+6. **Health** uses a real chat round-trip (`chatPing`). The cheap, correct command is `hermes status` (`--deep` for thorough). We already have `hermesAPI.status()` but don't use it for the right-panel pill.
+7. **Heartbeats** are read from a `heartbeats:` block in `config.yaml` that **does not exist in Hermes**. What you described as heartbeats maps to recurring entries in `hermes cron list`. So the section is structurally always empty.
+8. **Sub-agents (`systemAPI.listSubAgents`)** has no real CLI; sub-agents are spawned via the `delegate_task` tool inside a chat turn and die with that turn. The correct source is the in-memory `liveSubAgents` store we already populate from streamed chat.
+9. **`restartAgent`** does `pkill` + `status`. The official restart for the long-lived service is `hermes gateway restart`.
 
-**Primary (unchanged):**
-- Home, Chat, Channels, Settings
+### The agent doesn't know what the app expects from it
 
-**Skills & Tools** — promoted out of Advanced into the primary group.
+The renderer relies on the agent emitting fenced JSON blocks the app understands:
 
-**Advanced group — kept, but remove these 4 tabs:**
-- Advanced, MCP Servers, Agent Logs, Dashboard
-
-**Advanced group — remaining tabs stay as-is:**
-- LLM Config, Secrets, Sub-Agents, Updates, Backups, App Diagnostics, Terminal, Setup & Install, Scheduled, Insights
-
-Files: `src/components/layout/AppSidebar.tsx`, `src/App.tsx` (delete the 4 routes), and delete pages `Dashboard.tsx`, `Advanced.tsx`, `MCPServers.tsx`, `LogViewer.tsx`.
-
----
-
-### 2. Home tab — chat + right info sidebar
-
-`src/pages/Home.tsx` becomes a two-column layout. Left column hosts the embedded `AgentChat` (the existing chat UI). Right column is a new `RightInfoPanel`.
-
-```text
-┌────────────────────────────────┬──────────────────────┐
-│                                │  Ron        ● Online │
-│                                │  Uptime 4h 23m       │
-│                                │  [ Power: On ▾ ]     │
-│        Chat with Ron           │  ─────────────────── │
-│        (AgentChat embedded)    │  Health              │
-│                                │   • Gateway   ✓      │
-│                                │   • Model     ✓      │
-│                                │   • Memory    ✓      │
-│                                │  ─────────────────── │
-│                                │  Sub-agents (2)      │
-│                                │   research · idle    │
-│                                │   email   · running  │
-│                                │  ─────────────────── │
-│                                │  Cron (3)            │
-│                                │   09:00  daily brief │
-│                                │   */15m  inbox sweep │
-│                                │  ─────────────────── │
-│                                │  Heartbeats (2)      │
-│                                │   30s  presence      │
-│                                │   5m   memory flush  │
-└────────────────────────────────┴──────────────────────┘
+```
+```ronbot-intent
+{ "id": "...", "type": "credential_request", ... }
+```
 ```
 
-**Right info panel sections (top → bottom):**
-1. **Agent identity** — chosen name + online/offline dot + uptime.
-2. **Health** — moved here from current Home tab (gateway, model, memory, etc.).
-3. **Sub-agents** — active sub-agents with brief details (name, status, current task one-liner).
-4. **Cron** — set cron jobs with schedule + brief note of what each does.
-5. **Heartbeats** — heartbeat tasks with their interval.
+Nothing in the project ever teaches the agent that this protocol exists. Hermes already knows how to schedule jobs, install skills, manage MCP servers, etc. — we don't need to re-teach any of that. We only need to teach it the **Ronbot-specific UI contract**:
 
-**Behavior:**
-- New component: `src/components/companion/RightInfoPanel.tsx`.
-- New hook: `src/hooks/useAgentLiveState.ts` — single 5s poll batching `getHealth`, `listSubAgents`, `listCronJobs`, `listHeartbeats`, `getAgentName`, uptime.
-- Each section is collapsible; remembers state in `localStorage`.
-- At ≤1100px viewport, panel auto-collapses to a 48px icon rail with hover-popovers per section.
-- Skeleton loaders during first fetch.
+- the `ronbot-intent` fenced JSON envelope and the valid `type` values,
+- when to emit each type (e.g. ask for a secret with `credential_request` instead of plain prose, surface a yes/no with `confirm`, show a QR with `qr_display`, etc.),
+- not to identify itself as Hermes (use the SOUL.md name).
 
-**Removed from Home:** the install wizard (already moved to `/install`) and the "What can your agent do" capability grid (moves to Skills & Tools, see §5).
+That's it — a small UI-protocol primer, not a re-explanation of Hermes' own features.
 
 ---
 
-### 3. Agent prompts → inline chat cards (no modals)
+## Plan
 
-Per your choice, no pop-up modal layer. Reuse the existing intent-card system in `src/lib/agentIntents/` + `src/components/intents/`. Add intents as needed:
-- `image.show`, `password.request`, `confirm.action`, `link.open`.
+### 1. Fix CLI probes — `src/lib/systemAPI/hermes.ts`
 
-Renders inline in the chat thread — non-blocking, scrollable, reviewable later. Existing `QRCard`, `CredentialRequestCard`, `OAuthCard`, `PairingCard`, `ConfirmCard` already cover most cases.
+| Function | Change |
+|---|---|
+| `listScheduledJobs` | Call `hermes cron list` only. Parse the human table (id, schedule, next-run, prompt). Drop `schedule`/`scheduled` probes. |
+| `deleteScheduledJob` | Call `hermes cron remove <id>` only. |
+| `listPlugins` | Call `hermes plugins list` (no `--json`). Parse name + enabled flag. |
+| `listProfiles` | Call `hermes profile list` (singular, no `--json`). |
+| `getInsights` | Call `hermes insights --days 30`. Parse text output for tokens/cost/sessions. |
+| `listSubAgents` | Stop shelling out. Return `liveSubAgents.list()`. |
+| Health source for the right panel | Switch from `chatPing` to `hermesAPI.status()` (cheap, correct). Keep `chatPing` for explicit "is chat actually responsive" checks. |
+| `restartAgent` | `hermes gateway restart` (best-effort) → `pkill -f "hermes chat"` for any stuck stream → `hermes status` to warm up. |
 
----
+### 2. Replace fake "Heartbeats" with real cron data
 
-### 4. Settings tab — app-level controls + personality
+- Drop `parseHeartbeats(config)` from `useAgentLiveState`.
+- Right panel: rename the section to **"Recurring jobs"** and source it from the same parsed `cron list` output, filtering to entries with a recurring schedule (cron expression with `*`/intervals, vs. one-shots).
 
-`src/pages/SettingsPage.tsx` adds three sections:
+### 3. Teach the agent the Ronbot UI protocol (only)
 
-**App settings** (existing) — keep as-is.
+Add `writeRonbotAgentRules()` in `hermes.ts`. It writes a Ronbot-owned, clearly-delimited block into `~/.hermes/AGENTS.md` (Hermes auto-injects this file into every conversation), between markers like:
 
-**Agent power**
-- On/off toggle (calls `systemAPI.setAgentRunningState`).
-- Checkbox: *"Keep agent running when app is closed"* (wires to existing Electron lifecycle in `electron/main.cjs`).
+```
+<!-- ronbot:rules:start -->
+…ronbot-intent protocol primer…
+<!-- ronbot:rules:end -->
+```
 
-**Personality**
-- Card titled "Agent personality" with a "Change personality" button.
-- Opens a dialog: free-text field for the user to describe the desired personality direction.
-- On submit: sends a structured chat message to the agent (`intent: personality.update`) instructing it to edit its own base files per the user's direction.
-- Notice in the dialog: *"Personality changes take effect after the agent restarts."*
-- Prompt: *"Restart the agent now?"* with **Restart now** (default) and **Later** buttons. Restart = stop → wait for clean exit → start; chat reconnects via existing `useAgentConnection` logic.
+Idempotent: replace the block in place, preserve everything outside it. Content covers **only** UI-protocol rules:
 
----
+- The `ronbot-intent` fenced JSON envelope, with id/type/title/description fields.
+- The full list of valid `type` values and a one-line example of each (`credential_request`, `confirm`, `choice`, `qr_display`, `oauth_open`, `file_pick`, `progress`, `done`, `pairing_approve`).
+- "Prefer an intent card over a prose question whenever the user has to type a secret, paste a code, scan a QR, choose between options, pick a file, or confirm a destructive action."
+- "Identify as the name in `~/.hermes/SOUL.md`."
 
-### 5. Skills & Tools tab — promoted, capability grid, no toggles
+Nothing about cron, skills, MCP, etc. — Hermes already knows how to do those.
 
-`src/pages/Skills.tsx`:
-- Move to the primary sidebar group (out of Advanced).
-- **Replace** the on/off skill pill list — users should not be able to toggle skills.
-- **Bring in** the "What can your agent do" capability grid currently on Home (read-only cards: Channels, Cron, Sub-agents, Memory, Web, Files, Webhooks, MCP tools, …) sourced from the discovery registry in `CapabilitiesContext`.
-- Keep the Plugins panel as a read-only list.
-- Helper line at the top: *"Want a new tool, skill, or external integration? Just ask Ron in chat — including MCP servers, new channels, and custom skills."*
+Wire-up:
+- Call from `writeInitialConfig` (first install).
+- Call once on app startup after `connected === true` (idempotent, cheap).
 
-This replaces the deleted MCP Servers tab — users learn that the agent handles it.
+### 4. Personality flow — drop the auto-prompt button
 
----
+Replace `PersonalityDialog`'s "Send to agent" flow with one that **doesn't auto-send**.
 
-### 6. First-launch welcome
+UX:
+- User opens "Agent personality" from Settings.
+- Dialog closes immediately and routes to the chat.
+- The chat composer is **pre-filled with an unfinished draft** that the user has to complete before sending, e.g.:
 
-One-time dialog after first successful agent connection:
+  > I'd like to adjust your personality. Please update your SOUL.md / base behavior so that you ▍
 
-> *"Hi, I'm {agentName}. Chat with me to do anything — connect WhatsApp, add skills, schedule tasks, connect external tools, or change my personality. The right panel shows what I'm doing right now."*
+  (cursor parked at the end). Nothing is sent until the user types the rest and hits Enter themselves.
 
-Stored in `localStorage` (`ronbot.welcomeShown = true`).
+- After the user sends the message, a small inline reminder appears under the composer: "Personality changes apply on next agent restart — restart now?" with a "Restart now" button (calls `systemAPI.restartAgent()`). This replaces the previous post-send modal.
 
----
+Implementation notes:
+- `ChatContext` already exposes a `draft` setter (`setDraft`) — use it to pre-fill the composer.
+- The reminder banner can live inside the chat page and key off "did the user just send a message that started with the personality preamble?" — or simpler: a transient flag on `ChatContext` set when `setPersonalityDraft()` is called and cleared on send.
 
-### 7. Technical notes
+### 5. Tests / verification
 
-- **System API additions** (`src/lib/systemAPI/hermes.ts`): `listHeartbeats()`, `getHealth()` (consolidated), `restartAgent()`, `setAgentAutostart(bool)`, `updatePersonality(text)`. `listSubAgents`, `listScheduledJobs`, `getAgentName` already exist.
-- **Live state hook** batches all right-panel reads on a 5s interval.
-- **Personality flow** uses an `intent: personality.update` envelope; the agent edits its own base files.
-- **Restart** = stop + immediate start (no confirmation).
-- No backend / Lovable Cloud changes.
+- Unit-test the new human-output parsers in `hermes.ts` against captured fixtures of `hermes cron list`, `hermes plugins list`, `hermes profile list`, `hermes insights`.
+- Manual: ask the agent in chat to schedule a recurring task; confirm it appears in the right panel within 5s.
+- Manual: open the personality dialog → composer has the unfinished draft → finish the sentence and send → reminder banner with "Restart now" appears.
+- Manual: confirm the Ronbot rules block lands in `~/.hermes/AGENTS.md` and is preserved across launches.
 
----
+### Files touched
 
-### 8. Files touched
-
-**New:**
-- `src/components/companion/RightInfoPanel.tsx`
-- `src/components/companion/sections/{Identity,Health,SubAgents,Cron,Heartbeats}.tsx`
-- `src/hooks/useAgentLiveState.ts`
-- `src/components/settings/PersonalityDialog.tsx`
-- `src/components/companion/WelcomeDialog.tsx`
-
-**Edited:**
-- `src/pages/Home.tsx` (chat + right panel layout)
-- `src/pages/Skills.tsx` (capability grid, remove toggles, plugins read-only)
-- `src/pages/SettingsPage.tsx` (power, autostart, personality)
-- `src/components/layout/AppSidebar.tsx` (move Skills out of Advanced; remove 4 tabs)
-- `src/App.tsx` (drop 4 routes)
-- `src/lib/systemAPI/hermes.ts` + `index.ts` (new methods)
-- `src/lib/agentIntents/protocol.ts` (new intents if missing)
-
-**Deleted:**
-- `src/pages/Dashboard.tsx`
-- `src/pages/Advanced.tsx`
-- `src/pages/MCPServers.tsx`
-- `src/pages/LogViewer.tsx`
+- **edited** `src/lib/systemAPI/hermes.ts` — fix probes, parsers, restart, add `writeRonbotAgentRules`.
+- **edited** `src/lib/systemAPI/index.ts` — export the new helper.
+- **edited** `src/hooks/useAgentLiveState.ts` — drop heartbeats parser, switch health to `status()`.
+- **edited** `src/components/companion/RightInfoPanel.tsx` — "Heartbeats" → "Recurring jobs".
+- **edited** `src/components/settings/PersonalityDialog.tsx` — pre-fill composer + route to chat instead of auto-sending; remove the post-send restart modal.
+- **edited** `src/contexts/ChatContext.tsx` — small flag for the post-send "restart now?" reminder.
+- **edited** `src/pages/AgentChat.tsx` — render the reminder banner.
+- **edited** `src/App.tsx` — call `writeRonbotAgentRules` once on connect.
+- **new** test file with parser fixtures.
