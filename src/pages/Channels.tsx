@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Radio, Sparkles, Loader2 } from "lucide-react";
 import ChannelCard, { ChannelStatus } from "@/components/channels/ChannelCard";
-import UpgradeCard from "@/components/channels/UpgradeCard";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
-import { UPGRADES, getUpgrade, isUpgradeUnlocked } from "@/lib/licenses";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -25,12 +23,10 @@ import type { DiscoveredCapability } from "@/lib/capabilities/types";
  * capability's setup prompt into the chat composer; the agent owns
  * credential collection, QR pairing, gateway lifecycle, and runtime
  * repair via the intent protocol.
+ *
+ * Every Hermes channel is available to every user — there are no paid
+ * upgrades, no license gates. If Hermes supports it, the user gets it.
  */
-
-/** Premium channels (gated by a license upgrade). Keyed by capability id. */
-const PAID_CHANNELS: Record<string, { upgradeId: string }> = {
-  // No paid channels at present — kept here as the extension point.
-};
 
 const ChannelsPage = () => {
   const navigate = useNavigate();
@@ -43,8 +39,6 @@ const ChannelsPage = () => {
   );
 
   const [statuses, setStatuses] = useState<Record<string, ChannelStatus>>({});
-  const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
-  const [unlocksLoading, setUnlocksLoading] = useState(true);
   const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
   const googleSetupInFlightRef = useRef(false);
 
@@ -69,24 +63,12 @@ const ChannelsPage = () => {
   };
 
   const refresh = useCallback(async () => {
-    const unlockMap: Record<string, boolean> = {};
-    for (const u of UPGRADES) {
-      unlockMap[u.id] = await isUpgradeUnlocked(u.id);
-    }
-    setUnlocks(unlockMap);
-    setUnlocksLoading(false);
-
     const env = await systemAPI.readEnvFile();
     const ids = channels.map((c) => c.id);
     const running = await getRunningChannels(ids);
 
     const next: Record<string, ChannelStatus> = {};
     for (const channel of channels) {
-      const paid = PAID_CHANNELS[channel.id];
-      if (paid && !unlockMap[paid.upgradeId]) {
-        next[channel.id] = { state: "locked" };
-        continue;
-      }
       const configured = isChannelConfigured(channel, env);
       if (!configured) {
         next[channel.id] = { state: "not-configured" };
@@ -102,25 +84,11 @@ const ChannelsPage = () => {
   }, [refresh]);
 
   const handleSetUp = (channel: DiscoveredCapability) => {
-    const paid = PAID_CHANNELS[channel.id];
-    if (paid && !unlocks[paid.upgradeId]) {
-      toast.info(`${channel.name} requires an upgrade`, {
-        description: "Scroll down to the Premium upgrades section to unlock it.",
-      });
-      return;
-    }
     setDraft(channel.setupPrompt);
     navigate("/chat");
   };
 
-  const free = channels.filter((c) => !PAID_CHANNELS[c.id]);
-  const paid = channels.filter((c) => PAID_CHANNELS[c.id]);
-  const googleWorkspaceUpgrade = getUpgrade("googleworkspace");
-  const googleWorkspaceUnlocked = !!unlocks.googleworkspace;
-  const showGoogleWorkspaceInUpgrades = !googleWorkspaceUnlocked;
-
   const handleGoogleWorkspaceSetup = async () => {
-    if (!googleWorkspaceUnlocked) return;
     if (googleSetupInFlightRef.current) return;
     googleSetupInFlightRef.current = true;
     setGoogleWorkspaceBusy(true);
@@ -159,13 +127,12 @@ const ChannelsPage = () => {
         )}
       </div>
 
-      {/* Available channels */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground/70">
           Available Channels
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {free.map((c) => (
+          {channels.map((c) => (
             <ChannelCard
               key={c.id}
               id={c.id}
@@ -176,91 +143,36 @@ const ChannelsPage = () => {
               onSetUp={() => handleSetUp(c)}
             />
           ))}
-          {googleWorkspaceUnlocked && googleWorkspaceUpgrade && (
-            <GlassCard className="p-5 flex flex-col gap-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="w-10 h-10 rounded-lg bg-primary/15 text-primary flex items-center justify-center shrink-0">
-                  <Sparkles className="w-5 h-5" />
-                </div>
-                <span className="inline-flex items-center gap-1 text-[11px] text-success">
-                  Unlocked
-                </span>
+          <GlassCard className="p-5 flex flex-col gap-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="w-10 h-10 rounded-lg bg-primary/15 text-primary flex items-center justify-center shrink-0">
+                <Sparkles className="w-5 h-5" />
               </div>
-              <div className="space-y-1">
-                <h3 className="text-base font-semibold text-foreground">{googleWorkspaceUpgrade.name}</h3>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Gmail, Calendar, Drive, Docs, and Sheets integration.
-                </p>
-                <p className="text-[11px] text-muted-foreground/70">Setup difficulty: Medium</p>
-              </div>
-              <div className="flex flex-col gap-2 mt-auto">
-                <Button
-                  size="sm"
-                  onClick={() => void handleGoogleWorkspaceSetup()}
-                  className="gradient-primary text-primary-foreground w-full"
-                  disabled={googleWorkspaceBusy}
-                >
-                  {googleWorkspaceBusy ? (
-                    <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Setting up…</>
-                  ) : (
-                    "Set up"
-                  )}
-                </Button>
-              </div>
-            </GlassCard>
-          )}
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-base font-semibold text-foreground">Google Workspace</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Gmail, Calendar, Drive, Docs, and Sheets integration.
+              </p>
+              <p className="text-[11px] text-muted-foreground/70">Setup difficulty: Medium</p>
+            </div>
+            <div className="flex flex-col gap-2 mt-auto">
+              <Button
+                size="sm"
+                onClick={() => void handleGoogleWorkspaceSetup()}
+                className="gradient-primary text-primary-foreground w-full"
+                disabled={googleWorkspaceBusy}
+              >
+                {googleWorkspaceBusy ? (
+                  <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Setting up…</>
+                ) : (
+                  "Set up"
+                )}
+              </Button>
+            </div>
+          </GlassCard>
         </div>
       </section>
-
-      {paid.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground/70 flex items-center gap-2">
-            <Sparkles className="w-3.5 h-3.5 text-primary" />
-            Premium channels — one-time, yours forever
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {paid.map((c) => (
-              <ChannelCard
-                key={c.id}
-                id={c.id}
-                name={c.name}
-                tagline={c.oneLiner}
-                icon={c.icon}
-                status={statuses[c.id] ?? { state: "loading" }}
-                onSetUp={() => handleSetUp(c)}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {UPGRADES.filter((u) => showGoogleWorkspaceInUpgrades || u.id !== "googleworkspace").length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground/70 flex items-center gap-2">
-            <Sparkles className="w-3.5 h-3.5 text-primary" />
-            Optional upgrades
-          </h2>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {UPGRADES
-              .filter((u) => showGoogleWorkspaceInUpgrades || u.id !== "googleworkspace")
-              .map((u) => (
-              <UpgradeCard
-                key={u.id}
-                upgrade={u}
-                unlocked={!!unlocks[u.id]}
-                loading={unlocksLoading}
-                onChange={refresh}
-              />
-              ))}
-          </div>
-        </section>
-      )}
-
-      <GlassCard className="p-4 text-xs text-muted-foreground">
-        <strong className="text-foreground">How upgrades work:</strong> buy once on our website, get
-        a license key by email, paste it here. It's yours forever — including all future updates,
-        on every device you own. No subscriptions, no phone-home checks.
-      </GlassCard>
     </div>
   );
 };
