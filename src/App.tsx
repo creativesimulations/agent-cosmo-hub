@@ -64,7 +64,7 @@ const App = () => (
             <Route path="/terminal" element={<TerminalPage />} />
             <Route path="/chat" element={<AgentChat />} />
             <Route path="/channels" element={<Channels />} />
-            <Route path="/upgrades" element={<Upgrades />} />
+            
             <Route path="/updates" element={<UpdateManager />} />
             <Route path="/backups" element={<BackupRestore />} />
             <Route path="/diagnostics" element={<Diagnostics />} />
