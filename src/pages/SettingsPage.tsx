@@ -903,6 +903,7 @@ const SettingsPage = () => {
         </AlertDialogContent>
       </AlertDialog>
 
+      <PersonalityDialog open={personalityOpen} onOpenChange={setPersonalityOpen} />
     </div>
   );
 };
