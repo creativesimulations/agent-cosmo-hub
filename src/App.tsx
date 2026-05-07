@@ -27,7 +27,7 @@ import Channels from "./pages/Channels";
 import UpdateManager from "./pages/UpdateManager";
 import BackupRestore from "./pages/BackupRestore";
 import Diagnostics from "./pages/Diagnostics";
-import Upgrades from "./pages/Upgrades";
+
 import Scheduled from "./pages/Scheduled";
 import Insights from "./pages/Insights";
 import NotFound from "./pages/NotFound";
