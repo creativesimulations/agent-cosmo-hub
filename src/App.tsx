@@ -13,6 +13,7 @@ import { CapabilitiesProvider } from "./contexts/CapabilitiesContext";
 import ApprovalDialog from "./components/permissions/ApprovalDialog";
 import PermissionsBridge from "./components/permissions/PermissionsBridge";
 import WelcomeDialog from "./components/companion/WelcomeDialog";
+import RonbotRulesBridge from "./components/companion/RonbotRulesBridge";
 import Index from "./pages/Index";
 import RootRoute from "./pages/RootRoute";
 import SubAgents from "./pages/SubAgents";
@@ -48,6 +49,7 @@ const App = () => (
         <InstallProvider>
         <ChatProvider>
         <WelcomeDialog />
+        <RonbotRulesBridge />
         <Routes>
           <Route element={<AppLayout />}>
             <Route path="/" element={<RootRoute />} />
