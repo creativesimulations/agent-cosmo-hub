@@ -5604,10 +5604,9 @@ model: ${options.model || 'openrouter/auto'}
   },
 
   /**
-   * List Hermes profiles (isolated agent instances).
-   * Each profile has its own ~/.hermes-<name>/ directory with separate
-   * config, secrets, and skills. The active profile is shown with `active: true`.
-   * Falls back to a single "default" profile if the CLI doesn't support profiles.
+   * List Hermes profiles via the real CLI: `hermes profile list` (singular,
+   * no `--json`). Output is a human table with the active profile marked
+   * (typically `* default`). Falls back to a single "default" entry.
    */
   async listProfiles(): Promise<{
     success: boolean;
@@ -5616,33 +5615,20 @@ model: ${options.model || 'openrouter/auto'}
     error?: string;
   }> {
     if (!isElectron()) return { success: true, profiles: [{ name: 'default', active: true }], cliAvailable: false };
-    const probes = [
-      'hermes profile list --json 2>/dev/null',
-      'hermes profiles list --json 2>/dev/null',
-    ];
-    for (const probe of probes) {
-      const r = await runHermesCli(probe, { timeout: 15000 }).catch(
-        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
-      );
-      const text = (r.stdout || '').trim();
-      if (r.success && text.startsWith('[')) {
-        try {
-          const arr = JSON.parse(text) as Array<Record<string, unknown>>;
-          const profiles = arr.map((e) => ({
-            name: typeof e.name === 'string' ? e.name : 'default',
-            active: typeof e.active === 'boolean' ? e.active : undefined,
-            path: typeof e.path === 'string' ? e.path : undefined,
-          })).filter((p) => p.name);
-          return { success: true, profiles, cliAvailable: true };
-        } catch { /* try next */ }
-      }
+    const r = await runHermesCli('hermes profile list 2>&1', { timeout: 15000 }).catch(
+      () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+    );
+    if (!r.success) {
+      return { success: true, profiles: [{ name: 'default', active: true }], cliAvailable: false };
     }
-    return { success: true, profiles: [{ name: 'default', active: true }], cliAvailable: false };
+    const profiles = parseProfileListOutput(r.stdout || '');
+    if (!profiles.length) return { success: true, profiles: [{ name: 'default', active: true }], cliAvailable: true };
+    return { success: true, profiles, cliAvailable: true };
   },
 
   /**
-   * List installed Hermes plugins (extensions registered via `hermes plugins`).
-   * Returns name, enabled state, and source. Empty success when CLI is unavailable.
+   * List installed Hermes plugins via `hermes plugins list` (no `--json`).
+   * Parses the human listing for name + enabled flag.
    */
   async listPlugins(): Promise<{
     success: boolean;
@@ -5651,29 +5637,14 @@ model: ${options.model || 'openrouter/auto'}
     error?: string;
   }> {
     if (!isElectron()) return { success: true, plugins: [], cliAvailable: false };
-    const probes = [
-      'hermes plugins list --json 2>/dev/null',
-      'hermes plugin list --json 2>/dev/null',
-    ];
-    for (const probe of probes) {
-      const r = await runHermesCli(probe, { timeout: 15000 }).catch(
-        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
-      );
-      const text = (r.stdout || '').trim();
-      if (r.success && text.startsWith('[')) {
-        try {
-          const arr = JSON.parse(text) as Array<Record<string, unknown>>;
-          const plugins = arr.map((e) => ({
-            name: typeof e.name === 'string' ? e.name : '',
-            enabled: typeof e.enabled === 'boolean' ? e.enabled : undefined,
-            source: typeof e.source === 'string' ? e.source : undefined,
-            description: typeof e.description === 'string' ? e.description : undefined,
-          })).filter((p) => p.name);
-          return { success: true, plugins, cliAvailable: true };
-        } catch { /* try next */ }
-      }
+    const r = await runHermesCli('hermes plugins list 2>&1', { timeout: 15000 }).catch(
+      () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+    );
+    if (!r.success) {
+      return { success: true, plugins: [], cliAvailable: false };
     }
-    return { success: true, plugins: [], cliAvailable: false };
+    const plugins = parsePluginsListOutput(r.stdout || '');
+    return { success: true, plugins, cliAvailable: true };
   },
 
   /**
