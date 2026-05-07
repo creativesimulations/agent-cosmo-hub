@@ -261,32 +261,39 @@ const RightInfoPanel = () => {
           )}
         </Section>
 
-        {/* Heartbeats */}
+        {/* Recurring jobs */}
         <Section
-          title="Heartbeats"
+          title="Recurring jobs"
           icon={Heart}
-          count={live.heartbeats.length}
-          storageKey="ronbot.right.heartbeats"
+          count={live.recurringJobs.length}
+          storageKey="ronbot.right.recurring"
         >
           {live.loading ? (
             <Skeleton className="h-8 w-full" />
-          ) : live.heartbeats.length === 0 ? (
-            <EmptyRow>No heartbeat tasks configured.</EmptyRow>
+          ) : live.recurringJobs.length === 0 ? (
+            <EmptyRow>No recurring jobs. Ask Ron to create one.</EmptyRow>
           ) : (
-            live.heartbeats.map((h) => (
+            live.recurringJobs.map((j) => (
               <div
-                key={h.id}
-                className="flex items-center justify-between gap-2 text-[12px] glass-subtle rounded-md px-2 py-1.5"
+                key={j.id}
+                className="text-[12px] glass-subtle rounded-md px-2 py-1.5"
               >
-                <span
-                  className="text-foreground truncate"
-                  title={h.description}
-                >
-                  {h.description}
-                </span>
-                <span className="font-mono text-[10px] text-primary/90 shrink-0">
-                  {h.interval}
-                </span>
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className="font-mono text-[11px] text-primary/90 truncate"
+                    title={j.schedule}
+                  >
+                    {j.schedule || "—"}
+                  </span>
+                  {j.nextRun && (
+                    <span className="text-[10px] text-muted-foreground shrink-0">
+                      next {j.nextRun}
+                    </span>
+                  )}
+                </div>
+                <p className="text-foreground truncate" title={j.description}>
+                  {j.description}
+                </p>
               </div>
             ))
           )}
