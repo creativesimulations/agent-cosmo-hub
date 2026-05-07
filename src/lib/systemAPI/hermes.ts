@@ -5758,16 +5758,220 @@ model: ${options.model || 'openrouter/auto'}
    */
   async restartAgent(): Promise<{ success: boolean; error?: string }> {
     if (!isElectron()) return { success: false, error: 'Desktop only' };
+    // Official restart for the long-lived service.
+    await runHermesCli('hermes gateway restart 2>&1', { timeout: 30000 }).catch(() => undefined);
+    // Drop any stuck streaming chat process so the next turn picks up a
+    // freshly-loaded SOUL.md / config.
     await runHermesShell(
       [
         'pkill -f "hermes chat" 2>/dev/null || true',
-        'pkill -f "hermes gateway" 2>/dev/null || true',
-        'pkill -f "hermes$" 2>/dev/null || true',
         'sleep 1',
       ].join('\n'),
-      { timeout: 10000 },
+      { timeout: 8000 },
     ).catch(() => undefined);
     const r = await this.status().catch(() => ({ success: false } as CommandResult));
     return { success: r.success !== false, error: r.success === false ? r.stderr || 'restart failed' : undefined };
   },
+
+  /**
+   * Write/refresh the Ronbot-owned rules block inside ~/.hermes/AGENTS.md.
+   *
+   * Hermes auto-injects AGENTS.md (alongside SOUL.md and .cursorrules) into
+   * every conversation. We use that to teach the agent ONE thing only — the
+   * Ronbot UI protocol (the `ronbot-intent` fenced JSON envelope and when
+   * to use each intent type). We deliberately do NOT re-explain Hermes
+   * features (cron, skills, MCP) — Hermes already knows those.
+   *
+   * Idempotent: replaces the block in place between
+   * `<!-- ronbot:rules:start -->` and `<!-- ronbot:rules:end -->`,
+   * preserving everything outside it.
+   */
+  async writeRonbotAgentRules(): Promise<{ success: boolean; error?: string }> {
+    if (!isElectron()) return { success: false, error: 'browser-mode' };
+    const path = '$HOME/.hermes/AGENTS.md';
+    const existing = await readHermesFile(path).catch(
+      () => ({ success: false, content: '' }),
+    );
+    const body = existing.success && existing.content ? existing.content : '';
+    const block = RONBOT_RULES_BLOCK;
+    const startTag = '<!-- ronbot:rules:start -->';
+    const endTag = '<!-- ronbot:rules:end -->';
+    let next: string;
+    if (body.includes(startTag) && body.includes(endTag)) {
+      next = body.replace(
+        new RegExp(`${startTag}[\\s\\S]*?${endTag}`),
+        `${startTag}\n${block}\n${endTag}`,
+      );
+      if (next === body) return { success: true };
+    } else {
+      const sep = body.trim() ? '\n\n' : '';
+      next = `${body.trimEnd()}${sep}${startTag}\n${block}\n${endTag}\n`;
+    }
+    return writeHermesFile(path, next, '600');
+  },
+};
+
+/* ─────────────────────  CLI text-output parsers  ───────────────────── */
+
+/**
+ * The Ronbot UI protocol primer that gets injected into AGENTS.md so the
+ * agent knows what fenced JSON blocks the renderer understands. Keep this
+ * purely about the UI contract — never re-document Hermes' own features.
+ */
+const RONBOT_RULES_BLOCK = [
+  '## Ronbot desktop UI protocol',
+  '',
+  'You are running inside the Ronbot desktop control panel. The user chats with',
+  'you through a renderer that understands fenced JSON blocks of the form:',
+  '',
+  '```ronbot-intent',
+  '{ "id": "intent_xyz", "type": "<intent-type>", "title": "Short header", "description": "Optional 1-2 sentence body" }',
+  '```',
+  '',
+  'When you emit one, the renderer hides the JSON and shows an inline UI card.',
+  "The user's reply comes back to you on the next turn as a matching",
+  '```ronbot-intent-response``` block.',
+  '',
+  '**Always prefer an intent card** over a plain prose question whenever the user',
+  'needs to: type a secret, paste a code, scan a QR, choose between options, pick',
+  'a file/folder, confirm a destructive action, or watch a long task progress.',
+  '',
+  'Valid `type` values:',
+  '',
+  '- `credential_request` — collect one or more secrets/text values. Required: `fields: [{ key, label, secret?, hint?, validate?, optional? }]`. Use this for API keys, tokens, anything that should NOT appear in chat history.',
+  '- `confirm` — yes/no. Optional: `confirmLabel`, `cancelLabel`, `destructive`.',
+  '- `choice` — pick one. Required: `options: [{ value, label, description? }]`.',
+  '- `qr_display` — show a QR. Required: `qr` (data URL or raw base64). Optional: `pairingCode`.',
+  '- `oauth_open` — open a URL externally and wait. Required: `url`.',
+  '- `file_pick` — open a file/folder picker. Optional: `pickKind: "file" | "folder"`.',
+  '- `progress` — heartbeat with no input. Optional: `percent` (0-100), `status`.',
+  '- `done` — signal a multi-step setup completed. Optional: `capabilityId`, `message`.',
+  '- `pairing_approve` — display a pairing code the user reads off another device and approves. Required: `pairingCode`.',
+  '',
+  'Rules:',
+  '1. Each intent needs a unique `id` you choose (any string).',
+  "2. Never put real secrets in `description` or anywhere else in chat — only inside the user's `credential_request` response, which the renderer keeps out of chat history.",
+  '3. Identify yourself by the name in `~/.hermes/SOUL.md`, never as "Hermes" or "an AI assistant".',
+  "4. Don't ask the renderer to do things it has no intent for — for everything else, use your normal Hermes tools directly.",
+  '',
+].join('\n');
+
+/** `hermes cron list` parser. Tolerates header rows, ANSI, and reordered cols. */
+export const parseCronListOutput = (
+  text: string,
+): Array<{ id: string; description: string; schedule?: string; nextRun?: string; recurring?: boolean; enabled?: boolean }> => {
+  const out: Array<{ id: string; description: string; schedule?: string; nextRun?: string; recurring?: boolean; enabled?: boolean }> = [];
+  const ansi = /\x1b\[[0-9;]*m/g;
+  const lines = text.split('\n').map((l) => l.replace(ansi, ''));
+  let headerCols: string[] | null = null;
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (!line.trim()) continue;
+    if (/^\s*(no\s+(scheduled\s+)?(cron\s+)?jobs|nothing scheduled)/i.test(line)) {
+      return [];
+    }
+    if (!headerCols && /\bid\b/i.test(line) && /\bschedule\b/i.test(line)) {
+      headerCols = line.trim().split(/\s{2,}/).map((c) => c.toLowerCase());
+      continue;
+    }
+    if (/^[-=─]{3,}/.test(line.trim())) continue;
+    const parts = line.trim().split(/\s{2,}/);
+    if (parts.length < 2) continue;
+    let id = parts[0];
+    let schedule: string | undefined;
+    let nextRun: string | undefined;
+    let description = '';
+    if (headerCols && parts.length >= headerCols.length) {
+      const map: Record<string, string> = {};
+      headerCols.forEach((col, i) => { map[col] = parts[i] ?? ''; });
+      id = map['id'] || id;
+      schedule = map['schedule'] || map['cron'] || undefined;
+      nextRun = map['next run'] || map['next'] || map['next_run'] || undefined;
+      description = map['prompt'] || map['task'] || map['description'] || map['name'] || parts[parts.length - 1];
+    } else {
+      schedule = parts[1];
+      nextRun = parts.length >= 4 ? parts[2] : undefined;
+      description = parts.slice(parts.length >= 4 ? 3 : 2).join(' ');
+    }
+    if (!id || /^id$/i.test(id)) continue;
+    const recurring = !!schedule && /[\s*/]/.test(schedule) && !/^\d{4}-\d{2}-\d{2}/.test(schedule);
+    out.push({
+      id,
+      description: (description || '(no description)').trim(),
+      schedule: schedule?.trim(),
+      nextRun: nextRun?.trim(),
+      recurring,
+    });
+  }
+  return out;
+};
+
+/** `hermes profile list` parser. Active profile usually marked with `*`. */
+export const parseProfileListOutput = (
+  text: string,
+): Array<{ name: string; active?: boolean }> => {
+  const ansi = /\x1b\[[0-9;]*m/g;
+  const out: Array<{ name: string; active?: boolean }> = [];
+  const seen = new Set<string>();
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(ansi, '').trim();
+    if (!line) continue;
+    if (/^(profiles?|name|---|===)/i.test(line)) continue;
+    const m = line.match(/^(\*?)\s*([A-Za-z0-9_.-]+)\b/);
+    if (!m) continue;
+    const name = m[2];
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, active: !!m[1] || /\(active\)/i.test(line) });
+  }
+  return out;
+};
+
+/** `hermes plugins list` parser. */
+export const parsePluginsListOutput = (
+  text: string,
+): Array<{ name: string; enabled?: boolean; description?: string }> => {
+  const ansi = /\x1b\[[0-9;]*m/g;
+  const out: Array<{ name: string; enabled?: boolean; description?: string }> = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(ansi, '').trim();
+    if (!line) continue;
+    if (/^(plugins?|name|---|===)/i.test(line)) continue;
+    if (/^no\s+plugins/i.test(line)) return [];
+    const parts = line.split(/\s{2,}/);
+    const name = parts[0]?.replace(/^[*•]\s*/, '');
+    if (!name || !/^[A-Za-z0-9_.@/-]+$/.test(name)) continue;
+    const rest = parts.slice(1).join(' ');
+    let enabled: boolean | undefined;
+    if (/\b(enabled|on)\b/i.test(rest)) enabled = true;
+    else if (/\b(disabled|off)\b/i.test(rest)) enabled = false;
+    out.push({ name, enabled, description: rest || undefined });
+  }
+  return out;
+};
+
+/** `hermes insights` text-output parser. Matches "Tokens in: 12,345" style. */
+export const parseInsightsOutput = (
+  text: string,
+): {
+  sessionsLast7d?: number;
+  messagesLast7d?: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  costUsd?: number;
+} => {
+  const stripped = text.replace(/\x1b\[[0-9;]*m/g, '');
+  const num = (re: RegExp): number | undefined => {
+    const m = stripped.match(re);
+    if (!m) return undefined;
+    const v = parseFloat(m[1].replace(/[, ]/g, ''));
+    return Number.isFinite(v) ? v : undefined;
+  };
+  return {
+    sessionsLast7d: num(/sessions[^\d-]*([\d,]+)/i),
+    messagesLast7d: num(/messages[^\d-]*([\d,]+)/i),
+    tokensIn: num(/(?:tokens?\s*(?:in|input)|input\s*tokens?)[^\d-]*([\d,]+)/i),
+    tokensOut: num(/(?:tokens?\s*(?:out|output)|output\s*tokens?)[^\d-]*([\d,]+)/i),
+    costUsd: num(/(?:cost|total\s*cost|spend)[^\d-]*\$?\s*([\d,.]+)/i),
+  };
 };
