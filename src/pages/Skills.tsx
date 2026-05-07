@@ -264,9 +264,8 @@ const Skills = () => {
             Skills & Tools
           </h1>
           <p className="text-sm text-muted-foreground">
-            Everything the agent can do. Toggle a skill off to stop the agent from using it.
-            Changes save to <code className="text-foreground">~/.hermes/config.yaml</code> and
-            take effect on the next agent restart.
+            Everything your agent can do. Want a new tool, skill, or external integration —
+            including MCP servers, new channels, or custom skills? Just ask the agent in chat.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -277,31 +276,6 @@ const Skills = () => {
           >
             <Plus className="w-4 h-4 mr-1" /> Install skill
           </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="border-white/10">
-                <MoreHorizontal className="w-4 h-4 mr-1" /> Bulk
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>Bulk actions</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => void bulkAction("enableAll")}>
-                Enable all
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => void bulkAction("disableAll")}>
-                Disable all
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-[11px] text-muted-foreground">
-                Enable only category
-              </DropdownMenuLabel>
-              {categoryNames.map((c) => (
-                <DropdownMenuItem key={c} onClick={() => void bulkAction({ enableOnly: c })}>
-                  {c}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
           <Button
             variant="ghost"
             size="sm"
