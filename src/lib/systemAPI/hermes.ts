@@ -5669,50 +5669,13 @@ model: ${options.model || 'openrouter/auto'}
     error?: string;
   }> {
     if (!isElectron()) return { success: true, cliAvailable: false };
-    const probes = [
-      'hermes insights --json 2>/dev/null',
-      'hermes stats --json 2>/dev/null',
-      'hermes usage --json 2>/dev/null',
-    ];
-    for (const probe of probes) {
-      const r = await runHermesCli(probe, { timeout: 20000 }).catch(
-        () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
-      );
-      const text = (r.stdout || '').trim();
-      if (r.success && (text.startsWith('{') || text.startsWith('['))) {
-        try {
-          const parsed = JSON.parse(text) as Record<string, unknown>;
-          const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
-          const arr = (v: unknown): Array<{ name: string; count: number }> | undefined => {
-            if (!Array.isArray(v)) return undefined;
-            const out = v
-              .map((e) => {
-                const o = e as Record<string, unknown>;
-                const name = typeof o.name === 'string' ? o.name : typeof o.id === 'string' ? o.id : '';
-                const count = typeof o.count === 'number' ? o.count : typeof o.value === 'number' ? o.value : 0;
-                return { name, count };
-              })
-              .filter((e) => e.name);
-            return out.length ? out : undefined;
-          };
-          return {
-            success: true,
-            cliAvailable: true,
-            insights: {
-              sessionsLast7d: num(parsed.sessions_last_7d ?? parsed.sessionsLast7d),
-              messagesLast7d: num(parsed.messages_last_7d ?? parsed.messagesLast7d),
-              tokensIn: num(parsed.tokens_in ?? parsed.tokensIn),
-              tokensOut: num(parsed.tokens_out ?? parsed.tokensOut),
-              costUsd: num(parsed.cost_usd ?? parsed.costUsd),
-              topChannels: arr(parsed.top_channels ?? parsed.topChannels),
-              topSkills: arr(parsed.top_skills ?? parsed.topSkills),
-              raw: parsed,
-            },
-          };
-        } catch { /* try next */ }
-      }
-    }
-    return { success: true, cliAvailable: false };
+    // Real CLI: `hermes insights [--days N] [--source X]`. No `--json` flag.
+    const r = await runHermesCli('hermes insights --days 30 2>&1', { timeout: 25000 }).catch(
+      () => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult),
+    );
+    if (!r.success) return { success: true, cliAvailable: false };
+    const insights = parseInsightsOutput(r.stdout || '');
+    return { success: true, cliAvailable: true, insights };
   },
 
   /**
