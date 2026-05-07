@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -7,12 +6,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, Loader2, Sparkles } from "lucide-react";
-import { toast } from "sonner";
+import { Sparkles } from "lucide-react";
 import { useChat } from "@/contexts/ChatContext";
-import { systemAPI } from "@/lib/systemAPI";
 import { useNavigate } from "react-router-dom";
 
 interface Props {
@@ -20,154 +16,49 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
+/**
+ * Personality entrypoint. We don't auto-send anything — the user must
+ * complete the unfinished sentence themselves and hit Enter. After they
+ * send it, AgentChat shows a "restart now to apply" reminder banner.
+ */
 const PersonalityDialog = ({ open, onOpenChange }: Props) => {
-  const { sendMessage } = useChat();
+  const { setDraft } = useChat();
   const navigate = useNavigate();
-  const [text, setText] = useState("");
-  const [stage, setStage] = useState<"edit" | "restart">("edit");
-  const [busy, setBusy] = useState(false);
 
-  const reset = () => {
-    setText("");
-    setStage("edit");
-    setBusy(false);
-  };
-
-  const handleSubmit = async () => {
-    const trimmed = text.trim();
-    if (!trimmed) {
-      toast.error("Describe the personality you want first.");
-      return;
-    }
-    setBusy(true);
-    const prompt =
-      `Please update your personality and base behavior to match this direction. ` +
-      `Edit your own base files (e.g. SOUL.md / system prompt / config) accordingly, ` +
-      `keeping core safety behaviors intact.\n\n--- USER DIRECTION ---\n${trimmed}`;
-    try {
-      await sendMessage(prompt);
-      toast.success("Personality update sent", {
-        description: "I've asked the agent to edit its own base files.",
-      });
-      setStage("restart");
-      // Auto-navigate to chat so the user can see the agent's response.
-      navigate("/chat");
-    } catch (e) {
-      toast.error("Couldn't send the request", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleRestartNow = async () => {
-    setBusy(true);
-    try {
-      const r = await systemAPI.restartAgent();
-      if (r.success) {
-        toast.success("Restarting the agent…", {
-          description: "Chat will reconnect automatically.",
-        });
-      } else {
-        toast.error("Restart failed", { description: r.error });
-      }
-    } finally {
-      setBusy(false);
-      onOpenChange(false);
-      reset();
-    }
+  const handleStart = () => {
+    setDraft(
+      "I'd like to adjust your personality. Please update your SOUL.md / base behavior so that you ",
+    );
+    onOpenChange(false);
+    navigate("/chat");
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        onOpenChange(o);
-        if (!o) reset();
-      }}
-    >
-      <DialogContent className="sm:max-w-lg">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-primary" />
-            {stage === "edit" ? "Change personality" : "Restart to apply"}
+            Change personality
           </DialogTitle>
           <DialogDescription>
-            {stage === "edit"
-              ? "Describe how you want the agent to think, talk, and behave. The agent will edit its own base files based on your direction."
-              : "Personality changes only take effect after the agent restarts. Restart now?"}
+            We'll open the chat with a half-written request. Finish the sentence
+            in your own words — describe how you'd like the agent to think, talk,
+            or behave — then send it. Personality changes apply on the next
+            agent restart.
           </DialogDescription>
         </DialogHeader>
-
-        {stage === "edit" ? (
-          <>
-            <Textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder='e.g. "Be warmer and more playful. Use shorter sentences. Always ask one clarifying question before taking action."'
-              className="min-h-[140px] bg-background/50 border-white/10"
-              disabled={busy}
-            />
-            <div className="flex items-start gap-2 p-3 rounded-md border border-warning/30 bg-warning/5 text-xs">
-              <AlertCircle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
-              <p className="text-muted-foreground">
-                Personality changes won't take effect until the agent is reset.
-                You'll be prompted to restart it when you're done.
-              </p>
-            </div>
-            <DialogFooter>
-              <Button
-                variant="ghost"
-                onClick={() => onOpenChange(false)}
-                disabled={busy}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleSubmit}
-                disabled={busy || !text.trim()}
-                className="gradient-primary text-primary-foreground"
-              >
-                {busy ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                    Sending…
-                  </>
-                ) : (
-                  "Send to agent"
-                )}
-              </Button>
-            </DialogFooter>
-          </>
-        ) : (
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                onOpenChange(false);
-                reset();
-              }}
-              disabled={busy}
-            >
-              Later
-            </Button>
-            <Button
-              onClick={handleRestartNow}
-              disabled={busy}
-              className="gradient-primary text-primary-foreground"
-            >
-              {busy ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                  Restarting…
-                </>
-              ) : (
-                "Restart now"
-              )}
-            </Button>
-          </DialogFooter>
-        )}
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleStart}
+            className="gradient-primary text-primary-foreground"
+          >
+            Open chat
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { systemAPI } from "@/lib/systemAPI";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
+import { liveSubAgents, type LiveSubAgent } from "@/lib/liveSubAgents";
 
 export type Health = "healthy" | "degraded" | "unknown";
 
@@ -16,12 +17,7 @@ export interface CronJobLite {
   description: string;
   schedule?: string;
   nextRun?: string;
-}
-
-export interface HeartbeatLite {
-  id: string;
-  description: string;
-  interval: string;
+  recurring?: boolean;
 }
 
 export interface LiveState {
@@ -31,7 +27,7 @@ export interface LiveState {
   healthDetail: string;
   subAgents: SubAgentLite[];
   cronJobs: CronJobLite[];
-  heartbeats: HeartbeatLite[];
+  recurringJobs: CronJobLite[];
   loading: boolean;
 }
 
@@ -42,7 +38,7 @@ const DEFAULT: LiveState = {
   healthDetail: "Checking…",
   subAgents: [],
   cronJobs: [],
-  heartbeats: [],
+  recurringJobs: [],
   loading: true,
 };
 
@@ -51,32 +47,25 @@ const readModel = (config: string) => {
   return m ? m[1].trim().replace(/^['"]|['"]$/g, "") : null;
 };
 
-/**
- * Heartbeat tasks live in config.yaml under `heartbeats:` with entries like
- * `- name: presence\n    interval: 30s\n    description: ...`.
- * Best-effort YAML scan; never throws.
- */
-const parseHeartbeats = (config: string): HeartbeatLite[] => {
-  const out: HeartbeatLite[] = [];
-  const block = config.match(/^heartbeats:\s*\n((?:[ \t]+.*\n?)+)/m);
-  if (!block) return out;
-  const body = block[1];
-  // Split on lines starting with "- " (item separators)
-  const items = body.split(/^\s*-\s+/m).filter((s) => s.trim());
-  items.forEach((item, i) => {
-    const name = item.match(/name:\s*([^\n]+)/)?.[1]?.trim();
-    const interval = item.match(/interval:\s*([^\n]+)/)?.[1]?.trim();
-    const description = item.match(/description:\s*([^\n]+)/)?.[1]?.trim();
-    if (interval || name) {
-      out.push({
-        id: name || `hb-${i}`,
-        description: description || name || "(no description)",
-        interval: interval || "—",
-      });
-    }
-  });
-  return out;
+/** Heuristic: an entry is "recurring" if its schedule looks like a cron
+ *  expression (contains a `*` or `/`) or names an interval. One-shot jobs
+ *  typically have a concrete date/time. */
+const isRecurring = (j: CronJobLite): boolean => {
+  if (typeof j.recurring === "boolean") return j.recurring;
+  const s = (j.schedule || "").trim();
+  if (!s) return false;
+  if (/[*/]/.test(s)) return true;
+  if (/^@(hourly|daily|weekly|monthly|yearly|every)\b/i.test(s)) return true;
+  if (/\b(every|each)\b/i.test(s)) return true;
+  return false;
 };
+
+const toSubAgentLite = (s: LiveSubAgent): SubAgentLite => ({
+  id: s.id,
+  goal: s.goal,
+  startedAt: s.startedAt,
+  lastEvent: s.lastEvent,
+});
 
 export function useAgentLiveState(intervalMs = 5000): LiveState & { refresh: () => void } {
   const { connected } = useAgentConnection();
@@ -87,31 +76,33 @@ export function useAgentLiveState(intervalMs = 5000): LiveState & { refresh: () 
     if (!connected || ticking.current) return;
     ticking.current = true;
     try {
-      const [nameRes, cfgRes, subs, cron, ping] = await Promise.all([
+      const [nameRes, cfgRes, cron, statusRes] = await Promise.all([
         systemAPI.getAgentName().catch(() => null),
         systemAPI.readConfig().catch(() => ({ success: false, content: "" })),
-        systemAPI.listSubAgents().catch(() => ({ success: false, active: [] as SubAgentLite[] })),
         systemAPI.listScheduledJobs().catch(() => ({ success: false, jobs: [] as CronJobLite[] })),
-        systemAPI.chatPing().catch(() => ({ success: false })),
+        systemAPI.hermesStatus().catch(() => ({ success: false, stdout: "", stderr: "" })),
       ]);
 
       const cfgText = (cfgRes as { content?: string }).content || "";
       const model = readModel(cfgText) || "—";
-      const heartbeats = parseHeartbeats(cfgText);
 
-      const health: Health = ping.success ? "healthy" : "degraded";
-      const healthDetail = ping.success
+      const health: Health = statusRes.success ? "healthy" : "degraded";
+      const healthDetail = statusRes.success
         ? "All systems nominal"
-        : "Agent reachable but not responding to ping";
+        : "Agent reachable but status check failed";
+
+      const allJobs = ((cron as { jobs?: CronJobLite[] }).jobs || []);
+      const recurring = allJobs.filter(isRecurring);
+      const oneShots = allJobs.filter((j) => !isRecurring(j));
 
       setState({
         agentName: nameRes || "Agent",
         model,
         health,
         healthDetail,
-        subAgents: ((subs as { active?: SubAgentLite[] }).active || []).slice(0, 6),
-        cronJobs: ((cron as { jobs?: CronJobLite[] }).jobs || []).slice(0, 8),
-        heartbeats,
+        subAgents: liveSubAgents.list().slice(0, 6).map(toSubAgentLite),
+        cronJobs: oneShots.slice(0, 8),
+        recurringJobs: recurring.slice(0, 8),
         loading: false,
       });
     } finally {
@@ -126,7 +117,12 @@ export function useAgentLiveState(intervalMs = 5000): LiveState & { refresh: () 
     }
     void refresh();
     const id = window.setInterval(() => void refresh(), intervalMs);
-    return () => window.clearInterval(id);
+    // Live sub-agent updates are event-driven — react instantly without
+    // waiting for the next poll.
+    const unsub = liveSubAgents.subscribe((snap) => {
+      setState((prev) => ({ ...prev, subAgents: snap.slice(0, 6).map(toSubAgentLite) }));
+    });
+    return () => { window.clearInterval(id); unsub(); };
   }, [connected, refresh, intervalMs]);
 
   return { ...state, refresh };

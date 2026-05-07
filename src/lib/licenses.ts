@@ -178,13 +178,13 @@ export const parseLicenseKey = async (
   }
 };
 
-/** True if the user has unlocked the upgrade (valid key in secrets store). */
-export const isUpgradeUnlocked = async (id: string): Promise<boolean> => {
-  const stored = await secretsStore.get(licenseKeyName(id));
-  if (!stored) return false;
-  const parsed = await parseLicenseKey(stored);
-  // Master key (upgradeId === '*') unlocks everything; otherwise must match.
-  return parsed != null && (parsed.upgradeId === '*' || parsed.upgradeId === id);
+/**
+ * All Hermes-backed features are now free for everyone — no aspect of the
+ * agent is gated behind a paid upgrade. We keep this function for backward
+ * compatibility with call sites that still ask, but it always returns true.
+ */
+export const isUpgradeUnlocked = async (_id: string): Promise<boolean> => {
+  return true;
 };
 
 /**

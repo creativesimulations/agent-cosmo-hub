@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import CapabilityFixBubble from "@/components/chat/CapabilityFixBubble";
 import CapabilityChips from "@/components/chat/CapabilityChips";
 import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
-import { secretsStore } from "@/lib/systemAPI";
+import { secretsStore, systemAPI } from "@/lib/systemAPI";
 import { useSettings } from "@/contexts/SettingsContext";
 import { isAnyBackendConfigured } from "@/lib/browserBackends";
 import {
@@ -29,6 +29,9 @@ import { IntentCard } from "@/components/intents";
 import ChatEmptyState from "@/components/chat/ChatEmptyState";
 import SlashCommandPalette from "@/components/chat/SlashCommandPalette";
 
+const PERSONALITY_PREFIX =
+  "I'd like to adjust your personality. Please update your SOUL.md";
+
 const AgentChat = () => {
   const { connected: agentConnected } = useAgentConnection();
   const {
@@ -47,6 +50,9 @@ const AgentChat = () => {
     draft,
     setDraft,
     sendIntentResponse,
+    personalityRestartPending,
+    markPersonalityDraftSent,
+    clearPersonalityRestart,
   } = useChat();
   const input = draft;
   const setInput = setDraft;
@@ -136,8 +142,10 @@ const AgentChat = () => {
       text = `/background ${text}`;
       setBackgroundMode(false);
     }
+    const wasPersonalityDraft = text.trimStart().startsWith(PERSONALITY_PREFIX);
     setInput("");
     await sendMessage(text);
+    if (wasPersonalityDraft) markPersonalityDraftSent();
   };
 
   // Voice mode toggle — sends a one-shot directive to the agent. The agent
@@ -498,6 +506,31 @@ const AgentChat = () => {
             <div className="mb-2 px-3 py-1.5 rounded-md border border-accent/30 bg-accent/10 text-[11px] text-accent flex items-center gap-2">
               <Moon className="w-3 h-3" />
               Next message will run as a background task. Toggle off above to send normally.
+            </div>
+          )}
+          {personalityRestartPending && (
+            <div className="mb-2 px-3 py-1.5 rounded-md border border-primary/30 bg-primary/10 text-[11px] text-primary flex items-center justify-between gap-2">
+              <span>Personality changes apply on the next agent restart.</span>
+              <span className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await systemAPI.restartAgent().catch(() => undefined);
+                    clearPersonalityRestart();
+                  }}
+                  className="px-2 py-0.5 rounded-sm bg-primary/20 hover:bg-primary/30 text-primary"
+                >
+                  Restart now
+                </button>
+                <button
+                  type="button"
+                  onClick={clearPersonalityRestart}
+                  className="px-1.5 py-0.5 text-primary/70 hover:text-primary"
+                  aria-label="Dismiss"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
             </div>
           )}
           <form
