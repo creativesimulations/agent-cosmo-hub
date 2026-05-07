@@ -29,6 +29,9 @@ import { IntentCard } from "@/components/intents";
 import ChatEmptyState from "@/components/chat/ChatEmptyState";
 import SlashCommandPalette from "@/components/chat/SlashCommandPalette";
 
+const PERSONALITY_PREFIX =
+  "I'd like to adjust your personality. Please update your SOUL.md";
+
 const AgentChat = () => {
   const { connected: agentConnected } = useAgentConnection();
   const {
@@ -47,6 +50,9 @@ const AgentChat = () => {
     draft,
     setDraft,
     sendIntentResponse,
+    personalityRestartPending,
+    markPersonalityDraftSent,
+    clearPersonalityRestart,
   } = useChat();
   const input = draft;
   const setInput = setDraft;
