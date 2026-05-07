@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import CapabilityFixBubble from "@/components/chat/CapabilityFixBubble";
 import CapabilityChips from "@/components/chat/CapabilityChips";
 import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
-import { secretsStore } from "@/lib/systemAPI";
+import { secretsStore, systemAPI } from "@/lib/systemAPI";
 import { useSettings } from "@/contexts/SettingsContext";
 import { isAnyBackendConfigured } from "@/lib/browserBackends";
 import {
