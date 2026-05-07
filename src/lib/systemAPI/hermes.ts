@@ -5574,7 +5574,7 @@ model: ${options.model || 'openrouter/auto'}
    *
    * Expected lines look roughly like:
    *   ID         SCHEDULE        NEXT RUN              PROMPT
-   *   abc123     */15 * * * *    2026-05-07 12:30:00   Check the build
+   *   abc123     star/15 etc     2026-05-07 12:30:00   Check the build
    * We are tolerant of column reordering and extra whitespace.
    */
   async listScheduledJobs(): Promise<{
