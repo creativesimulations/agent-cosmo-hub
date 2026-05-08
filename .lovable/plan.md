@@ -1,52 +1,61 @@
-## Plan: Agent-aware personality + sub-agent panel fixes
+## Refactor: remove unused code
 
-### 1. Split agent guidance into two files
+A targeted cleanup pass focused on code paths the app no longer reaches. No behavior change for any feature the user uses today — only deletions of dead code and de-duplication of the chat route.
 
-**`~/.hermes/AGENTS.md`** — shrink to ~15 lines. Just the unconditional essentials:
-- You run inside the Ronbot desktop app, which has a real terminal and file tools.
-- Never tell the user to "open a terminal" or "run this elsewhere" — run commands yourself.
-- For passwords, QR codes, OAuth, confirms, file picks, progress: emit a fenced ```ronbot-intent``` JSON card. Never ask for secrets in plain prose.
-- Full protocol reference and recipes: `~/.ronbot/APP_GUIDE.md` (grep it when unsure).
-- User responses come back as ```ronbot-intent-response``` blocks correlated by `id`.
+### 1. Drop the duplicate `/chat` route
 
-**`~/.ronbot/APP_GUIDE.md`** — full reference, refreshed on connect. Sections:
-- Intent envelope spec (id, type, title, description).
-- Each intent type with a JSON example: `credential_request`, `confirm`, `choice`, `qr_display`, `oauth_open`, `file_pick`, `progress`, `done`, `pairing_approve`.
-- Recipes: WhatsApp setup (`hermes whatsapp` → capture QR → `qr_display`), Google Workspace (`hermes auth google-workspace` → `oauth_open` + `progress`), Telegram, generic credential prompts.
-- When to use intents vs prose; how responses arrive.
+Home (`/`) already embeds `<AgentChat />` plus the right info panel. The standalone `/chat` route renders the same `AgentChat` without the panel, so it's a worse duplicate left over from when "Chat" was its own tab.
 
-### 2. New `systemAPI.writeRonbotAppGuide()`
+- `src/App.tsx`: remove `import AgentChat` and the `<Route path="/chat" …>` line.
+- Replace every `navigate("/chat")` with `navigate("/")` in:
+  - `src/pages/Skills.tsx`
+  - `src/pages/Scheduled.tsx` (two call sites)
+  - `src/pages/Insights.tsx`
+  - `src/pages/Channels.tsx`
+  - `src/pages/Index.tsx`
+  - `src/pages/NotFound.tsx` (`to="/chat"` → `to="/"`)
+- Update the `onChatPageRef` / unread-clear logic in `src/contexts/ChatContext.tsx` to compare against `"/"` instead of `"/chat"` (chat is the home view now).
 
-- Mirrors existing `writeRonbotAgentRules`. Idempotent, versioned header (`<!-- ronbot-app-guide v1 -->`), rewrites only when version changes or file missing.
-- Called from `RonbotRulesBridge` alongside `writeRonbotAgentRules` on connect.
+### 2. Delete `setupGoogleWorkspace`
 
-### 3. SOUL.md / personality addendum
+It's already off the `systemAPI` surface (commented out in `index.ts`) but the implementation still lives in `src/lib/systemAPI/hermes.ts` (lines ~5173-5230). Remove the method and the stale `// setupGoogleWorkspace removed` comment in `index.ts`. Agent owns this flow now.
 
-- One line appended (idempotent, marker-guarded) into the default persona pre-fill in `PersonalityDialog.tsx`: "You operate inside the Ronbot desktop app and proactively manage it for the user — see `~/.ronbot/APP_GUIDE.md`."
-- Existing user-edited personalities are not overwritten.
+### 3. Remove the post-Phase-5 WhatsApp/gateway dead code
 
-### 4. Fix sub-agent goal capture (`ChatContext.tsx`)
+The `index.ts` block-comment explicitly flags this as dead and slated for removal. Now that no UI path consumes these signals, delete:
 
-Replace the current `delegate_task` regex with matchers covering Hermes' real call shapes:
-- `delegate_task(... goal="...")` (single)
-- `delegate_task(tasks=[{ goal: "..." }, ...])` (batch — spawn one per goal)
-- Keep prose fallback + deferred goal updater.
+- Types: `WhatsAppFatalReason`, `WhatsAppGatewaySignalReport`, `SlackGatewayConflictInfo`, `GatewayStartupRecoverySignals` and their `export`s.
+- Parsers: `parseSlackGatewayConflict`, `parseGatewayStartupRecoverySignals`, the WhatsApp fatal-signal extractor, and the `fatalWhatsappReason / fatalWhatsappSnippet / bridgeHealthJson` fields produced by the gateway-startup helper.
+- The internal `if (signal.fatalWhatsappReason === …)` branches in the gateway recovery routine, plus the auxiliary `refreshGatewayInstall` / `startGateway` / `stopGateway` cascade if no caller remains after the trim.
+- Re-verify with `rg` after each batch — keep anything still referenced by `bootstrapStartupHealth` or the doctor flow.
 
-### 5. Active-only sub-agents in right panel
+### 4. Drop unused `systemAPI` exports
 
-- In `useAgentLiveState.ts` / `RightInfoPanel.tsx`, filter `liveSubAgents.list()` to `status === "running"`.
-- Empty-state copy → "No active sub-agents."
-- SubAgents tab still shows full history.
+After §3, prune from `src/lib/systemAPI/index.ts`:
+
+- `installHermesViaPip` — never called from anywhere.
+- `refreshGatewayInstall`, `startGateway`, `stopGateway`, `removeEnvVar` — only used inside `hermes.ts` itself; keep the methods on the internal `hermesAPI` object (since they call `this.…`) but stop re-exporting them through `systemAPI`.
+
+Leave `fileExists/readFile/writeFile/mkdir/writeStreamStdin/quitApp` etc. alone — they are used by other surfaces.
+
+### 5. Verification
+
+- App boots, Home (`/`) still renders chat + right panel.
+- "Open chat" buttons on Skills/Scheduled/Insights/Channels/Index/NotFound land on `/`.
+- TypeScript build passes (no dangling imports of removed types).
+- `rg "setupGoogleWorkspace|fatalWhatsappReason|WhatsAppGatewaySignalReport|/chat"` returns no hits in `src/`.
+- Manual smoke: agent connect → `~/.hermes/AGENTS.md` and `~/.ronbot/APP_GUIDE.md` still written; sub-agent panel still active-only.
 
 ### Files touched
-- `src/lib/systemAPI/index.ts` — add `writeRonbotAppGuide`.
-- `src/lib/systemAPI/hermes.ts` — shrink `RONBOT_RULES_BLOCK`; add APP_GUIDE writer + content constant.
-- `src/components/companion/RonbotRulesBridge.tsx` — call both writers.
-- `src/components/settings/PersonalityDialog.tsx` — persona one-liner.
-- `src/contexts/ChatContext.tsx` — goal-capture regex.
-- `src/hooks/useAgentLiveState.ts` and/or `src/components/companion/RightInfoPanel.tsx` — active-only filter + copy.
 
-### Verification
-- Connect agent → both files exist with current version headers.
-- Trigger a `delegate_task` → goal text appears on right panel; panel empties when turn ends; SubAgents tab keeps history.
-- Ask agent "set up WhatsApp" → it runs the command itself and emits a `qr_display` intent rather than asking the user to open a terminal.
+- `src/App.tsx`
+- `src/pages/{Skills,Scheduled,Insights,Channels,Index,NotFound}.tsx`
+- `src/contexts/ChatContext.tsx`
+- `src/lib/systemAPI/index.ts`
+- `src/lib/systemAPI/hermes.ts`
+
+### Out of scope
+
+- Renaming/restructuring of `hermes.ts` (the file is 6k lines but a real split is a separate refactor).
+- UI component pruning — none of the tabs/cards being kept are unused.
+- Tests beyond updating any that reference the removed exports/types.
