@@ -135,7 +135,7 @@ const CapabilityGallery = ({ compact, heading, subheading }: CapabilityGalleryPr
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => { window.location.hash = "#/chat"; }}
+          onClick={() => { window.location.hash = "#/"; }}
           className="text-xs"
         >
           Open chat →
