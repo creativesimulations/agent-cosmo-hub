@@ -100,7 +100,7 @@ export function useAgentLiveState(intervalMs = 5000): LiveState & { refresh: () 
         model,
         health,
         healthDetail,
-        subAgents: liveSubAgents.list().slice(0, 6).map(toSubAgentLite),
+        subAgents: liveSubAgents.list().filter((s) => s.status === "running").slice(0, 6).map(toSubAgentLite),
         cronJobs: oneShots.slice(0, 8),
         recurringJobs: recurring.slice(0, 8),
         loading: false,
