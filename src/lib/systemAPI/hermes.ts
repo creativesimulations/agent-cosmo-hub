@@ -1746,10 +1746,6 @@ export const hermesAPI = {
       } else if (issue.fixAction === 'repair-config') {
         const r = await this.repairConfig();
         actions.push(r.success ? 'repaired config' : `failed config repair: ${r.error || 'unknown'}`);
-      } else if (issue.fixAction === 'refresh-gateway') {
-        const r = await this.refreshGatewayInstall();
-        actions.push(r.success ? 'refreshed gateway install' : `failed gateway refresh: ${(r.stderr || r.stdout || '').split('\n')[0] || 'unknown'}`);
-      }
     }
 
     if (options?.sudoPassword !== undefined && options.sudoPassword !== null) {
