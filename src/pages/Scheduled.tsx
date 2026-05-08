@@ -23,7 +23,6 @@ import ActionableError from "@/components/ui/ActionableError";
 import { systemAPI } from "@/lib/systemAPI";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { useChat } from "@/contexts/ChatContext";
-import { toast } from "sonner";
 
 interface ScheduledJob {
   id: string;
@@ -42,7 +41,7 @@ const Scheduled = () => {
   const [cliAvailable, setCliAvailable] = useState(true);
   const [error, setError] = useState<string>("");
   const [query, setQuery] = useState("");
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  
 
   const load = useCallback(async () => {
     if (!connected) { setLoading(false); return; }
@@ -75,19 +74,12 @@ const Scheduled = () => {
     navigate("/chat");
   };
 
-  const handleDelete = async (job: ScheduledJob) => {
-    if (!confirm(`Delete scheduled job "${job.description}"?`)) return;
-    setDeletingId(job.id);
-    const r = await systemAPI.deleteScheduledJob(job.id);
-    setDeletingId(null);
-    if (r.success) {
-      toast.success("Scheduled job deleted");
-      void load();
-    } else {
-      toast.error("Could not delete job", { description: r.error });
-      setDraft(`Delete the scheduled job with id "${job.id}" — the CLI rejected it directly.`);
-      navigate("/chat");
-    }
+  const handleDelete = (job: ScheduledJob) => {
+    setDraft(
+      `Please remove the scheduled task with id "${job.id}" (${job.description}). ` +
+        `Confirm with me first if needed.`,
+    );
+    navigate("/chat");
   };
 
   if (!connected) {
@@ -226,11 +218,11 @@ const Scheduled = () => {
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => void handleDelete(j)}
-                  disabled={deletingId === j.id}
+                  onClick={() => handleDelete(j)}
                   className="text-muted-foreground hover:text-destructive shrink-0"
+                  title="Ask the agent to remove this scheduled task"
                 >
-                  {deletingId === j.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  <Trash2 className="w-4 h-4" />
                 </Button>
               </div>
             </GlassCard>
