@@ -4,7 +4,7 @@ import {
   Puzzle, AlertCircle, Loader2, RefreshCw, Search, Package, Wrench,
   KeyRound, Globe, Plus, Sparkles, ExternalLink, Box,
 } from "lucide-react";
-import InstallSkillDialog from "@/components/skills/InstallSkillDialog";
+import { useChat } from "@/contexts/ChatContext";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +32,7 @@ const openExternal = (url: string) => window.open(url, "_blank", "noopener,noref
 const Skills = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { setDraft } = useChat();
   const { connected: agentConnected } = useAgentConnection();
   const [loading, setLoading] = useState(true);
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -40,16 +41,17 @@ const Skills = () => {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [disabledSet, setDisabledSet] = useState<Set<string>>(new Set());
   const [secretKeys, setSecretKeys] = useState<Set<string>>(new Set());
-  const [savingToggle, setSavingToggle] = useState<string | null>(null);
   const [focusCap, setFocusCap] = useState<string | null>(null);
   const [browserSetupOpen, setBrowserSetupOpen] = useState(false);
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
-  const [installOpen, setInstallOpen] = useState(false);
   const [actionError, setActionError] = useState<string>("");
-  const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
-  const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
   const [plugins, setPlugins] = useState<Array<{ name: string; enabled?: boolean; description?: string; source?: string }>>([]);
   const [pluginsCliAvailable, setPluginsCliAvailable] = useState(true);
+
+  const delegateToAgent = useCallback((prompt: string) => {
+    setDraft(prompt);
+    navigate("/chat");
+  }, [setDraft, navigate]);
 
   // Read ?focus=<capId> from the URL — drives a scroll + highlight of any
   // skill rows whose names match the capability's candidate skill list.
