@@ -41,7 +41,7 @@ const CapabilityTile = ({ entry, compact }: { entry: DiscoveredCapability; compa
 
   const onSetup = () => {
     setDraft(entry.setupPrompt);
-    navigate("/chat");
+    navigate("/");
   };
 
   return (

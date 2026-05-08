@@ -32,7 +32,7 @@ const PersonalityDialog = ({ open, onOpenChange }: Props) => {
         "see ~/.ronbot/APP_GUIDE.md for the UI protocol and never ask me to open a separate terminal or paste secrets in plain chat.",
     );
     onOpenChange(false);
-    navigate("/chat");
+    navigate("/");
   };
 
   return (
