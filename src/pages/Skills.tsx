@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Puzzle, AlertCircle, Loader2, RefreshCw, Search, Package, Wrench,
-  KeyRound, Globe, Plus, Sparkles, ExternalLink, Box,
+  KeyRound, Globe, Plus, Sparkles, Box,
 } from "lucide-react";
-import InstallSkillDialog from "@/components/skills/InstallSkillDialog";
+import { useChat } from "@/contexts/ChatContext";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 import BrowserBackendBadge from "@/components/skills/BrowserBackendBadge";
 import ActionableError from "@/components/ui/ActionableError";
-import { getUpgrade, isUpgradeUnlocked } from "@/lib/licenses";
+
 import CapabilityGallery from "@/components/dashboard/CapabilityGallery";
 import { cn } from "@/lib/utils";
 
@@ -27,11 +27,12 @@ type Skill = {
   requiredSecrets?: string[];
 };
 
-const openExternal = (url: string) => window.open(url, "_blank", "noopener,noreferrer");
+
 
 const Skills = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { setDraft } = useChat();
   const { connected: agentConnected } = useAgentConnection();
   const [loading, setLoading] = useState(true);
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -40,16 +41,17 @@ const Skills = () => {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [disabledSet, setDisabledSet] = useState<Set<string>>(new Set());
   const [secretKeys, setSecretKeys] = useState<Set<string>>(new Set());
-  const [savingToggle, setSavingToggle] = useState<string | null>(null);
   const [focusCap, setFocusCap] = useState<string | null>(null);
   const [browserSetupOpen, setBrowserSetupOpen] = useState(false);
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
-  const [installOpen, setInstallOpen] = useState(false);
   const [actionError, setActionError] = useState<string>("");
-  const [unlocks, setUnlocks] = useState<Record<string, boolean>>({});
-  const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
   const [plugins, setPlugins] = useState<Array<{ name: string; enabled?: boolean; description?: string; source?: string }>>([]);
   const [pluginsCliAvailable, setPluginsCliAvailable] = useState(true);
+
+  const delegateToAgent = useCallback((prompt: string) => {
+    setDraft(prompt);
+    navigate("/chat");
+  }, [setDraft, navigate]);
 
   // Read ?focus=<capId> from the URL — drives a scroll + highlight of any
   // skill rows whose names match the capability's candidate skill list.
@@ -72,11 +74,10 @@ const Skills = () => {
     }
     setLoading(true);
     setError(null);
-    const [result, cfg, sec, googleworkspace, pluginsR] = await Promise.all([
+    const [result, cfg, sec, pluginsR] = await Promise.all([
       systemAPI.listSkills(),
       systemAPI.getSkillsConfig(),
       secretsStore.list(),
-      isUpgradeUnlocked("googleworkspace"),
       systemAPI.listPlugins(),
     ]);
     if (result.success) {
@@ -87,7 +88,6 @@ const Skills = () => {
     }
     setDisabledSet(new Set(cfg.disabled));
     setSecretKeys(new Set(sec.keys || []));
-    setUnlocks({ googleworkspace });
     setPlugins(pluginsR.plugins);
     setPluginsCliAvailable(pluginsR.cliAvailable);
     setLoading(false);
@@ -135,53 +135,24 @@ const Skills = () => {
     });
   };
 
-  const handleToggle = async (skill: Skill, nextEnabled: boolean) => {
-    const key = `${skill.category}/${skill.name}`;
-    setSavingToggle(key);
-    // Optimistic
-    setDisabledSet((prev) => {
-      const n = new Set(prev);
-      if (nextEnabled) n.delete(skill.name); else n.add(skill.name);
-      return n;
-    });
-    const r = await systemAPI.setSkillEnabled(skill.name, nextEnabled);
-    setSavingToggle(null);
-    if (!r.success) {
-      setActionError(r.error || "Failed to update skill state.");
-      toast.error("Couldn't save", { description: r.error || "Failed to update config" });
-      // Revert
-      setDisabledSet((prev) => {
-        const n = new Set(prev);
-        if (nextEnabled) n.add(skill.name); else n.delete(skill.name);
-        return n;
-      });
-      return;
-    }
-    setActionError("");
-    toast.success(`${nextEnabled ? "Enabled" : "Disabled"} ${skill.name}`, {
-      description: "Takes effect the next time the agent restarts.",
-    });
+  const handleToggle = (skill: Skill, nextEnabled: boolean) => {
+    delegateToAgent(
+      `Please ${nextEnabled ? "enable" : "disable"} the "${skill.name}" skill ` +
+        `and let me know once it's done. ` +
+        `If anything is missing (secrets, dependencies), ask me for it.`,
+    );
   };
 
-  const bulkAction = async (action: "enableAll" | "disableAll" | { enableOnly: string }) => {
-    const targets = action === "enableAll" || action === "disableAll"
-      ? skills
-      : skills.filter((s) => s.category === action.enableOnly);
+  const bulkAction = (action: "enableAll" | "disableAll" | { enableOnly: string }) => {
     if (action === "enableAll") {
-      for (const s of targets) await systemAPI.setSkillEnabled(s.name, true);
+      delegateToAgent("Please enable every available skill. Ask me for any missing secrets along the way.");
     } else if (action === "disableAll") {
-      for (const s of targets) await systemAPI.setSkillEnabled(s.name, false);
+      delegateToAgent("Please disable every skill until I ask for specific ones to be re-enabled.");
     } else {
-      // Enable only this category — disable everything else
-      for (const s of skills) {
-        const inCat = s.category === action.enableOnly;
-        await systemAPI.setSkillEnabled(s.name, inCat);
-      }
+      delegateToAgent(
+        `Please enable only the skills in the "${action.enableOnly}" category and disable everything else.`,
+      );
     }
-    toast.success("Bulk update saved", {
-      description: "Takes effect the next time the agent restarts.",
-    });
-    void load();
   };
 
   const statusFor = (skill: Skill): { label: string; tone: "ready" | "needs" | "disabled" } => {
@@ -191,33 +162,16 @@ const Skills = () => {
     return { label: "Ready", tone: "ready" };
   };
 
-  const googleWorkspaceUpgrade = getUpgrade("googleworkspace");
-  const googleWorkspaceUnlocked = !!unlocks.googleworkspace;
   const googleWorkspaceSkill = skills.find((s) => s.name.toLowerCase() === "google-workspace");
   const googleWorkspaceNeedsSecrets = (googleWorkspaceSkill?.requiredSecrets ?? []).filter(
     (k) => !secretKeys.has(k),
   );
 
-  const handleGoogleWorkspaceSetup = async () => {
-    if (!googleWorkspaceUnlocked) return;
-    setGoogleWorkspaceBusy(true);
-    try {
-      const r = await systemAPI.setupGoogleWorkspace();
-      if (r.success) {
-        toast.success("Google Workspace is connected", {
-          description: "Gmail/Calendar/Drive tools are now ready for the next agent restart.",
-        });
-        setActionError("");
-        await load();
-        return;
-      }
-      setActionError(r.error || "Google Workspace setup failed.");
-      toast.error("Google Workspace setup failed", {
-        description: r.error || "Check diagnostics output and retry.",
-      });
-    } finally {
-      setGoogleWorkspaceBusy(false);
-    }
+  const handleGoogleWorkspaceSetup = () => {
+    delegateToAgent(
+      "Please set up Google Workspace for me (Gmail, Calendar, Drive, Docs, Sheets). " +
+        "Walk me through any login or permission steps and ask for anything you need.",
+    );
   };
 
   if (!agentConnected) {
@@ -271,7 +225,11 @@ const Skills = () => {
         <div className="flex items-center gap-2">
           <Button
             size="sm"
-            onClick={() => setInstallOpen(true)}
+            onClick={() =>
+              delegateToAgent(
+                "Please install a new skill for me. Ask me for the path or git URL, then handle the install and any required secrets.",
+              )
+            }
             className="gradient-primary text-primary-foreground"
           >
             <Plus className="w-4 h-4 mr-1" /> Install skill
@@ -417,7 +375,7 @@ const Skills = () => {
         </GlassCard>
       )}
 
-      <GlassCard className={`p-4 space-y-3 ${googleWorkspaceUnlocked ? "" : "border-primary/30 bg-primary/5"}`}>
+      <GlassCard className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-md bg-primary/15 text-primary flex items-center justify-center shrink-0">
@@ -425,53 +383,25 @@ const Skills = () => {
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-sm font-semibold text-foreground">Google Workspace (paid add-on)</h3>
-                <Badge variant="outline" className="border-white/10 text-muted-foreground text-[10px]">
-                  {googleWorkspaceUpgrade?.priceLabel ?? "One-time · $1"}
-                </Badge>
-                {googleWorkspaceUnlocked && (
-                  <Badge variant="outline" className="border-success/30 text-success text-[10px]">
-                    Unlocked
-                  </Badge>
-                )}
+                <h3 className="text-sm font-semibold text-foreground">Google Workspace</h3>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                One-click setup for Hermes <code>google-workspace</code> skill (Gmail, Calendar, Drive, Docs, Sheets).
+                Gmail, Calendar, Drive, Docs, and Sheets. Your agent will guide you through login in chat.
               </p>
-              {googleWorkspaceUnlocked && googleWorkspaceSkill && googleWorkspaceNeedsSecrets.length > 0 && (
+              {googleWorkspaceSkill && googleWorkspaceNeedsSecrets.length > 0 && (
                 <p className="text-[11px] text-warning mt-1">
                   Missing secrets: {googleWorkspaceNeedsSecrets.join(", ")}
                 </p>
               )}
             </div>
           </div>
-          {googleWorkspaceUnlocked ? (
-            <Button
-              size="sm"
-              onClick={() => void handleGoogleWorkspaceSetup()}
-              className="gradient-primary text-primary-foreground shrink-0"
-              disabled={googleWorkspaceBusy}
-            >
-              {googleWorkspaceBusy ? (
-                <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Setting up…</>
-              ) : (
-                <>Set up Google Workspace</>
-              )}
-            </Button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => openExternal(googleWorkspaceUpgrade?.buyUrl ?? "https://ronbot.com/upgrades")}
-              >
-                <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> Buy add-on
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => navigate("/upgrades")}>
-                Enter key
-              </Button>
-            </div>
-          )}
+          <Button
+            size="sm"
+            onClick={handleGoogleWorkspaceSetup}
+            className="gradient-primary text-primary-foreground shrink-0"
+          >
+            Set up
+          </Button>
         </div>
       </GlassCard>
 
@@ -522,18 +452,6 @@ const Skills = () => {
         onConfigured={() => {
           setBrowserRefreshKey((k) => k + 1);
           void load();
-        }}
-      />
-
-      <InstallSkillDialog
-        open={installOpen}
-        onOpenChange={setInstallOpen}
-        kind="skill"
-        onInstalled={({ missingSecrets }) => {
-          void load();
-          if (missingSecrets.length > 0) {
-            navigate(`/secrets?addKey=${missingSecrets[0]}`);
-          }
         }}
       />
     </div>
