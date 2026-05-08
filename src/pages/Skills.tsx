@@ -50,7 +50,7 @@ const Skills = () => {
 
   const delegateToAgent = useCallback((prompt: string) => {
     setDraft(prompt);
-    navigate("/chat");
+    navigate("/");
   }, [setDraft, navigate]);
 
   // Read ?focus=<capId> from the URL — drives a scroll + highlight of any

@@ -17,16 +17,10 @@ const NotFound = () => {
         </p>
         <div className="flex items-center justify-center gap-3 pt-2">
           <Link
-            to="/dashboard"
+            to="/"
             className="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-sm"
           >
-            Go to Dashboard
-          </Link>
-          <Link
-            to="/chat"
-            className="px-4 py-2 rounded-md border border-border text-foreground hover:bg-muted/40 transition-colors text-sm"
-          >
-            Open Agent Chat
+            Go to Home
           </Link>
         </div>
       </div>

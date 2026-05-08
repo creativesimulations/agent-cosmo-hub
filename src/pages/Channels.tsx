@@ -78,7 +78,7 @@ const ChannelsPage = () => {
 
   const delegateToAgent = (prompt: string) => {
     setDraft(prompt);
-    navigate("/chat");
+    navigate("/");
   };
 
   const handleSetUp = (channel: DiscoveredCapability) => {

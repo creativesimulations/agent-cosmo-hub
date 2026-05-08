@@ -22,7 +22,6 @@ import Secrets from "./pages/Secrets";
 import Skills from "./pages/Skills";
 import SettingsPage from "./pages/SettingsPage";
 import TerminalPage from "./pages/TerminalPage";
-import AgentChat from "./pages/AgentChat";
 import Channels from "./pages/Channels";
 import UpdateManager from "./pages/UpdateManager";
 import BackupRestore from "./pages/BackupRestore";
@@ -62,7 +61,6 @@ const App = () => (
             <Route path="/skills" element={<Skills />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/terminal" element={<TerminalPage />} />
-            <Route path="/chat" element={<AgentChat />} />
             <Route path="/channels" element={<Channels />} />
             
             <Route path="/updates" element={<UpdateManager />} />

@@ -963,7 +963,7 @@ const Index = () => {
                   {installStep === 7 && launchOutput.some((l) => l.includes("All systems operational")) && (
                     <Button
                       size="sm"
-                      onClick={() => navigate("/chat")}
+                      onClick={() => navigate("/")}
                       className="gradient-primary text-primary-foreground"
                     >
                       Start chatting with Ron <ArrowRight className="w-4 h-4 ml-1" />
