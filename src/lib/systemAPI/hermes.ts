@@ -183,8 +183,9 @@ const runHermesShell = async (
     : coreAPI.runCommand(cmd, mergedOptions);
 };
 
-/** Prepended to Hermes CLI invocations so `npm`, Homebrew Node, etc. resolve (WhatsApp bridge). */
+/** Prepended to Hermes CLI invocations so the venv/Homebrew/`~/.local/bin` resolve. */
 const HERMES_PATH_EXPORT =
+  'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/snap/bin:$PATH"';
 
 const runHermesCli = async (
   command: string,
