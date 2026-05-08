@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Puzzle, AlertCircle, Loader2, RefreshCw, Search, Package, Wrench,
-  KeyRound, Globe, Plus, Sparkles, ExternalLink, Box,
+  KeyRound, Globe, Plus, Sparkles, Box,
 } from "lucide-react";
 import { useChat } from "@/contexts/ChatContext";
 import GlassCard from "@/components/ui/GlassCard";
@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 import BrowserBackendBadge from "@/components/skills/BrowserBackendBadge";
 import ActionableError from "@/components/ui/ActionableError";
-import { getUpgrade, isUpgradeUnlocked } from "@/lib/licenses";
+
 import CapabilityGallery from "@/components/dashboard/CapabilityGallery";
 import { cn } from "@/lib/utils";
 
@@ -27,7 +27,7 @@ type Skill = {
   requiredSecrets?: string[];
 };
 
-const openExternal = (url: string) => window.open(url, "_blank", "noopener,noreferrer");
+
 
 const Skills = () => {
   const navigate = useNavigate();
