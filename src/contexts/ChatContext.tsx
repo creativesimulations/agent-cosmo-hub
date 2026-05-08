@@ -508,8 +508,20 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             const spawnRe = /\b(delegate_task|sub[-_ ]?agent\.start|spawn(?:ed)?\s+(?:sub[-_ ]?agent|child\s+agent))\b/gi;
             const spawnMatches = chunk.data.match(spawnRe);
             if (spawnMatches && spawnMatches.length) {
+              // If the call shape is `delegate_task(tasks=[{...}, {...}])`,
+              // pull each goal individually so every entry gets its own text.
+              const batchGoals: string[] = [];
+              const tasksBlock = streamBuf.match(/tasks\s*=\s*\[([\s\S]{0,4000}?)\]/i);
+              if (tasksBlock) {
+                const inner = tasksBlock[1];
+                const goalRe = /["']?(?:goal|task|prompt|instruction|description|objective)["']?\s*[:=]\s*["']([^"']{3,400})["']/gi;
+                let gm: RegExpExecArray | null;
+                while ((gm = goalRe.exec(inner)) !== null) {
+                  batchGoals.push(gm[1].trim());
+                }
+              }
               for (let i = 0; i < spawnMatches.length; i++) {
-                const goal = extractGoal(streamBuf);
+                const goal = batchGoals[i] || extractGoal(streamBuf);
                 const id = liveSubAgents.spawn(goal);
                 turnLiveIds.push(id);
                 spawnedThisTurn++;

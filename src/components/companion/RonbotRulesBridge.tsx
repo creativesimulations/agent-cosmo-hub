@@ -15,7 +15,10 @@ const RonbotRulesBridge = () => {
     (async () => {
       try {
         if (cancelled) return;
-        await systemAPI.writeRonbotAgentRules?.();
+        await Promise.all([
+          systemAPI.writeRonbotAgentRules?.(),
+          systemAPI.writeRonbotAppGuide?.(),
+        ]);
       } catch {
         /* best effort */
       }

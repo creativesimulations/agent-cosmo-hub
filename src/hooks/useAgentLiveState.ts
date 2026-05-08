@@ -100,7 +100,7 @@ export function useAgentLiveState(intervalMs = 5000): LiveState & { refresh: () 
         model,
         health,
         healthDetail,
-        subAgents: liveSubAgents.list().slice(0, 6).map(toSubAgentLite),
+        subAgents: liveSubAgents.list().filter((s) => s.status === "running").slice(0, 6).map(toSubAgentLite),
         cronJobs: oneShots.slice(0, 8),
         recurringJobs: recurring.slice(0, 8),
         loading: false,
@@ -120,7 +120,10 @@ export function useAgentLiveState(intervalMs = 5000): LiveState & { refresh: () 
     // Live sub-agent updates are event-driven — react instantly without
     // waiting for the next poll.
     const unsub = liveSubAgents.subscribe((snap) => {
-      setState((prev) => ({ ...prev, subAgents: snap.slice(0, 6).map(toSubAgentLite) }));
+      setState((prev) => ({
+        ...prev,
+        subAgents: snap.filter((s) => s.status === "running").slice(0, 6).map(toSubAgentLite),
+      }));
     });
     return () => { window.clearInterval(id); unsub(); };
   }, [connected, refresh, intervalMs]);

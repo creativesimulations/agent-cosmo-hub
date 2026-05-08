@@ -1,72 +1,52 @@
-## Goals
+## Plan: Agent-aware personality + sub-agent panel fixes
 
-1. Remove the "Chat" sidebar tab (Home already hosts the agent chat).
-2. Stop the app from running Hermes CLI auth flows itself. **All Hermes setup/admin actions must be delegated to the agent via a chat prompt** — the agent already knows how to drive Hermes and will collect anything it needs from the user through the intent protocol.
-3. Apply the same rule to every other place where the app shells out to do "setup-style" Hermes work (Google Workspace, channel setup, skill/plugin/MCP install, scheduled-job creation, profile management, etc.). The app keeps **read-only probes** (list/status), but every **mutating "set up X" / "install X" / "connect X"** flow becomes "draft a prompt, route to chat, let the agent do it."
+### 1. Split agent guidance into two files
 
-## Plan
+**`~/.hermes/AGENTS.md`** — shrink to ~15 lines. Just the unconditional essentials:
+- You run inside the Ronbot desktop app, which has a real terminal and file tools.
+- Never tell the user to "open a terminal" or "run this elsewhere" — run commands yourself.
+- For passwords, QR codes, OAuth, confirms, file picks, progress: emit a fenced ```ronbot-intent``` JSON card. Never ask for secrets in plain prose.
+- Full protocol reference and recipes: `~/.ronbot/APP_GUIDE.md` (grep it when unsure).
+- User responses come back as ```ronbot-intent-response``` blocks correlated by `id`.
 
-### 1. Sidebar — drop the Chat tab
+**`~/.ronbot/APP_GUIDE.md`** — full reference, refreshed on connect. Sections:
+- Intent envelope spec (id, type, title, description).
+- Each intent type with a JSON example: `credential_request`, `confirm`, `choice`, `qr_display`, `oauth_open`, `file_pick`, `progress`, `done`, `pairing_approve`.
+- Recipes: WhatsApp setup (`hermes whatsapp` → capture QR → `qr_display`), Google Workspace (`hermes auth google-workspace` → `oauth_open` + `progress`), Telegram, generic credential prompts.
+- When to use intents vs prose; how responses arrive.
 
-`src/components/layout/AppSidebar.tsx`:
-- Remove the `{ path: "/chat", icon: MessageSquare, label: "Chat", showChatBadge: true }` nav entry.
-- Keep the `unreadCount` / `isStreaming` wiring removed along with the now-unused `isChatLink` branch (clean up the badge code paths).
-- Keep the `/chat` route in `App.tsx` so deep-links and the personality flow still work.
+### 2. New `systemAPI.writeRonbotAppGuide()`
 
-### 2. Channels — Google Workspace becomes agent-driven
+- Mirrors existing `writeRonbotAgentRules`. Idempotent, versioned header (`<!-- ronbot-app-guide v1 -->`), rewrites only when version changes or file missing.
+- Called from `RonbotRulesBridge` alongside `writeRonbotAgentRules` on connect.
 
-`src/pages/Channels.tsx`:
-- Delete `handleGoogleWorkspaceSetup`, the `googleWorkspaceBusy` state, and the inline `<Loader2>` button.
-- Make the Google Workspace card behave like every other `ChannelCard`: clicking "Set up" calls `setDraft(...)` with a prompt like:
+### 3. SOUL.md / personality addendum
 
-  > Please set up Google Workspace for me (Gmail, Calendar, Drive, Docs, Sheets). Walk me through any login or permission steps and ask for anything you need.
+- One line appended (idempotent, marker-guarded) into the default persona pre-fill in `PersonalityDialog.tsx`: "You operate inside the Ronbot desktop app and proactively manage it for the user — see `~/.ronbot/APP_GUIDE.md`."
+- Existing user-edited personalities are not overwritten.
 
-  …then `navigate("/chat")`. The agent owns the OAuth/device-login flow end to end via the intent protocol.
-- Remove the `setupGoogleWorkspace` import.
+### 4. Fix sub-agent goal capture (`ChatContext.tsx`)
 
-### 3. Stop exposing app-driven Hermes setup helpers
+Replace the current `delegate_task` regex with matchers covering Hermes' real call shapes:
+- `delegate_task(... goal="...")` (single)
+- `delegate_task(tasks=[{ goal: "..." }, ...])` (batch — spawn one per goal)
+- Keep prose fallback + deferred goal updater.
 
-`src/lib/systemAPI/hermes.ts` + `src/lib/systemAPI/index.ts`:
-- Delete `setupGoogleWorkspace` (the function that runs `hermes auth google-workspace || …`). It's the source of the error in the bug report and has no agent-free fallback path.
-- Audit and remove any other **mutating** helpers the renderer calls directly for things the agent should drive. Concretely, retire from the public `systemAPI` surface:
-  - `installSkillFromPath`, `installSkillFromGit`, `installToolFromPath` — agent installs skills/tools.
-  - `setupGoogleWorkspace` — covered above.
-  - `deleteScheduledJob` — agent manages cron.
-  - `setSkillEnabled` (mutating) — agent toggles skills via its own tools.
-  - Any `restart/repair`-style helpers that aren't strictly needed for the personality-restart flow.
+### 5. Active-only sub-agents in right panel
 
-  Replace each call site with a "seed a prompt, route to chat" pattern (same `setDraft` + `navigate("/chat")` shape used by `ChannelCard`). Keep a single shared helper, e.g. `useDelegateToAgent()` in `src/contexts/ChatContext.tsx`, that takes a prompt string and does the seed+navigate.
+- In `useAgentLiveState.ts` / `RightInfoPanel.tsx`, filter `liveSubAgents.list()` to `status === "running"`.
+- Empty-state copy → "No active sub-agents."
+- SubAgents tab still shows full history.
 
-- **Keep** read-only probes (`hermesStatus`, `listScheduledJobs`, `listPlugins`, `listProfiles`, `listSkills`, `getSkillsConfig`, `listMCPServers`, `getInsights`, `chatPing`, `readEnvFile`, `readConfig`, `discoverCapabilities`, `writeRonbotAgentRules`, `restartAgent` for the personality flow). These don't conflict with "agent owns Hermes" — they just read state.
+### Files touched
+- `src/lib/systemAPI/index.ts` — add `writeRonbotAppGuide`.
+- `src/lib/systemAPI/hermes.ts` — shrink `RONBOT_RULES_BLOCK`; add APP_GUIDE writer + content constant.
+- `src/components/companion/RonbotRulesBridge.tsx` — call both writers.
+- `src/components/settings/PersonalityDialog.tsx` — persona one-liner.
+- `src/contexts/ChatContext.tsx` — goal-capture regex.
+- `src/hooks/useAgentLiveState.ts` and/or `src/components/companion/RightInfoPanel.tsx` — active-only filter + copy.
 
-### 4. Update call sites
-
-- `src/pages/Skills.tsx` — replace the "Install skill / install from path / install from git" buttons with "Ask the agent to install a skill" → `delegateToAgent("Please install the skill at <path or git URL the user provides>. Ask me for the path/URL if you need it.")`. Remove the dialogs that drive `systemAPI.installSkill*` directly.
-  - Note: keep the skill **list** (`listSkills`) and the "open skills folder" reveal — both are read-only/UX-only.
-- `src/pages/Scheduled.tsx` — replace any "delete job" UI with "Ask the agent to remove this job" → seed prompt with the job id. Listing stays as-is.
-- Anywhere `setSkillEnabled` is wired to a toggle, swap the toggle for "Ask the agent to enable/disable <skill>".
-- Search for remaining `systemAPI.<mutating>` call sites with `rg -n "systemAPI\.(setupGoogleWorkspace|installSkill|installTool|deleteScheduledJob|setSkillEnabled)"` and convert them all.
-
-### 5. Wording in chat-empty-state / docs
-
-Update any onboarding copy that still implies the app sets things up ("we'll install…", "we'll connect…") to "ask your agent — it can install skills, connect channels, schedule jobs, and more for you."
-
-## Files touched
-
-- **edited** `src/components/layout/AppSidebar.tsx` — remove Chat nav entry.
-- **edited** `src/pages/Channels.tsx` — Google Workspace card → agent prompt.
-- **edited** `src/lib/systemAPI/hermes.ts` — remove `setupGoogleWorkspace` and other mutating helpers.
-- **edited** `src/lib/systemAPI/index.ts` — drop the corresponding exports.
-- **edited** `src/contexts/ChatContext.tsx` — add a tiny `delegateToAgent(prompt)` helper.
-- **edited** `src/pages/Skills.tsx` — convert install/enable buttons to agent prompts; drop install dialogs.
-- **edited** `src/pages/Scheduled.tsx` — convert delete to an agent prompt.
-- **edited** any other page using the removed mutating helpers (TBD from `rg` audit).
-- **deleted** `src/components/skills/InstallSkillDialog.tsx` (no longer used) — if confirmed unused after the audit.
-
-## Verification
-
-- Sidebar no longer shows Chat; Home still loads chat inline; `/chat` deep-link still works.
-- Clicking "Set up" on the Google Workspace card pre-fills the chat composer with the setup prompt and navigates to chat — no Hermes CLI is invoked by the renderer.
-- `rg -n "hermes auth|google-workspace"` in `src/lib/systemAPI/hermes.ts` returns nothing.
-- `rg -n "systemAPI\.(setupGoogleWorkspace|installSkillFromPath|installSkillFromGit|installToolFromPath|deleteScheduledJob|setSkillEnabled)\("` in `src/` returns nothing.
-- Diagnostics no longer logs the failed `hermes auth google-workspace` chain.
+### Verification
+- Connect agent → both files exist with current version headers.
+- Trigger a `delegate_task` → goal text appears on right panel; panel empties when turn ends; SubAgents tab keeps history.
+- Ask agent "set up WhatsApp" → it runs the command itself and emits a `qr_display` intent rather than asking the user to open a terminal.
