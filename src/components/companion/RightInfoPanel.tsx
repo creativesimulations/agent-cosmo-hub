@@ -200,7 +200,7 @@ const RightInfoPanel = () => {
           {live.loading ? (
             <Skeleton className="h-8 w-full" />
           ) : live.subAgents.length === 0 ? (
-            <EmptyRow>None active right now.</EmptyRow>
+            <EmptyRow>No active sub-agents.</EmptyRow>
           ) : (
             live.subAgents.map((s) => (
               <div
