@@ -820,64 +820,10 @@ const finalizeInstallVerification = async (result: CommandResult, onOutput?: Com
   onOutput?.({ type: 'stdout', data: `${verificationLines.join('\n')}\n` });
 
   if (hasUsableHermesInstall(state)) {
-    const runtime = await hermesAPI.ensureHermesNodeRuntime(onOutput).catch((e) => ({
-      success: false,
-      stdout: '',
-      stderr: e instanceof Error ? e.message : String(e),
-      code: 1,
-    } as CommandResult));
-    if (!runtime.success) {
-      const failure = '[verify] Base runtime setup failed: managed Node v22 could not be installed for browser and WhatsApp bridge support.';
-      onOutput?.({ type: 'stderr', data: `${failure}\n${runtime.stderr || runtime.stdout || ''}\n` });
-      return {
-        success: false,
-        code: runtime.code || 53,
-        stdout: `${result.stdout}${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${verificationLines.join('\n')}\n${runtime.stdout || ''}`,
-        stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${failure}\n${runtime.stderr || ''}`,
-      };
-    }
-
-    const whatsappRuntime = await hermesAPI.ensureWhatsAppManagedNode().catch((e) => ({
-      success: false,
-      error: e instanceof Error ? e.message : String(e),
-    }));
-    if (!whatsappRuntime.success) {
-      const failure = `[verify] WhatsApp bridge runtime setup failed: ${whatsappRuntime.error || 'managed Node shim could not be prepared.'}`;
-      onOutput?.({ type: 'stderr', data: `${failure}\n` });
-      return {
-        success: false,
-        code: 54,
-        stdout: `${result.stdout}${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${verificationLines.join('\n')}\n${runtime.stdout || ''}`,
-        stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${failure}\n`,
-      };
-    }
-
-    const bridgeDeps = await hermesAPI.ensureWhatsAppBridgeDeps(onOutput).catch((e) => ({
-      success: false,
-      stdout: '',
-      stderr: e instanceof Error ? e.message : String(e),
-      code: 1,
-    } as CommandResult));
-    if (!bridgeDeps.success) {
-      const failure = '[verify] WhatsApp bridge dependency setup failed during install.';
-      onOutput?.({ type: 'stderr', data: `${failure}\n${bridgeDeps.stderr || bridgeDeps.stdout || ''}\n` });
-      return {
-        success: false,
-        code: bridgeDeps.code || 55,
-        stdout: `${result.stdout}${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${verificationLines.join('\n')}\n${runtime.stdout || ''}\n${bridgeDeps.stdout || ''}`,
-        stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${failure}\n${bridgeDeps.stderr || ''}`,
-      };
-    }
-
-    const baseRuntimeLines = [
-      `[verify] managed Node runtime: ready (${whatsappRuntime.version || HERMES_NODE_VERSION})`,
-      '[verify] WhatsApp bridge dependencies: ready',
-    ];
-    onOutput?.({ type: 'stdout', data: `${baseRuntimeLines.join('\n')}\n` });
     return {
       ...result,
-      stdout: `${result.stdout}${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${verificationLines.join('\n')}\n${runtime.stdout || ''}${bridgeDeps.stdout || ''}${baseRuntimeLines.join('\n')}\n`,
-      stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${runtime.stderr || ''}${bridgeDeps.stderr || ''}`,
+      stdout: `${result.stdout}${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${verificationLines.join('\n')}\n`,
+      stderr: result.stderr,
     };
   }
 
