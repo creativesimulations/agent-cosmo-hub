@@ -14,6 +14,7 @@ import {
   recordPermissionEvent,
 } from '../approvalBridge';
 import type { PermissionsConfig } from '../permissions';
+import { RONBOT_RULES_BLOCK, RONBOT_APP_GUIDE, RONBOT_APP_GUIDE_VERSION } from './hermes/ronbotRules';
 
 const HERMES_DIR = '$HOME/.hermes';
 const HERMES_ENV = '$HOME/.hermes/.env';
