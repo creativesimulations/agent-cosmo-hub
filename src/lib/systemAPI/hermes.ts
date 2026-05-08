@@ -1746,6 +1746,7 @@ export const hermesAPI = {
       } else if (issue.fixAction === 'repair-config') {
         const r = await this.repairConfig();
         actions.push(r.success ? 'repaired config' : `failed config repair: ${r.error || 'unknown'}`);
+      }
     }
 
     if (options?.sudoPassword !== undefined && options.sudoPassword !== null) {
