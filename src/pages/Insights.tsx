@@ -86,7 +86,7 @@ const Insights = () => {
     setDraft(
       "Give me a summary of what you've been doing — recent activity, busiest channels, anything I should know about.",
     );
-    navigate("/chat");
+    navigate("/");
   };
 
   if (!connected) {

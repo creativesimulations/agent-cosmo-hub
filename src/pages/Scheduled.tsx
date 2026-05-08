@@ -71,7 +71,7 @@ const Scheduled = () => {
 
   const handleCreateViaChat = () => {
     setDraft("Schedule a recurring task for me. Help me describe what should run and when.");
-    navigate("/chat");
+    navigate("/");
   };
 
   const handleDelete = (job: ScheduledJob) => {
@@ -79,7 +79,7 @@ const Scheduled = () => {
       `Please remove the scheduled task with id "${job.id}" (${job.description}). ` +
         `Confirm with me first if needed.`,
     );
-    navigate("/chat");
+    navigate("/");
   };
 
   if (!connected) {

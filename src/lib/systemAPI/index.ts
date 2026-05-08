@@ -58,7 +58,6 @@ export const systemAPI = {
 
   // Hermes Agent
   installHermes: hermesAPI.install.bind(hermesAPI),
-  installHermesViaPip: hermesAPI.installViaPip.bind(hermesAPI),
   installHermesFromLocalFolder: hermesAPI.installFromLocalFolder.bind(hermesAPI),
   hermesDoctor: hermesAPI.doctor.bind(hermesAPI),
   analyzeDoctorIssues: hermesAPI.analyzeDoctorIssues.bind(hermesAPI),
@@ -69,19 +68,10 @@ export const systemAPI = {
   hermesUninstall: hermesAPI.uninstall.bind(hermesAPI),
   readEnvFile: hermesAPI.readEnvFile.bind(hermesAPI),
   setEnvVar: hermesAPI.setEnvVar.bind(hermesAPI),
-  removeEnvVar: hermesAPI.removeEnvVar.bind(hermesAPI),
   readConfig: hermesAPI.readConfig.bind(hermesAPI),
   writeConfig: hermesAPI.writeConfig.bind(hermesAPI),
   setModel: hermesAPI.setModel.bind(hermesAPI),
   startAgent: hermesAPI.start.bind(hermesAPI),
-  startGateway: hermesAPI.startGateway.bind(hermesAPI),
-  stopGateway: hermesAPI.stopGateway.bind(hermesAPI),
-  // NOTE: WhatsApp / channel runtime helpers (patching, pairing, gateway
-  // repair, bridge health, session reset) were removed in Phase 5 — those
-  // flows are now driven end-to-end by the agent over the intent protocol.
-  // The internal implementations in hermes.ts are dead code and will be
-  // removed entirely in a follow-up cleanup.
-  refreshGatewayInstall: hermesAPI.refreshGatewayInstall.bind(hermesAPI),
   chatAgent: hermesAPI.chat.bind(hermesAPI),
   writeInitialConfig: hermesAPI.writeInitialConfig.bind(hermesAPI),
   setAgentName: hermesAPI.setAgentName.bind(hermesAPI),
@@ -105,7 +95,6 @@ export const systemAPI = {
   chatPing: hermesAPI.chatPing.bind(hermesAPI),
   installSkillFromPath: hermesAPI.installSkillFromPath.bind(hermesAPI),
   installSkillFromGit: hermesAPI.installSkillFromGit.bind(hermesAPI),
-  // setupGoogleWorkspace removed — agent owns this flow via chat.
   installToolFromPath: hermesAPI.installToolFromPath.bind(hermesAPI),
   revealSkillsFolder: hermesAPI.revealSkillsFolder.bind(hermesAPI),
   probeBrowserNavigate: hermesAPI.probeBrowserNavigate.bind(hermesAPI),

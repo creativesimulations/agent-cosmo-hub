@@ -203,9 +203,9 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   // Track the current route via a ref so the async worker can read the
   // latest value without re-creating itself on every navigation.
   const location = useLocation();
-  const onChatPageRef = useRef(location.pathname === "/chat");
+  const onChatPageRef = useRef(location.pathname === "/");
   useEffect(() => {
-    onChatPageRef.current = location.pathname === "/chat";
+    onChatPageRef.current = location.pathname === "/";
   }, [location.pathname]);
 
   // Mirror settings into a ref so the long-lived worker can read the
@@ -335,7 +335,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
 
   // Auto-clear the unread badge when the user is actually viewing /chat.
   useEffect(() => {
-    if (location.pathname === "/chat") setUnreadCount(0);
+    if (location.pathname === "/") setUnreadCount(0);
   }, [location.pathname]);
 
   const deleteMessage = useCallback((id: string) => {

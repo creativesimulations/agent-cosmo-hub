@@ -41,7 +41,7 @@ const CapabilityTile = ({ entry, compact }: { entry: DiscoveredCapability; compa
 
   const onSetup = () => {
     setDraft(entry.setupPrompt);
-    navigate("/chat");
+    navigate("/");
   };
 
   return (
@@ -135,7 +135,7 @@ const CapabilityGallery = ({ compact, heading, subheading }: CapabilityGalleryPr
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => { window.location.hash = "#/chat"; }}
+          onClick={() => { window.location.hash = "#/"; }}
           className="text-xs"
         >
           Open chat →
