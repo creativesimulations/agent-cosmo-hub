@@ -56,7 +56,7 @@ export interface StartupIssue {
   title: string;
   detail: string;
   fixable: boolean;
-  fixAction?: 'sync-secrets' | 'init-skills-hub' | 'repair-config' | 'refresh-gateway';
+  fixAction?: 'sync-secrets' | 'init-skills-hub' | 'repair-config';
 }
 
 export interface StartupBootstrapStep {
@@ -1770,34 +1770,8 @@ export const hermesAPI = {
       return { ok: r.success, detail: r.success ? `skills listed (${r.skills.length})` : (r.error || 'skills list failed') };
     });
 
-    const env = await this.readEnvFile().catch(() => ({} as Record<string, string>));
-    const hasMessagingConfigured = Boolean(
-      ((env.WHATSAPP_ENABLED || '').trim().toLowerCase() === 'true' && (env.WHATSAPP_ALLOWED_USERS || '').trim().length > 0) ||
-      (env.TELEGRAM_BOT_TOKEN || '').trim() ||
-      (env.SLACK_BOT_TOKEN || '').trim() ||
-      (env.DISCORD_BOT_TOKEN || '').trim(),
-    );
-
-    if (hasMessagingConfigured) {
-      if ((env.WHATSAPP_ENABLED || '').trim().toLowerCase() === 'true') {
-        await timed('whatsapp-runtime-bootstrap', async () => {
-          const r = await this.repairWhatsAppGatewayRuntime();
-          const failed = r.steps.find((step) => !step.ok && step.name !== 'verify-gateway-path');
-          return {
-            ok: r.ok,
-            detail: r.ok ? 'WhatsApp bridge runtime ready' : (failed?.detail || failed?.name || 'WhatsApp runtime bootstrap failed'),
-          };
-        });
-      }
-      await timed('gateway-refresh-install', async () => {
-        const r = await this.refreshGatewayInstall();
-        return { ok: r.success, detail: r.success ? 'gateway install refreshed' : (r.stderr || r.stdout || 'refresh failed').split('\n')[0] };
-      });
-      await timed('gateway-start', async () => {
-        const r = await this.startGateway();
-        return { ok: r.success, detail: r.success ? 'gateway started/verified' : (r.stderr || r.stdout || 'start failed').split('\n')[0] };
-      });
-    }
+    // Messaging-channel startup is now driven by the agent over the intent
+    // protocol — the app no longer attempts gateway/runtime bootstrap itself.
 
     const doctor = await this.doctor();
     const doctorText = [doctor.stdout, doctor.stderr].filter(Boolean).join('\n');
