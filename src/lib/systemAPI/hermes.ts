@@ -28,26 +28,6 @@ export const buildInstallerRunScript = (): string => INSTALLER_ENTRYPOINT;
 const INLINE_SCRIPT_LIMIT = 4096;
 
 type CommandOutputHandler = (chunk: { type: string; data?: string; code?: number }) => void;
-type WhatsAppFatalReason = 'adapter-missing' | 'bridge-not-configured' | 'node-version' | 'unknown';
-
-export interface WhatsAppGatewaySignalReport {
-  fatalWhatsappReason?: WhatsAppFatalReason;
-  fatalWhatsappSnippet?: string;
-  nonWhatsappWarnings: string[];
-  whatsappWarnings: string[];
-}
-
-export interface SlackGatewayConflictInfo {
-  hasConflict: boolean;
-  pid?: number;
-  snippet?: string;
-}
-
-export interface GatewayStartupRecoverySignals {
-  slackConflict: SlackGatewayConflictInfo;
-  whatsappRuntimeMissing: boolean;
-  whatsappRuntimeSnippet?: string;
-}
 
 export type StartupIssueSeverity = 'info' | 'warn' | 'error';
 export interface StartupIssue {
