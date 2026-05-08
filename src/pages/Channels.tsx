@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Radio, Sparkles, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Radio, Sparkles } from "lucide-react";
 import ChannelCard, { ChannelStatus } from "@/components/channels/ChannelCard";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { systemAPI } from "@/lib/systemAPI";
-import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { useChat } from "@/contexts/ChatContext";
 import { useCapabilities } from "@/contexts/CapabilitiesContext";
@@ -14,19 +13,16 @@ import type { DiscoveredCapability } from "@/lib/capabilities/types";
 /**
  * Channels page — purely a directory of channels the agent supports.
  *
- * The list itself is **not** hard-coded: it is derived from the runtime
- * capability registry (`useCapabilities().discovered`), which is fed by
- * `hermes capabilities --json` + installed skills + a small seed
- * fallback. New Hermes channels appear here automatically.
- *
  * Setup is fully agent-driven via chat: clicking "Set up" seeds the
  * capability's setup prompt into the chat composer; the agent owns
- * credential collection, QR pairing, gateway lifecycle, and runtime
- * repair via the intent protocol.
- *
- * Every Hermes channel is available to every user — there are no paid
- * upgrades, no license gates. If Hermes supports it, the user gets it.
+ * credential collection, OAuth, QR pairing, gateway lifecycle, and
+ * runtime repair via the intent protocol. The renderer never shells
+ * out to Hermes for any setup-style action.
  */
+
+const GOOGLE_WORKSPACE_PROMPT =
+  "Please set up Google Workspace for me (Gmail, Calendar, Drive, Docs, Sheets). " +
+  "Walk me through any login or permission steps and ask for anything you need.";
 
 const ChannelsPage = () => {
   const navigate = useNavigate();
@@ -39,8 +35,6 @@ const ChannelsPage = () => {
   );
 
   const [statuses, setStatuses] = useState<Record<string, ChannelStatus>>({});
-  const [googleWorkspaceBusy, setGoogleWorkspaceBusy] = useState(false);
-  const googleSetupInFlightRef = useRef(false);
 
   const getRunningChannels = async (ids: string[]): Promise<string[]> => {
     try {
@@ -55,7 +49,6 @@ const ChannelsPage = () => {
   const isChannelConfigured = (channel: DiscoveredCapability, env: Record<string, string>): boolean => {
     const required = channel.requiredSecrets;
     if (required.length === 0) {
-      // QR-based / no-key channels (e.g. WhatsApp): ENABLED flag is the signal.
       const enabledKey = `${channel.id.toUpperCase().replace(/-/g, "_")}_ENABLED`;
       return (env[enabledKey] || "").trim().toLowerCase() === "true";
     }
@@ -83,30 +76,13 @@ const ChannelsPage = () => {
     void refresh();
   }, [refresh]);
 
-  const handleSetUp = (channel: DiscoveredCapability) => {
-    setDraft(channel.setupPrompt);
+  const delegateToAgent = (prompt: string) => {
+    setDraft(prompt);
     navigate("/chat");
   };
 
-  const handleGoogleWorkspaceSetup = async () => {
-    if (googleSetupInFlightRef.current) return;
-    googleSetupInFlightRef.current = true;
-    setGoogleWorkspaceBusy(true);
-    try {
-      const r = await systemAPI.setupGoogleWorkspace();
-      if (r.success) {
-        toast.success("Google Workspace is connected", {
-          description: "Gmail, Calendar, Drive, Docs, and Sheets are ready.",
-        });
-      } else {
-        toast.error("Google Workspace setup failed", {
-          description: r.error || "Check logs and try again.",
-        });
-      }
-    } finally {
-      googleSetupInFlightRef.current = false;
-      setGoogleWorkspaceBusy(false);
-    }
+  const handleSetUp = (channel: DiscoveredCapability) => {
+    delegateToAgent(channel.setupPrompt);
   };
 
   return (
@@ -154,20 +130,17 @@ const ChannelsPage = () => {
               <p className="text-xs text-muted-foreground leading-relaxed">
                 Gmail, Calendar, Drive, Docs, and Sheets integration.
               </p>
-              <p className="text-[11px] text-muted-foreground/70">Setup difficulty: Medium</p>
+              <p className="text-[11px] text-muted-foreground/70">
+                Your agent will guide you through login in chat.
+              </p>
             </div>
             <div className="flex flex-col gap-2 mt-auto">
               <Button
                 size="sm"
-                onClick={() => void handleGoogleWorkspaceSetup()}
+                onClick={() => delegateToAgent(GOOGLE_WORKSPACE_PROMPT)}
                 className="gradient-primary text-primary-foreground w-full"
-                disabled={googleWorkspaceBusy}
               >
-                {googleWorkspaceBusy ? (
-                  <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Setting up…</>
-                ) : (
-                  "Set up"
-                )}
+                Set up
               </Button>
             </div>
           </GlassCard>
