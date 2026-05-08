@@ -1,61 +1,120 @@
-## Refactor: remove unused code
+## Comprehensive refactor: organize, clean up, kill dead code
 
-A targeted cleanup pass focused on code paths the app no longer reaches. No behavior change for any feature the user uses today — only deletions of dead code and de-duplication of the chat route.
+A staged refactor with measurable goals. Each stage stands on its own and is independently reviewable so we don't trade one mess for another. No feature changes — only structure, naming, and deletions.
 
-### 1. Drop the duplicate `/chat` route
+### Why now
 
-Home (`/`) already embeds `<AgentChat />` plus the right info panel. The standalone `/chat` route renders the same `AgentChat` without the panel, so it's a worse duplicate left over from when "Chat" was its own tab.
+Three pain points dominate the codebase:
 
-- `src/App.tsx`: remove `import AgentChat` and the `<Route path="/chat" …>` line.
-- Replace every `navigate("/chat")` with `navigate("/")` in:
-  - `src/pages/Skills.tsx`
-  - `src/pages/Scheduled.tsx` (two call sites)
-  - `src/pages/Insights.tsx`
-  - `src/pages/Channels.tsx`
-  - `src/pages/Index.tsx`
-  - `src/pages/NotFound.tsx` (`to="/chat"` → `to="/"`)
-- Update the `onChatPageRef` / unread-clear logic in `src/contexts/ChatContext.tsx` to compare against `"/"` instead of `"/chat"` (chat is the home view now).
+1. **`src/lib/systemAPI/hermes.ts` is 6,082 lines** containing ~70 methods across many unrelated concerns (install, env, config, gateway, WhatsApp adapter patching, skills, scheduled jobs, browser probing, etc.).
+2. **~1,800 lines of confirmed dead WhatsApp/gateway code** in that same file — verified by `rg`: zero callers outside `hermes.ts` itself for `runWhatsAppPairing`, `repairWhatsAppGatewayRuntime`, `patchGatewayServicePathForWhatsApp`, `ensureWhatsAppBridgeDeps`, `auditWhatsAppBridgeRuntime`, `classifyWhatsAppBridgeFailure`, plus ~20 more. The agent owns these flows over the intent protocol now.
+3. **Page components mixing UI, business logic, and IPC** (`Index.tsx` 1,025 lines, `Diagnostics.tsx` 1,042, `BrowserSetupDialog.tsx` 1,151, `SettingsPage.tsx` 911). Effects, derived state, and command pipelines are inlined alongside JSX.
 
-### 2. Delete `setupGoogleWorkspace`
+### Stage 1 — Delete dead WhatsApp/gateway code (biggest win)
 
-It's already off the `systemAPI` surface (commented out in `index.ts`) but the implementation still lives in `src/lib/systemAPI/hermes.ts` (lines ~5173-5230). Remove the method and the stale `// setupGoogleWorkspace removed` comment in `index.ts`. Agent owns this flow now.
+Target: `src/lib/systemAPI/hermes.ts` lines ~2000-4080 plus their helper types/parsers around lines 31-510.
 
-### 3. Remove the post-Phase-5 WhatsApp/gateway dead code
+Methods to remove (verified zero external callers):
 
-The `index.ts` block-comment explicitly flags this as dead and slated for removal. Now that no UI path consumes these signals, delete:
+```
+getWhatsAppGatewayHealth        getWhatsAppBridgeStatus
+readWhatsAppBridgeLogTail       findUnauthorizedWhatsAppSenders
+ensureWhatsAppRuntimeSecrets    terminateConflictingGatewayProcess
+testChannel                     checkNpmForMessaging
+ensureHermesNodeRuntime         checkWhatsAppPairingPrereqs
+ensureWhatsAppBridgeDeps        checkChannelSetupTools
+isWhatsAppPaired                getWhatsAppSessionFileCount
+clearWhatsAppSession            removeChannelEnvKeys
+resetWhatsAppChannel            terminateWhatsAppPairingProcesses
+ensureWhatsAppManagedNode       patchGatewayServicePathForWhatsApp
+patchHermesWhatsAppAdapterForNode
+getWhatsAppRuntimeDiagnostic    auditWhatsAppBridgeRuntime
+classifyWhatsAppBridgeFailure   rotateWhatsAppBridgeLogs
+verifyGatewayUsesManagedNode    repairWhatsAppGatewayRuntime
+runWhatsAppPairing
+```
 
-- Types: `WhatsAppFatalReason`, `WhatsAppGatewaySignalReport`, `SlackGatewayConflictInfo`, `GatewayStartupRecoverySignals` and their `export`s.
-- Parsers: `parseSlackGatewayConflict`, `parseGatewayStartupRecoverySignals`, the WhatsApp fatal-signal extractor, and the `fatalWhatsappReason / fatalWhatsappSnippet / bridgeHealthJson` fields produced by the gateway-startup helper.
-- The internal `if (signal.fatalWhatsappReason === …)` branches in the gateway recovery routine, plus the auxiliary `refreshGatewayInstall` / `startGateway` / `stopGateway` cascade if no caller remains after the trim.
-- Re-verify with `rg` after each batch — keep anything still referenced by `bootstrapStartupHealth` or the doctor flow.
+Plus the dead supporting types: `WhatsAppFatalReason`, `WhatsAppGatewaySignalReport`, `SlackGatewayConflictInfo`, `GatewayStartupRecoverySignals`, and the parsers `parseSlackGatewayConflict` / `parseGatewayStartupRecoverySignals` / fatal-WA snippet extractor.
 
-### 4. Drop unused `systemAPI` exports
+After this, also drop `startGateway` / `stopGateway` / `refreshGatewayInstall` if no internal caller survives. Expected reduction: **~1,800-2,000 lines from hermes.ts**.
 
-After §3, prune from `src/lib/systemAPI/index.ts`:
+Verification: `rg "WhatsApp|Gateway"` should drop to a handful of comments + the channel-setup UI cards.
 
-- `installHermesViaPip` — never called from anywhere.
-- `refreshGatewayInstall`, `startGateway`, `stopGateway`, `removeEnvVar` — only used inside `hermes.ts` itself; keep the methods on the internal `hermesAPI` object (since they call `this.…`) but stop re-exporting them through `systemAPI`.
+### Stage 2 — Split `hermes.ts` into focused modules
 
-Leave `fileExists/readFile/writeFile/mkdir/writeStreamStdin/quitApp` etc. alone — they are used by other surfaces.
+Move the remaining ~4,000 lines into a folder `src/lib/systemAPI/hermes/` with one file per domain:
 
-### 5. Verification
+```
+hermes/
+  index.ts            — assembles & exports `hermesAPI`
+  install.ts          — install / installFromLocalFolder / installViaPip / uninstall / update
+  env.ts              — readEnvFile / setEnvVar / removeEnvVar / materializeEnv
+  config.ts           — readConfig / writeConfig / setModel / writeInitialConfig / repairConfig / configCheck
+  doctor.ts           — doctor / analyzeDoctorIssues / bootstrapStartupHealth / runStartupAutoFix / status
+  agent.ts            — start / chat / chatPing / setAgentName / getAgentName / restartAgent / isConfigured
+  skills.ts           — listSkills / getSkillsConfig / setSkillEnabled / installSkillFromPath / installSkillFromGit / installToolFromPath / revealSkillsFolder / reloadToolsets
+  browser.ts          — getBrowserDiagnostics / setBrowserCamofoxPersistence / setBrowserCdpUrl / probeBrowserNavigate / runBrowserSelfTest
+  subagents.ts        — listSubAgents
+  scheduling.ts       — listScheduledJobs / deleteScheduledJob
+  introspection.ts    — listMCPServers / listProfiles / listPlugins / discoverCapabilities / getInsights / getBusyInputMode / setBusyInputMode / launchHermesDashboard
+  permissions.ts      — syncPermissions / readPermissionsBlock / enableFileLogging
+  ronbotRules.ts      — writeRonbotAgentRules / writeRonbotAppGuide (+ the embedded markdown content)
+  shared.ts           — runHermesShell / runHermesCli / encodeScript / path helpers / shared constants
+```
 
-- App boots, Home (`/`) still renders chat + right panel.
-- "Open chat" buttons on Skills/Scheduled/Insights/Channels/Index/NotFound land on `/`.
-- TypeScript build passes (no dangling imports of removed types).
-- `rg "setupGoogleWorkspace|fatalWhatsappReason|WhatsAppGatewaySignalReport|/chat"` returns no hits in `src/`.
-- Manual smoke: agent connect → `~/.hermes/AGENTS.md` and `~/.ronbot/APP_GUIDE.md` still written; sub-agent panel still active-only.
+Each file exports a small typed object; `hermes/index.ts` spreads them into `hermesAPI`. The public `systemAPI` import path stays unchanged so no consumer needs editing.
 
-### Files touched
+### Stage 3 — Trim `electron/main.cjs` and align with the API split
 
-- `src/App.tsx`
-- `src/pages/{Skills,Scheduled,Insights,Channels,Index,NotFound}.tsx`
-- `src/contexts/ChatContext.tsx`
-- `src/lib/systemAPI/index.ts`
-- `src/lib/systemAPI/hermes.ts`
+`electron/main.cjs` (928 lines) registers ~40 IPC handlers in one file. Split into `electron/ipc/{platform,fs,hermes,sudo,window}.cjs` and have `main.cjs` import + register them. Drop any IPC handlers that exclusively serviced the deleted WhatsApp methods. Keep `preload.cjs` API surface intact.
 
-### Out of scope
+### Stage 4 — Page-level cleanup
 
-- Renaming/restructuring of `hermes.ts` (the file is 6k lines but a real split is a separate refactor).
-- UI component pruning — none of the tabs/cards being kept are unused.
-- Tests beyond updating any that reference the removed exports/types.
+For each oversized page, extract logic into hooks and presentational subcomponents. No new features; same JSX, smaller files.
+
+- **`pages/Index.tsx` (1,025 lines)** — installer wizard. Extract `useInstallSteps`, `useLaunchHealth`, and step subcomponents into `components/install/steps/`.
+- **`pages/Diagnostics.tsx` (1,042)** — pull each section card into `components/diagnostics/*Card.tsx`; move command runners into `hooks/useDoctorReport.ts`.
+- **`pages/SettingsPage.tsx` (911)** — group settings into `components/settings/sections/{General,Agent,Sound,Privacy,Advanced}.tsx`.
+- **`pages/AgentChat.tsx` (588)** — split into `<ChatHeader>`, `<ChatTranscript>`, `<ChatComposer>`; keep ChatContext as the source of truth.
+- **`components/skills/BrowserSetupDialog.tsx` (1,151)** — split per backend (Camofox / CDP / Self-test) into sibling components.
+
+### Stage 5 — Context + lib hygiene
+
+- **`contexts/ChatContext.tsx` (920)** — extract `useChatPersistence` (localStorage + disk mirror), `useChatWorker` (queue/worker/stop), and `useSubAgentTracker` (delegate-task regex). The provider becomes a thin shell.
+- **`contexts/InstallContext.tsx` (603)** and **`CapabilitiesContext.tsx` (430)** — same treatment, lift effects into hooks.
+- **`lib/capabilities.ts` (395)** vs `lib/capabilities/` folder — consolidate; keep the folder, delete the loose file once duplicates are merged.
+- **`lib/agentIntents/`** — already well-split, no action.
+
+### Stage 6 — Remove orphan files & tighten exports
+
+Files with **zero importers** (verified): `components/dashboard/AgentPowerCard.tsx`, `components/channels/UpgradeCard.tsx`. Delete.
+
+Sweep with `ts-prune` (one-time install dev) to surface other unreferenced exports; remove only the obvious ones, leave a TODO list for ambiguous cases.
+
+### Stage 7 — Lint & convention pass
+
+- Add an `eslint-plugin-unused-imports` rule and run `--fix` once.
+- Standardize file naming: pages = `PascalCase.tsx`, hooks = `useCamelCase.ts`, libs = `camelCase.ts`. Most already comply; rename the few stragglers.
+- Replace remaining `any` casts with typed interfaces where trivial.
+- Ensure every component file exports exactly one default + named types.
+
+### Out of scope (for this refactor)
+
+- No design system changes, no behavior changes, no new dependencies beyond `ts-prune` and `eslint-plugin-unused-imports` (dev-only).
+- Tests beyond keeping `vitest run` green after each stage.
+- Renaming public IPC channels in `preload.cjs` (would touch the Electron main process contract).
+
+### Sequencing & checkpoints
+
+Each stage is a separate PR-sized change. Suggested order: 1 → 2 → 6 → 4 → 5 → 3 → 7. After each stage:
+
+- `bun run build` clean
+- Vitest green
+- App launches, agent connects, chat sends a message, sub-agent panel populates, channels page opens.
+
+### Estimated impact
+
+- `hermes.ts`: 6,082 → ~3,200 lines, then split across 13 files of ≤400 lines each.
+- Top 5 pages: each under 400 lines.
+- Two orphan components deleted.
+- One source-of-truth per concern; no more spaghetti where install logic and gateway patching live in the same file.
