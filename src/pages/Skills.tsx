@@ -74,11 +74,10 @@ const Skills = () => {
     }
     setLoading(true);
     setError(null);
-    const [result, cfg, sec, googleworkspace, pluginsR] = await Promise.all([
+    const [result, cfg, sec, pluginsR] = await Promise.all([
       systemAPI.listSkills(),
       systemAPI.getSkillsConfig(),
       secretsStore.list(),
-      isUpgradeUnlocked("googleworkspace"),
       systemAPI.listPlugins(),
     ]);
     if (result.success) {
@@ -89,7 +88,6 @@ const Skills = () => {
     }
     setDisabledSet(new Set(cfg.disabled));
     setSecretKeys(new Set(sec.keys || []));
-    setUnlocks({ googleworkspace });
     setPlugins(pluginsR.plugins);
     setPluginsCliAvailable(pluginsR.cliAvailable);
     setLoading(false);
@@ -137,53 +135,24 @@ const Skills = () => {
     });
   };
 
-  const handleToggle = async (skill: Skill, nextEnabled: boolean) => {
-    const key = `${skill.category}/${skill.name}`;
-    setSavingToggle(key);
-    // Optimistic
-    setDisabledSet((prev) => {
-      const n = new Set(prev);
-      if (nextEnabled) n.delete(skill.name); else n.add(skill.name);
-      return n;
-    });
-    const r = await systemAPI.setSkillEnabled(skill.name, nextEnabled);
-    setSavingToggle(null);
-    if (!r.success) {
-      setActionError(r.error || "Failed to update skill state.");
-      toast.error("Couldn't save", { description: r.error || "Failed to update config" });
-      // Revert
-      setDisabledSet((prev) => {
-        const n = new Set(prev);
-        if (nextEnabled) n.add(skill.name); else n.delete(skill.name);
-        return n;
-      });
-      return;
-    }
-    setActionError("");
-    toast.success(`${nextEnabled ? "Enabled" : "Disabled"} ${skill.name}`, {
-      description: "Takes effect the next time the agent restarts.",
-    });
+  const handleToggle = (skill: Skill, nextEnabled: boolean) => {
+    delegateToAgent(
+      `Please ${nextEnabled ? "enable" : "disable"} the "${skill.name}" skill ` +
+        `and let me know once it's done. ` +
+        `If anything is missing (secrets, dependencies), ask me for it.`,
+    );
   };
 
-  const bulkAction = async (action: "enableAll" | "disableAll" | { enableOnly: string }) => {
-    const targets = action === "enableAll" || action === "disableAll"
-      ? skills
-      : skills.filter((s) => s.category === action.enableOnly);
+  const bulkAction = (action: "enableAll" | "disableAll" | { enableOnly: string }) => {
     if (action === "enableAll") {
-      for (const s of targets) await systemAPI.setSkillEnabled(s.name, true);
+      delegateToAgent("Please enable every available skill. Ask me for any missing secrets along the way.");
     } else if (action === "disableAll") {
-      for (const s of targets) await systemAPI.setSkillEnabled(s.name, false);
+      delegateToAgent("Please disable every skill until I ask for specific ones to be re-enabled.");
     } else {
-      // Enable only this category — disable everything else
-      for (const s of skills) {
-        const inCat = s.category === action.enableOnly;
-        await systemAPI.setSkillEnabled(s.name, inCat);
-      }
+      delegateToAgent(
+        `Please enable only the skills in the "${action.enableOnly}" category and disable everything else.`,
+      );
     }
-    toast.success("Bulk update saved", {
-      description: "Takes effect the next time the agent restarts.",
-    });
-    void load();
   };
 
   const statusFor = (skill: Skill): { label: string; tone: "ready" | "needs" | "disabled" } => {
@@ -193,33 +162,16 @@ const Skills = () => {
     return { label: "Ready", tone: "ready" };
   };
 
-  const googleWorkspaceUpgrade = getUpgrade("googleworkspace");
-  const googleWorkspaceUnlocked = !!unlocks.googleworkspace;
   const googleWorkspaceSkill = skills.find((s) => s.name.toLowerCase() === "google-workspace");
   const googleWorkspaceNeedsSecrets = (googleWorkspaceSkill?.requiredSecrets ?? []).filter(
     (k) => !secretKeys.has(k),
   );
 
-  const handleGoogleWorkspaceSetup = async () => {
-    if (!googleWorkspaceUnlocked) return;
-    setGoogleWorkspaceBusy(true);
-    try {
-      const r = await systemAPI.setupGoogleWorkspace();
-      if (r.success) {
-        toast.success("Google Workspace is connected", {
-          description: "Gmail/Calendar/Drive tools are now ready for the next agent restart.",
-        });
-        setActionError("");
-        await load();
-        return;
-      }
-      setActionError(r.error || "Google Workspace setup failed.");
-      toast.error("Google Workspace setup failed", {
-        description: r.error || "Check diagnostics output and retry.",
-      });
-    } finally {
-      setGoogleWorkspaceBusy(false);
-    }
+  const handleGoogleWorkspaceSetup = () => {
+    delegateToAgent(
+      "Please set up Google Workspace for me (Gmail, Calendar, Drive, Docs, Sheets). " +
+        "Walk me through any login or permission steps and ask for anything you need.",
+    );
   };
 
   if (!agentConnected) {
