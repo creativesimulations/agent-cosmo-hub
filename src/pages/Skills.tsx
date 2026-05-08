@@ -225,7 +225,11 @@ const Skills = () => {
         <div className="flex items-center gap-2">
           <Button
             size="sm"
-            onClick={() => setInstallOpen(true)}
+            onClick={() =>
+              delegateToAgent(
+                "Please install a new skill for me. Ask me for the path or git URL, then handle the install and any required secrets.",
+              )
+            }
             className="gradient-primary text-primary-foreground"
           >
             <Plus className="w-4 h-4 mr-1" /> Install skill
@@ -371,7 +375,7 @@ const Skills = () => {
         </GlassCard>
       )}
 
-      <GlassCard className={`p-4 space-y-3 ${googleWorkspaceUnlocked ? "" : "border-primary/30 bg-primary/5"}`}>
+      <GlassCard className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-md bg-primary/15 text-primary flex items-center justify-center shrink-0">
@@ -379,53 +383,25 @@ const Skills = () => {
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-sm font-semibold text-foreground">Google Workspace (paid add-on)</h3>
-                <Badge variant="outline" className="border-white/10 text-muted-foreground text-[10px]">
-                  {googleWorkspaceUpgrade?.priceLabel ?? "One-time · $1"}
-                </Badge>
-                {googleWorkspaceUnlocked && (
-                  <Badge variant="outline" className="border-success/30 text-success text-[10px]">
-                    Unlocked
-                  </Badge>
-                )}
+                <h3 className="text-sm font-semibold text-foreground">Google Workspace</h3>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                One-click setup for Hermes <code>google-workspace</code> skill (Gmail, Calendar, Drive, Docs, Sheets).
+                Gmail, Calendar, Drive, Docs, and Sheets. Your agent will guide you through login in chat.
               </p>
-              {googleWorkspaceUnlocked && googleWorkspaceSkill && googleWorkspaceNeedsSecrets.length > 0 && (
+              {googleWorkspaceSkill && googleWorkspaceNeedsSecrets.length > 0 && (
                 <p className="text-[11px] text-warning mt-1">
                   Missing secrets: {googleWorkspaceNeedsSecrets.join(", ")}
                 </p>
               )}
             </div>
           </div>
-          {googleWorkspaceUnlocked ? (
-            <Button
-              size="sm"
-              onClick={() => void handleGoogleWorkspaceSetup()}
-              className="gradient-primary text-primary-foreground shrink-0"
-              disabled={googleWorkspaceBusy}
-            >
-              {googleWorkspaceBusy ? (
-                <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Setting up…</>
-              ) : (
-                <>Set up Google Workspace</>
-              )}
-            </Button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => openExternal(googleWorkspaceUpgrade?.buyUrl ?? "https://ronbot.com/upgrades")}
-              >
-                <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> Buy add-on
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => navigate("/upgrades")}>
-                Enter key
-              </Button>
-            </div>
-          )}
+          <Button
+            size="sm"
+            onClick={handleGoogleWorkspaceSetup}
+            className="gradient-primary text-primary-foreground shrink-0"
+          >
+            Set up
+          </Button>
         </div>
       </GlassCard>
 
@@ -476,18 +452,6 @@ const Skills = () => {
         onConfigured={() => {
           setBrowserRefreshKey((k) => k + 1);
           void load();
-        }}
-      />
-
-      <InstallSkillDialog
-        open={installOpen}
-        onOpenChange={setInstallOpen}
-        kind="skill"
-        onInstalled={({ missingSecrets }) => {
-          void load();
-          if (missingSecrets.length > 0) {
-            navigate(`/secrets?addKey=${missingSecrets[0]}`);
-          }
         }}
       />
     </div>
