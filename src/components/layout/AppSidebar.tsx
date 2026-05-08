@@ -5,7 +5,6 @@ import {
   KeyRound,
   Settings,
   Terminal,
-  MessageSquare,
   RefreshCw,
   Archive,
   Activity,
@@ -22,12 +21,10 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import NotificationCenter from "@/components/NotificationCenter";
 import ronbotLogo from "@/assets/ronbot-logo.png";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
-import { useChat } from "@/contexts/ChatContext";
 import { useCapabilities } from "@/contexts/CapabilitiesContext";
 
 const primaryNavItems = [
   { path: "/", icon: House, label: "Home" },
-  { path: "/chat", icon: MessageSquare, label: "Chat", showChatBadge: true },
   { path: "/channels", icon: Radio, label: "Channels" },
   { path: "/skills", icon: Sparkles, label: "Skills & Tools" },
   { path: "/settings", icon: Settings, label: "Settings" },
@@ -49,7 +46,6 @@ const advancedNavItems = [
 const AppSidebar = () => {
   const location = useLocation();
   const { connected, status } = useAgentConnection();
-  const { unreadCount, isStreaming } = useChat();
   const { pendingDecisionsCount } = useCapabilities();
 
   return (
@@ -71,9 +67,6 @@ const AppSidebar = () => {
         <div className="space-y-0.5">
           {primaryNavItems.map((item) => {
               const isActive = location.pathname === item.path;
-              const isChatLink = item.path === "/chat";
-              const showUnread = isChatLink && unreadCount > 0 && !isActive;
-              const showWaiting = isChatLink && isStreaming && !showUnread;
               const showCapBadge =
                 (item as { showCapabilityBadge?: boolean }).showCapabilityBadge &&
                 pendingDecisionsCount > 0 &&
@@ -91,20 +84,6 @@ const AppSidebar = () => {
                 >
                   <item.icon className={cn("w-4 h-4", isActive && "text-primary")} />
                   <span className="font-medium">{item.label}</span>
-                  {showUnread && (
-                    <span
-                      className="ml-auto flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-[10px] font-semibold text-primary-foreground shadow-[0_0_8px_hsl(var(--primary)/0.6)]"
-                      aria-label={`${unreadCount} unread message${unreadCount === 1 ? "" : "s"}`}
-                    >
-                      {unreadCount > 9 ? "9+" : unreadCount}
-                    </span>
-                  )}
-                  {showWaiting && (
-                    <span
-                      className="ml-auto w-2 h-2 rounded-full bg-warning animate-pulse"
-                      aria-label="Agent is responding"
-                    />
-                  )}
                   {showCapBadge && (
                     <span
                       className="ml-auto flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-warning text-[10px] font-semibold text-warning-foreground shadow-[0_0_8px_hsl(var(--warning)/0.6)]"
