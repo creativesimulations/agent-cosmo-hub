@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import CapabilityFixBubble from "@/components/chat/CapabilityFixBubble";
 import CapabilityChips from "@/components/chat/CapabilityChips";
-import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 import { secretsStore, systemAPI } from "@/lib/systemAPI";
 import { useSettings } from "@/contexts/SettingsContext";
 import { isAnyBackendConfigured } from "@/lib/browserBackends";
@@ -28,9 +27,7 @@ import { cn } from "@/lib/utils";
 import { IntentCard } from "@/components/intents";
 import ChatEmptyState from "@/components/chat/ChatEmptyState";
 import SlashCommandPalette from "@/components/chat/SlashCommandPalette";
-
-const PERSONALITY_PREFIX =
-  "I'd like to adjust your personality. Please update your SOUL.md";
+import { useChatComposer } from "@/hooks/useChatComposer";
 
 const AgentChat = () => {
   const { connected: agentConnected } = useAgentConnection();
@@ -61,7 +58,6 @@ const AgentChat = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const didInitialScrollRef = useRef(false);
-  const [browserSetupOpen, setBrowserSetupOpen] = useState(false);
   const [secretKeys, setSecretKeys] = useState<Set<string>>(new Set());
   const [bannerDismissed, setBannerDismissed] = useState(false);
   // Voice mode + background-session toggles. These ride alongside chat — turning
@@ -72,6 +68,16 @@ const AgentChat = () => {
   const [voiceMode, setVoiceMode] = useState(false);
   const [backgroundMode, setBackgroundMode] = useState(false);
 
+  const { handleSend, handleKeyDown } = useChatComposer({
+    input,
+    setInput,
+    sendMessage,
+    agentConnected,
+    backgroundMode,
+    setBackgroundMode,
+    markPersonalityDraftSent,
+  });
+
   // Detect whether *any* browser backend is configured to drive the
   // first-run banner. Re-checks when the dialog closes.
   useEffect(() => {
@@ -81,7 +87,7 @@ const AgentChat = () => {
       if (!cancelled) setSecretKeys(new Set(r.keys || []));
     });
     return () => { cancelled = true; };
-  }, [agentConnected, browserSetupOpen]);
+  }, [agentConnected]);
 
   const localChromeManual = settings.capabilityPolicy?.webBrowser === "allow"
     && !["BROWSERBASE_API_KEY", "BROWSER_USE_API_KEY", "CAMOFOX_URL", "FIRECRAWL_API_KEY"]
@@ -131,37 +137,12 @@ const AgentChat = () => {
     ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [input]);
 
-  const handleSend = async () => {
-    // Allow sending while a previous reply is in-flight — the ChatContext
-    // worker will queue prompts and process them in strict order.
-    if (!input.trim() || !agentConnected) return;
-    let text = input;
-    // Background mode wraps the prompt with the agent's `/background` directive
-    // so it runs detached. Reset the toggle after each send.
-    if (backgroundMode) {
-      text = `/background ${text}`;
-      setBackgroundMode(false);
-    }
-    const wasPersonalityDraft = text.trimStart().startsWith(PERSONALITY_PREFIX);
-    setInput("");
-    await sendMessage(text);
-    if (wasPersonalityDraft) markPersonalityDraftSent();
-  };
-
   // Voice mode toggle — sends a one-shot directive to the agent. The agent
   // owns TTS/STT; we just flip the switch.
   const handleToggleVoice = async (next: boolean) => {
     setVoiceMode(next);
     if (!agentConnected) return;
     await sendMessage(next ? "/voice on" : "/voice off");
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Enter sends, Shift+Enter inserts a newline (default browser behavior).
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void handleSend();
-    }
   };
 
   return (
@@ -285,8 +266,16 @@ const AgentChat = () => {
               Pick a browser backend so Ron can actually load pages. Free options available.
             </p>
           </div>
-          <Button size="sm" onClick={() => setBrowserSetupOpen(true)} className="gradient-primary text-primary-foreground shrink-0">
-            Set up browser
+          <Button
+            size="sm"
+            onClick={() => {
+              setDraft(
+                "Please set up browser automation for me. Ask which backend I want and guide me through all required configuration steps.",
+              );
+            }}
+            className="gradient-primary text-primary-foreground shrink-0"
+          >
+            Ask agent to set up
           </Button>
           <button
             type="button"
@@ -577,10 +566,6 @@ const AgentChat = () => {
         </div>
       </GlassCard>
 
-      <BrowserSetupDialog
-        open={browserSetupOpen}
-        onOpenChange={setBrowserSetupOpen}
-      />
     </div>
   );
 };

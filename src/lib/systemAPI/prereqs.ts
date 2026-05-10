@@ -81,7 +81,7 @@ export const prereqAPI = {
     for (const cmd of cmds) {
       const result = await coreAPI.runCommand(cmd);
       if (result.success && result.stdout.includes('pip')) {
-        const version = result.stdout.match(/(\d+\.\d+[\.\d]*)/);
+        const version = result.stdout.match(/(\d+\.\d+[.\d]*)/);
         foundCmd = cmd;
         foundVersion = version?.[1];
         break;
@@ -98,7 +98,7 @@ export const prereqAPI = {
       const upgrade = await coreAPI.runCommand(upgradeCmd, { timeout: 180000 });
       if (upgrade.success) {
         const recheck = await coreAPI.runCommand(foundCmd);
-        const v = recheck.stdout.match(/(\d+\.\d+[\.\d]*)/);
+        const v = recheck.stdout.match(/(\d+\.\d+[.\d]*)/);
         if (v) foundVersion = v[1];
       }
     }
@@ -120,7 +120,7 @@ export const prereqAPI = {
   async checkRipgrep(): Promise<{ installed: boolean; version?: string }> {
     const result = await coreAPI.runCommand('rg --version');
     if (result.success) {
-      const version = result.stdout.match(/(\d+\.\d+[\.\d]*)/);
+      const version = result.stdout.match(/(\d+\.\d+[.\d]*)/);
       return { installed: true, version: version?.[1] };
     }
     return { installed: false };
@@ -150,7 +150,7 @@ export const prereqAPI = {
   async checkCurl(): Promise<{ installed: boolean; version?: string }> {
     const result = await coreAPI.runCommand('curl --version');
     if (result.success) {
-      const version = result.stdout.match(/(\d+\.\d+[\.\d]*)/);
+      const version = result.stdout.match(/(\d+\.\d+[.\d]*)/);
       return { installed: true, version: version?.[1] };
     }
     return { installed: false };
@@ -160,7 +160,7 @@ export const prereqAPI = {
   async checkHermes(): Promise<{ installed: boolean; version?: string }> {
     const result = await coreAPI.runCommand('hermes --version');
     if (result.success) {
-      const version = result.stdout.match(/(\d+\.\d+[\.\d]*)/);
+      const version = result.stdout.match(/(\d+\.\d+[.\d]*)/);
       return { installed: true, version: version?.[1] };
     }
     return { installed: false };

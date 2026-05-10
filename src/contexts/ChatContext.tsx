@@ -2,20 +2,34 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, Re
 import { useLocation } from "react-router-dom";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
-import { toast as sonnerToast } from "sonner";
 import { useSettings } from "./SettingsContext";
 import { handleAgentReplyArrived } from "@/lib/notify";
 import { liveSubAgents } from "@/lib/liveSubAgents";
-import { detectToolUnavailable, type ToolUnavailableHit } from "@/lib/toolUnavailable";
-import { detectToolCalls } from "@/lib/toolUseDetection";
+import { detectToolUnavailable } from "@/lib/toolUnavailable";
 import { useCapabilities } from "./CapabilitiesContext";
-import { capabilityProbe } from "@/lib/capabilityProbe";
 import {
   splitIntentsFromText,
   formatIntentResponse,
   type AgentIntent,
   type IntentResponse,
 } from "@/lib/agentIntents";
+import { useAgentConnection } from "./AgentConnectionContext";
+import {
+  CHAT_STORAGE_KEY,
+  SESSION_STORAGE_KEY,
+  DISK_HISTORY_PATH,
+  DISK_SESSION_PATH,
+  resolveHomePath,
+  ensureParentDir,
+  loadStoredMessages,
+  loadStoredSessionId,
+} from "@/lib/chat/persistence";
+import type { ChatMessage } from "@/lib/chat/types";
+import { analyzePermissionMismatch } from "@/lib/chat/permissionMismatch";
+import { ChatStreamTurnState } from "@/lib/chat/streamHandlers";
+import { fireToolUnavailableNotice } from "@/lib/chat/toolUnavailableNotice";
+
+export type { ChatMessage };
 
 /**
  * Chat is hoisted into a top-level context so:
@@ -31,89 +45,6 @@ import {
  *      additional prompts are queued and processed strictly in order, so
  *      the agent never sees two "user" turns interleaved out of sequence.
  */
-
-const CHAT_STORAGE_KEY = "ronbot-agent-chat-history-v2";
-const SESSION_STORAGE_KEY = "ronbot-agent-chat-session-id-v1";
-
-/**
- * Disk mirror for chat history. Electron's `file://` localStorage has been
- * historically unreliable in packaged builds (it can get wiped on certain
- * upgrades or when the userData dir gets relocated), so we ALSO persist to
- * a JSON file under the user's home directory. localStorage stays as the
- * fast/sync primary; the disk file is a recovery mirror that gets
- * re-hydrated into localStorage on launch if localStorage is empty.
- */
-const DISK_HISTORY_PATH = ".ronbot/chat-history.json";
-const DISK_SESSION_PATH = ".ronbot/chat-session-id.txt";
-
-const resolveHomePath = async (relative: string): Promise<string | null> => {
-  if (typeof window === "undefined" || !window.electronAPI) return null;
-  try {
-    const platform = await window.electronAPI.getPlatform();
-    const sep = platform.isWindows ? "\\" : "/";
-    return `${platform.homeDir}${sep}${relative.replace(/\//g, sep)}`;
-  } catch {
-    return null;
-  }
-};
-
-const ensureParentDir = async (fullPath: string): Promise<void> => {
-  if (typeof window === "undefined" || !window.electronAPI) return;
-  try {
-    const sep = fullPath.includes("\\") ? "\\" : "/";
-    const parent = fullPath.substring(0, fullPath.lastIndexOf(sep));
-    if (parent) await window.electronAPI.mkdir(parent);
-  } catch { /* best effort */ }
-};
-
-export interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: Date;
-  /** This message is the assistant placeholder currently being filled. */
-  streaming?: boolean;
-  /** This is a user message still waiting in the queue. */
-  queued?: boolean;
-  /** This message was cancelled by the user clicking Stop. */
-  cancelled?: boolean;
-  missingKey?: { provider: string; envVar: string };
-  diagnostics?: string;
-  materializeFailed?: boolean;
-  /** Inline warning when agent reported denial despite a Ronbot Allow setting,
-   *  or when an action ran without an "ask" prompt being shown. */
-  permissionMismatch?: {
-    kind:
-      | "internet"
-      | "shell"
-      | "fileWrite"
-      | "fileRead"
-      | "script"
-      | "shellNoPrompt"
-      | "fileWriteNoPrompt"
-      | "fileReadNoPrompt"
-      | "internetNoPrompt"
-      | "scriptNoPrompt";
-    agentSetting: string;
-    detail?: string;
-  };
-  /** Inline warning when the agent reported a tool/capability as unavailable
-   *  (browser tool, web search, image gen, etc.) — surfaces a one-click
-   *  diagnostic linking to the relevant Skills/Secrets entries. */
-  toolUnavailable?: ToolUnavailableHit;
-  /** Capability ids the agent invoked (or attempted) during this turn. */
-  usedCapabilities?: string[];
-  /** Structured intents the agent emitted in this assistant turn. */
-  intents?: AgentIntent[];
-  /** Per-intent responses already submitted (keyed by intent id). */
-  intentResponses?: Record<string, IntentResponse>;
-  /**
-   * When this user message is the carrier for a `ronbot-intent-response`,
-   * the chat bubble shows this redacted summary instead of the raw JSON
-   * payload (so secrets never appear in chat history).
-   */
-  intentResponseSummary?: string;
-}
 
 interface QueueItem {
   /** id of the user message in the chat list */
@@ -155,37 +86,9 @@ interface ChatContextValue {
 
 const ChatContext = createContext<ChatContextValue | null>(null);
 
-const loadStoredMessages = (): ChatMessage[] => {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(CHAT_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as Array<Omit<ChatMessage, "timestamp"> & { timestamp: string }>;
-    if (!Array.isArray(parsed)) return [];
-    // Drop any half-finished streaming/queued markers from a previous run —
-    // they would otherwise confuse the UI on reload.
-    return parsed.map((m) => ({
-      ...m,
-      timestamp: new Date(m.timestamp),
-      streaming: false,
-      queued: false,
-    }));
-  } catch {
-    return [];
-  }
-};
-
-const loadStoredSessionId = (): string | null => {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(SESSION_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-};
-
 export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const { settings } = useSettings();
+  const { agentRunning } = useAgentConnection();
   const { recordUse, openCapabilityDecision } = useCapabilities();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadStoredMessages());
   const [isStreaming, setIsStreaming] = useState(false);
@@ -391,185 +294,10 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         try {
           const timeoutMs = Math.max(60, settingsRef.current.chatTimeoutSec || 600) * 1000;
 
-          // ── Live activity tracking (all permission categories) ──
-          // Watch the streamed Hermes output for every permission-relevant
-          // tool call so we can: (1) feed the live SubAgents store, and
-          // (2) detect "ask"-set categories that ran without a prompt.
-          let liveCount = 0;
-          let spawnedThisTurn = 0;
-          // Per-category activity counters for this turn.
-          const activityThisTurn = {
-            shell: 0,
-            fileWrite: 0,
-            fileRead: 0,
-            internet: 0,
-            script: 0,
-          };
-          // Did Hermes actually emit an approval prompt this turn? If so, the
-          // user was asked at least once and we shouldn't flag a "no prompt"
-          // mismatch even when `ask` is set.
-          let approvalPromptSeen = 0;
           setLiveSubAgentCount(0);
-          // Per-turn FIFO of live ids so we can pair up start → complete/fail.
-          const turnLiveIds: string[] = [];
-          // Buffer the tail of the stream so we can match multi-line patterns
-          // like a delegate_task tool call followed by its `task: "..."` arg.
-          let streamBuf = "";
-
-          // Per-turn list of capability ids invoked by the agent (used for
-          // capability chips on the assistant message).
-          const usedCapsThisTurn = new Set<string>();
-
-          const extractGoal = (buf: string): string => {
-            // Try the broadest set of phrasings Hermes (and its forks) emit
-            // when announcing a delegated task. Order matters — most specific
-            // first so we don't grab a generic "task" key from elsewhere.
-            const patterns: RegExp[] = [
-              // JSON-ish args block: "task": "...", 'goal': '...', prompt: "..."
-              /["']?(?:task|goal|prompt|instruction|description|objective)["']?\s*[:=]\s*["']([^"']{3,400})["']/i,
-              // delegate_task(...) call with the goal as first positional arg
-              /delegate_task\s*\(\s*["']([^"']{3,400})["']/i,
-              // delegate_task tool call followed (possibly multi-line) by an arg
-              /delegate_task[\s\S]{0,600}?["']?(?:task|goal|prompt|instruction|description)["']?\s*[:=]\s*["']([^"']{3,400})["']/i,
-              // "spawned sub-agent to <do something>" / "spawn child agent: <goal>"
-              /spawn(?:ed|ing)?\s+(?:a\s+)?(?:sub[-_ ]?agent|child\s+agent|worker)\s*(?:to|:)\s*([^\n"']{6,300})/i,
-              // "delegating: <goal>" or "delegation: <goal>"
-              /delegat(?:ing|ion)\s*[:\-]\s*([^\n"']{6,300})/i,
-              // Unquoted task=... up to end of line / comma
-              /(?:task|goal|prompt)\s*[:=]\s*([^,\n}]{6,300})/i,
-            ];
-            // Words that are clearly the tool/marker name itself rather than
-            // a real goal — Hermes' streamed output sometimes emits the
-            // tool name in a boxed header (`delegate_task │`) that the
-            // greedy patterns above will happily capture as the "goal".
-            const REJECT = /^(delegate_task|sub[-_ ]?agent(?:\.start)?|spawn|task|goal|prompt)\b[\s│|│┃┆┊╎╏┝┥┯┷┿┃─━│┃┄┅┈┉]*$/i;
-            for (const re of patterns) {
-              const m = buf.match(re);
-              if (m) {
-                // Strip trailing quotes, commas, braces AND box-drawing /
-                // pipe characters that appear in Hermes' tool-call headers.
-                const cleaned = m[1]
-                  .trim()
-                  .replace(/[",}\s│|┃┄┅┆┇┈┉┊┋╎╏─━]+$/u, "")
-                  .replace(/^[\s│|┃─━]+/u, "")
-                  .trim();
-                if (cleaned.length >= 6 && !REJECT.test(cleaned)) return cleaned;
-              }
-            }
-            return "(no goal captured)";
-          };
-
-          // Activity detectors — broad regexes that match the various ways
-          // Hermes (and its forks) name tool calls in streamed output.
-          const activityPatterns = {
-            shell: /\b(run_shell|shell\.run|exec_shell|bash_command|tool:\s*shell)\b/gi,
-            fileWrite: /\b(write_file|file\.write|create_file|edit_file|patch_file|append_file|tool:\s*write)\b/gi,
-            fileRead: /\b(read_file|file\.read|view_file|cat_file|tool:\s*read)\b/gi,
-            internet: /\b(fetch_url|http\.get|http\.post|web_fetch|web_search|browse_url|tool:\s*(?:fetch|browse|search))\b/gi,
-            script: /\b(run_python|run_node|run_script|execute_script|tool:\s*(?:python|node|script))\b/gi,
-          } as const;
-
+          const streamTurn = new ChatStreamTurnState();
           const onStream = (chunk: { type: string; data?: string }) => {
-            if ((chunk.type !== "stdout" && chunk.type !== "stderr") || !chunk.data) return;
-            streamBuf = (streamBuf + chunk.data).slice(-8000);
-
-            // Approval prompt sighting — anything that looks like Hermes
-            // asking us to choose o/s/a/d. We only need a rough hit count.
-            if (/Choice\s*\[\s*o\s*\/\s*s\s*\/\s*a/i.test(chunk.data) ||
-                /\[\s*o\s*\]\s*nce.*\[\s*s\s*\]\s*ession/i.test(chunk.data) ||
-                /Approve\??\s*\(\s*o\s*\/\s*s\s*\/\s*a/i.test(chunk.data) ||
-                /Permission\s+required/i.test(chunk.data) ||
-                /Awaiting\s+approval/i.test(chunk.data)) {
-              approvalPromptSeen += 1;
-            }
-
-            // Per-category activity counts.
-            for (const k of Object.keys(activityPatterns) as Array<keyof typeof activityPatterns>) {
-              const m = chunk.data.match(activityPatterns[k]);
-              if (m) {
-                activityThisTurn[k] += m.length;
-                // Mirror into the capability tracker so chips show up.
-                usedCapsThisTurn.add(k);
-                recordUse(k);
-              }
-            }
-
-            // Detect explicit tool announcements ("tool: web_search",
-            // "calling browser…", etc.) and record them as capability uses.
-            const toolHits = detectToolCalls(chunk.data);
-            for (const hit of toolHits) {
-              if (!usedCapsThisTurn.has(hit.capabilityId)) {
-                usedCapsThisTurn.add(hit.capabilityId);
-                recordUse(hit.capabilityId);
-              }
-            }
-
-            // Spawn detection — count distinct delegation events.
-            const spawnRe = /\b(delegate_task|sub[-_ ]?agent\.start|spawn(?:ed)?\s+(?:sub[-_ ]?agent|child\s+agent))\b/gi;
-            const spawnMatches = chunk.data.match(spawnRe);
-            if (spawnMatches && spawnMatches.length) {
-              // If the call shape is `delegate_task(tasks=[{...}, {...}])`,
-              // pull each goal individually so every entry gets its own text.
-              const batchGoals: string[] = [];
-              const tasksBlock = streamBuf.match(/tasks\s*=\s*\[([\s\S]{0,4000}?)\]/i);
-              if (tasksBlock) {
-                const inner = tasksBlock[1];
-                const goalRe = /["']?(?:goal|task|prompt|instruction|description|objective)["']?\s*[:=]\s*["']([^"']{3,400})["']/gi;
-                let gm: RegExpExecArray | null;
-                while ((gm = goalRe.exec(inner)) !== null) {
-                  batchGoals.push(gm[1].trim());
-                }
-              }
-              for (let i = 0; i < spawnMatches.length; i++) {
-                const goal = batchGoals[i] || extractGoal(streamBuf);
-                const id = liveSubAgents.spawn(goal);
-                turnLiveIds.push(id);
-                spawnedThisTurn++;
-              }
-              liveCount += spawnMatches.length;
-              setLiveSubAgentCount(liveCount);
-            }
-
-            // Deferred goal capture — Hermes often emits the spawn marker on
-            // one chunk and the args (containing the goal) a few chunks later.
-            // Re-scan the buffer and back-fill any "(no goal captured)" ids
-            // that are still pending in this turn.
-            if (turnLiveIds.length) {
-              const lateGoal = extractGoal(streamBuf);
-              if (lateGoal !== "(no goal captured)") {
-                for (const id of turnLiveIds) {
-                  // updateGoal is a no-op if the entry already has a real goal
-                  // (we only want to overwrite the placeholder).
-                  const current = liveSubAgents.list().find((s) => s.id === id);
-                  if (current && current.goal === "(no goal captured)") {
-                    liveSubAgents.updateGoal(id, lateGoal);
-                  }
-                }
-              }
-            }
-
-            // Completion detection.
-            const completeRe = /\b(sub[-_ ]?agent\.complete|delegation\s+(?:complete|finished|done)|child[-_ ]?agent\b[^.\n]*\b(?:complete|finished|done))\b/gi;
-            const completeMatches = chunk.data.match(completeRe);
-            if (completeMatches) {
-              for (let i = 0; i < completeMatches.length; i++) {
-                const id = turnLiveIds.shift();
-                if (id) liveSubAgents.complete(id);
-              }
-            }
-
-            // Failure / denial detection.
-            const failRe = /\b(sub[-_ ]?agent\.(?:failed|error|denied)|delegation\s+(?:failed|denied|errored)|child[-_ ]?agent\b[^.\n]*\b(?:failed|denied|crashed))\b/gi;
-            const failMatches = chunk.data.match(failRe);
-            if (failMatches) {
-              for (let i = 0; i < failMatches.length; i++) {
-                const id = turnLiveIds.shift();
-                if (id) {
-                  const reasonM = chunk.data.match(/(?:reason|error|denied)\s*[:=]\s*["']?([^"'\n]{3,200})/i);
-                  liveSubAgents.fail(id, reasonM?.[1]);
-                }
-              }
-            }
+            streamTurn.handleChunk(chunk, { recordUse, setLiveSubAgentCount });
           };
 
           const result = await systemAPI.chatAgent(
@@ -613,66 +341,12 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             setSessionId(null);
           }
 
-          // ── Permission-mismatch detection ──
-          // Two failure modes we surface as inline warnings:
-          //  (a) Agent reported "I can't do X" while Ronbot is set to Allow
-          //      → permissions block didn't reach the agent.
-          //  (b) The agent performed X without a prompt while Ronbot is set
-          //      to Ask → agent ignored our `ask` and auto-allowed.
-          // Only one mismatch is shown per assistant message to keep the UI
-          // clean; pick the highest-priority hit.
-          const perms = settingsRef.current.permissions;
-          const lower = (reply || "").toLowerCase();
-          let permissionMismatch: ChatMessage["permissionMismatch"];
-
-          // ── (a) Denial-while-Allow patterns ──
-          const denyPatterns: Array<{
-            kind: "internet" | "shell" | "fileWrite" | "fileRead" | "script";
-            check: typeof perms.shell;
-            re: RegExp;
-          }> = [
-            { kind: "internet",  check: perms.internet,  re: /(no internet|cannot access the internet|internet access (?:denied|blocked|disabled)|not (?:allowed|permitted) to (?:access|use) the (?:internet|web|network))/i },
-            { kind: "shell",     check: perms.shell,     re: /(cannot (?:run|execute) (?:the )?(?:shell|command)|shell (?:access|command).*denied|not (?:allowed|permitted) to (?:run|execute) (?:shell|commands))/i },
-            { kind: "fileWrite", check: perms.fileWrite, re: /(cannot (?:write|create|edit|modify) (?:the )?file|file write.*denied|not (?:allowed|permitted) to (?:write|create|modify) files)/i },
-            { kind: "fileRead",  check: perms.fileRead,  re: /(cannot (?:read|open|view) (?:the )?file|file read.*denied|not (?:allowed|permitted) to (?:read|open) files)/i },
-            { kind: "script",    check: perms.script,    re: /(cannot (?:run|execute) (?:the )?script|script execution.*denied|not (?:allowed|permitted) to (?:run|execute) scripts)/i },
-          ];
-          for (const p of denyPatterns) {
-            if (p.check === "allow" && p.re.test(lower)) {
-              permissionMismatch = { kind: p.kind, agentSetting: "Allow" };
-              break;
-            }
-          }
-
-          // ── (b) Ask-was-bypassed patterns ──
-          // Only flag when the user set `ask`, we observed activity, AND no
-          // approval prompt appeared in the stream this turn.
-          // (Sub-agent spawns are no longer treated as a permission category —
-          // they're observed for live tracking only.)
-          if (!permissionMismatch && approvalPromptSeen === 0) {
-            const askChecks: Array<{
-              kind: "shellNoPrompt" | "fileWriteNoPrompt" | "fileReadNoPrompt" | "internetNoPrompt" | "scriptNoPrompt";
-              check: typeof perms.shell;
-              count: number;
-              label: string;
-            }> = [
-              { kind: "shellNoPrompt",     check: perms.shell,     count: activityThisTurn.shell,     label: "Shell command" },
-              { kind: "fileWriteNoPrompt", check: perms.fileWrite, count: activityThisTurn.fileWrite, label: "File write" },
-              { kind: "internetNoPrompt",  check: perms.internet,  count: activityThisTurn.internet,  label: "Internet access" },
-              { kind: "scriptNoPrompt",    check: perms.script,    count: activityThisTurn.script,    label: "Script execution" },
-              { kind: "fileReadNoPrompt",  check: perms.fileRead,  count: activityThisTurn.fileRead,  label: "File read" },
-            ];
-            for (const a of askChecks) {
-              if (a.check === "ask" && a.count > 0) {
-                permissionMismatch = {
-                  kind: a.kind,
-                  agentSetting: "Ask each time",
-                  detail: `${a.label}: ${a.count} call${a.count === 1 ? "" : "s"} ran without prompting.`,
-                };
-                break;
-              }
-            }
-          }
+          const permissionMismatch = analyzePermissionMismatch(
+            reply,
+            settingsRef.current.permissions,
+            streamTurn.activityThisTurn,
+            streamTurn.approvalPromptSeen,
+          );
 
           // ── Tool-unavailable detection ──
           // Independent of permissionMismatch — a single reply can hit both.
@@ -706,7 +380,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     materializeFailed: matFailed,
                     permissionMismatch,
                     toolUnavailable,
-                    usedCapabilities: Array.from(usedCapsThisTurn),
+                    usedCapabilities: Array.from(streamTurn.usedCapsThisTurn),
                     intents: split.intents.length > 0 ? split.intents : undefined,
                   }
                 : m,
@@ -718,36 +392,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           // user is never left wondering. The probe overrides the agent's
           // (often hallucinated) self-diagnosis with ground truth.
           if (toolUnavailable) {
-            const idMap: Record<string, string> = {
-              browser: "webBrowser",
-              webSearch: "webSearch",
-              imageGen: "imageGen",
-              voice: "voice",
-              email: "email",
-              messaging: "messaging",
-              memory: "memory",
-              codeInterpreter: "script",
-              filesystem: "fileWrite",
-            };
-            const capId = idMap[toolUnavailable.capability] ?? toolUnavailable.capability;
-            void (async () => {
-              try {
-                const probe = await capabilityProbe(capId);
-                sonnerToast(`Ron tried to use ${toolUnavailable.label} and was blocked`, {
-                  description: probe.message,
-                  duration: 30_000,
-                  action: {
-                    label: "Fix it",
-                    onClick: () => openCapabilityDecision(capId, probe, `The agent reported: "${toolUnavailable.matchedText.slice(0, 120)}…"`),
-                  },
-                });
-              } catch { /* probe failed — toast still useful, fall back */
-                sonnerToast(`Ron tried to use ${toolUnavailable.label} and was blocked`, {
-                  description: toolUnavailable.hint,
-                  duration: 30_000,
-                });
-              }
-            })();
+            fireToolUnavailableNotice(toolUnavailable, openCapabilityDecision);
           }
 
           if (!result.success && !result.missingKey) {
@@ -786,24 +431,19 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       setIsStreaming(false);
       setQueuedCount(0);
     }
-  }, []);
+  }, [openCapabilityDecision, recordUse]);
 
   const sendMessage = useCallback(async (promptText: string) => {
     const trimmed = promptText.trim();
     if (!trimmed) return;
-    // Gate on the user-facing on/off switch. Read directly from localStorage
-    // so ChatContext doesn't need to depend on AgentConnectionContext.
-    try {
-      const running = window.localStorage.getItem("ronbot-agent-running-v1");
-      if (running === "false") {
-        toast({
-          title: "Agent is turned off",
-          description: "Turn the agent on from the Dashboard to send messages.",
-          variant: "destructive",
-        });
-        return;
-      }
-    } catch { /* best effort */ }
+    if (!agentRunning) {
+      toast({
+        title: "Agent is turned off",
+        description: "Turn the agent on from the Dashboard to send messages.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     // Reserve a user message + an assistant placeholder. They appear instantly
     // even if the worker is still chewing through earlier prompts; the
@@ -823,7 +463,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     setQueuedCount(queueRef.current.length - (workerRunningRef.current ? 0 : 1));
 
     void drainQueue();
-  }, [drainQueue]);
+  }, [drainQueue, agentRunning]);
 
   const sendIntentResponse = useCallback(
     async (assistantMsgId: string, intent: AgentIntent, response: IntentResponse) => {

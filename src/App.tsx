@@ -11,9 +11,8 @@ import { SettingsProvider } from "./contexts/SettingsContext";
 import { PermissionsProvider } from "./contexts/PermissionsContext";
 import { CapabilitiesProvider } from "./contexts/CapabilitiesContext";
 import ApprovalDialog from "./components/permissions/ApprovalDialog";
-import PermissionsBridge from "./components/permissions/PermissionsBridge";
+import { AppRuntimeBridges } from "./components/AppRuntimeBridges";
 import WelcomeDialog from "./components/companion/WelcomeDialog";
-import RonbotRulesBridge from "./components/companion/RonbotRulesBridge";
 import Index from "./pages/Index";
 import RootRoute from "./pages/RootRoute";
 import SubAgents from "./pages/SubAgents";
@@ -40,42 +39,41 @@ const App = () => (
       <Sonner />
       <HashRouter>
         <SettingsProvider>
-        <PermissionsProvider>
-        <PermissionsBridge />
-        <ApprovalDialog />
-        <AgentConnectionProvider>
-        <CapabilitiesProvider>
-        <InstallProvider>
-        <ChatProvider>
-        <WelcomeDialog />
-        <RonbotRulesBridge />
-        <Routes>
-          <Route element={<AppLayout />}>
-            <Route path="/" element={<RootRoute />} />
-            <Route path="/install" element={<Index />} />
-            <Route path="/agents" element={<SubAgents />} />
-            <Route path="/models" element={<LLMConfig />} />
-            <Route path="/secrets" element={<Secrets />} />
-            {/* Legacy redirect */}
-            <Route path="/keys" element={<Secrets />} />
-            <Route path="/skills" element={<Skills />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/terminal" element={<TerminalPage />} />
-            <Route path="/channels" element={<Channels />} />
-            
-            <Route path="/updates" element={<UpdateManager />} />
-            <Route path="/backups" element={<BackupRestore />} />
-            <Route path="/diagnostics" element={<Diagnostics />} />
-            <Route path="/scheduled" element={<Scheduled />} />
-            <Route path="/insights" element={<Insights />} />
-          </Route>
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-        </ChatProvider>
-        </InstallProvider>
-        </CapabilitiesProvider>
-        </AgentConnectionProvider>
-        </PermissionsProvider>
+          <PermissionsProvider>
+            <ApprovalDialog />
+            <AgentConnectionProvider>
+              <AppRuntimeBridges />
+              <CapabilitiesProvider>
+                <InstallProvider>
+                  <ChatProvider>
+                    <WelcomeDialog />
+                    <Routes>
+                      <Route element={<AppLayout />}>
+                        <Route path="/" element={<RootRoute />} />
+                        <Route path="/install" element={<Index />} />
+                        <Route path="/agents" element={<SubAgents />} />
+                        <Route path="/models" element={<LLMConfig />} />
+                        <Route path="/secrets" element={<Secrets />} />
+                        {/* Legacy redirect */}
+                        <Route path="/keys" element={<Secrets />} />
+                        <Route path="/skills" element={<Skills />} />
+                        <Route path="/settings" element={<SettingsPage />} />
+                        <Route path="/terminal" element={<TerminalPage />} />
+                        <Route path="/channels" element={<Channels />} />
+
+                        <Route path="/updates" element={<UpdateManager />} />
+                        <Route path="/backups" element={<BackupRestore />} />
+                        <Route path="/diagnostics" element={<Diagnostics />} />
+                        <Route path="/scheduled" element={<Scheduled />} />
+                        <Route path="/insights" element={<Insights />} />
+                      </Route>
+                      <Route path="*" element={<NotFound />} />
+                    </Routes>
+                  </ChatProvider>
+                </InstallProvider>
+              </CapabilitiesProvider>
+            </AgentConnectionProvider>
+          </PermissionsProvider>
         </SettingsProvider>
       </HashRouter>
     </TooltipProvider>

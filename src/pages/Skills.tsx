@@ -12,11 +12,13 @@ import { Badge } from "@/components/ui/badge";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { systemAPI, secretsStore } from "@/lib/systemAPI";
 import { toast } from "sonner";
-import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 import BrowserBackendBadge from "@/components/skills/BrowserBackendBadge";
 import ActionableError from "@/components/ui/ActionableError";
 
 import CapabilityGallery from "@/components/dashboard/CapabilityGallery";
+import { PageShell } from "@/components/layout/PageShell";
+import { NotConnectedCard } from "@/components/layout/NotConnectedCard";
+import { StatGrid } from "@/components/layout/StatGrid";
 import { cn } from "@/lib/utils";
 
 type Skill = {
@@ -42,8 +44,7 @@ const Skills = () => {
   const [disabledSet, setDisabledSet] = useState<Set<string>>(new Set());
   const [secretKeys, setSecretKeys] = useState<Set<string>>(new Set());
   const [focusCap, setFocusCap] = useState<string | null>(null);
-  const [browserSetupOpen, setBrowserSetupOpen] = useState(false);
-  const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
+  const browserRefreshKey = 0;
   const [actionError, setActionError] = useState<string>("");
   const [plugins, setPlugins] = useState<Array<{ name: string; enabled?: boolean; description?: string; source?: string }>>([]);
   const [pluginsCliAvailable, setPluginsCliAvailable] = useState(true);
@@ -176,53 +177,26 @@ const Skills = () => {
 
   if (!agentConnected) {
     return (
-      <div className="p-6 space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Puzzle className="w-6 h-6 text-primary" />
-            Skills & Tools
-          </h1>
-          <p className="text-sm text-muted-foreground">Capabilities the agent can use</p>
-        </div>
-        <GlassCard className="flex items-center justify-center py-16">
-          <div className="text-center space-y-3 max-w-md">
-            <AlertCircle className="w-10 h-10 text-muted-foreground/40 mx-auto" />
-            <p className="text-sm text-muted-foreground">No agent connected</p>
-            <p className="text-xs text-muted-foreground/60">
-              Install and start an agent to see its skills.
-            </p>
-          </div>
-        </GlassCard>
-      </div>
+      <PageShell title="Skills & Tools" description="Capabilities the agent can use" icon={Puzzle}>
+        <NotConnectedCard
+          title="No agent connected"
+          description="Install and start an agent to see its skills."
+          ctaLabel="Go to Install"
+          ctaTo="/install"
+        />
+      </PageShell>
     );
   }
 
   const categoryNames = Array.from(new Set(skills.map((s) => s.category))).sort();
 
   return (
-    <div className="p-6 space-y-6">
-      {actionError && (
-        <ActionableError
-          title="Skill update failed"
-          summary={actionError}
-          details={actionError}
-          onFix={() => setActionError("")}
-          fixLabel="Dismiss"
-        />
-      )}
-
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Puzzle className="w-6 h-6 text-primary" />
-            Skills & Tools
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Everything your agent can do. Want a new tool, skill, or external integration —
-            including MCP servers, new channels, or custom skills? Just ask the agent in chat.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    <PageShell
+      title="Skills & Tools"
+      description="Everything your agent can do. Want a new tool, skill, or external integration — including MCP servers, new channels, or custom skills? Just ask the agent in chat."
+      icon={Puzzle}
+      actions={
+        <>
           <Button
             size="sm"
             onClick={() =>
@@ -244,8 +218,18 @@ const Skills = () => {
             {loading ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
             Refresh
           </Button>
-        </div>
-      </div>
+        </>
+      }
+    >
+      {actionError && (
+        <ActionableError
+          title="Skill update failed"
+          summary={actionError}
+          details={actionError}
+          onFix={() => setActionError("")}
+          fixLabel="Dismiss"
+        />
+      )}
 
       {needsSetup.length > 0 && (
         <GlassCard className="border-warning/30 bg-warning/5">
@@ -285,37 +269,21 @@ const Skills = () => {
         </GlassCard>
       )}
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <GlassCard className="space-y-1">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Puzzle className="w-3.5 h-3.5" /> Total skills
-          </div>
-          <p className="text-2xl font-bold text-foreground">{skills.length}</p>
-        </GlassCard>
-        <GlassCard className="space-y-1">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Package className="w-3.5 h-3.5" /> Bundled
-          </div>
-          <p className="text-2xl font-bold text-foreground">{bundledCount}</p>
-          <p className="text-[11px] text-muted-foreground/70">Shipped with the agent install</p>
-        </GlassCard>
-        <GlassCard className="space-y-1">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Wrench className="w-3.5 h-3.5" /> User
-          </div>
-          <p className="text-2xl font-bold text-foreground">{userCount}</p>
-          <p className="text-[11px] text-muted-foreground/70">From ~/.hermes/skills/</p>
-        </GlassCard>
-        <GlassCard className="space-y-1">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <KeyRound className="w-3.5 h-3.5" /> Need setup
-          </div>
-          <p className={`text-2xl font-bold ${needsSetup.length > 0 ? "text-warning" : "text-foreground"}`}>
-            {needsSetup.length}
-          </p>
-          <p className="text-[11px] text-muted-foreground/70">Missing required secrets</p>
-        </GlassCard>
-      </div>
+      <StatGrid
+        stats={[
+          { label: "Total skills", value: skills.length, icon: Puzzle },
+          { label: "Bundled", value: bundledCount, icon: Package, hint: "Shipped with the agent install" },
+          { label: "User", value: userCount, icon: Wrench, hint: "From ~/.hermes/skills/" },
+          {
+            label: "Need setup",
+            value: needsSetup.length,
+            icon: KeyRound,
+            hint: "Missing required secrets",
+            valueClassName: needsSetup.length > 0 ? "text-warning" : "text-foreground",
+          },
+        ]}
+        className="md:grid-cols-2 lg:grid-cols-4"
+      />
 
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
@@ -429,15 +397,23 @@ const Skills = () => {
           </div>
           <Button
             size="sm"
-            onClick={() => setBrowserSetupOpen(true)}
+            onClick={() =>
+              delegateToAgent(
+                "Please set up browser automation for me. Ask what backend I want, install or configure what is needed, and guide me through any login or key steps.",
+              )
+            }
             className="gradient-primary text-primary-foreground shrink-0"
           >
-            <Globe className="w-3.5 h-3.5 mr-1.5" /> Set up browser
+            <Globe className="w-3.5 h-3.5 mr-1.5" /> Ask agent to set up
           </Button>
         </div>
         <BrowserBackendBadge
           refreshKey={browserRefreshKey}
-          onSwitch={() => setBrowserSetupOpen(true)}
+          onSwitch={() =>
+            delegateToAgent(
+              "Please help me switch browser automation backends and apply any required config changes.",
+            )
+          }
         />
       </GlassCard>
 
@@ -446,15 +422,7 @@ const Skills = () => {
         subheading="Click any tile to ask the agent to set it up — it will guide you step by step in chat."
       />
 
-      <BrowserSetupDialog
-        open={browserSetupOpen}
-        onOpenChange={setBrowserSetupOpen}
-        onConfigured={() => {
-          setBrowserRefreshKey((k) => k + 1);
-          void load();
-        }}
-      />
-    </div>
+    </PageShell>
   );
 };
 

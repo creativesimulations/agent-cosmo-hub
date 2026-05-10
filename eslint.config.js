@@ -23,4 +23,32 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": "off",
     },
   },
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            { name: "child_process", message: "Use systemAPI / IPC from electron main only." },
+            { name: "node:child_process", message: "Use systemAPI / IPC from electron main only." },
+            { name: "fs", message: "Use systemAPI (window.electronAPI) — never import fs in renderer." },
+            { name: "node:fs", message: "Use systemAPI (window.electronAPI) — never import fs in renderer." },
+            { name: "path", message: "Use systemAPI — never import path in renderer." },
+            { name: "node:path", message: "Use systemAPI — never import path in renderer." },
+            { name: "os", message: "Use systemAPI — never import os in renderer." },
+            { name: "node:os", message: "Use systemAPI — never import os in renderer." },
+          ],
+        },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "Literal[value=/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/]",
+          message:
+            "Use HSL CSS variables / Tailwind semantic tokens (e.g. border, muted) instead of raw hex in src.",
+        },
+      ],
+    },
+  },
 );

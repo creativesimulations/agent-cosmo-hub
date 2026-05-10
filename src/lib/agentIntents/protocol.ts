@@ -161,6 +161,23 @@ export type AgentIntent =
   | DoneIntent
   | PairingApproveIntent;
 
+/**
+ * Every `type` discriminator the renderer accepts.
+ * Keep [`ronbotRules.ts`](../systemAPI/hermes/ronbotRules.ts) `RONBOT_APP_GUIDE`
+ * `### <type>` headings in sync (see `ronbotRules.test.ts`).
+ */
+export const AGENT_INTENT_TYPES = [
+  'credential_request',
+  'confirm',
+  'choice',
+  'qr_display',
+  'oauth_open',
+  'file_pick',
+  'progress',
+  'done',
+  'pairing_approve',
+] as const satisfies readonly AgentIntent['type'][];
+
 /** Reply the renderer posts back as a `ronbot-intent-response` block. */
 export interface IntentResponse {
   id: string;

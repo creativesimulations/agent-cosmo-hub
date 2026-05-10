@@ -14,21 +14,72 @@ import {
   recordPermissionEvent,
 } from '../approvalBridge';
 import type { PermissionsConfig } from '../permissions';
-import { RONBOT_RULES_BLOCK, RONBOT_APP_GUIDE, RONBOT_APP_GUIDE_VERSION } from './hermes/ronbotRules';
+import {
+  RONBOT_RULES_BLOCK,
+  RONBOT_APP_GUIDE,
+  RONBOT_APP_GUIDE_VERSION,
+  RONBOT_ELECTRON_APP_GUIDE,
+  RONBOT_ELECTRON_APP_GUIDE_VERSION,
+} from './hermes/ronbotRules';
+import { buildDefaultSoulMarkdown, parseAgentDisplayNameFromSoul } from './hermes/defaultPersonalityMarkdown';
+import {
+  backupHermesPersonalityToTimestampedFolder,
+  writeRonbotDefaultPersonalityFiles,
+} from './hermes/personalitySeed';
+import {
+  HERMES_DIR,
+  HERMES_ENV,
+  HERMES_CONFIG,
+  BROWSER_EXECUTABLE_FIX_SCRIPT,
+} from './hermes/constants';
+import { runOfficialHermesInstall, runLocalFolderHermesInstall } from './hermes/installRun';
+import { fetchInstalledSkillsList } from './hermes/listSkills';
+import { materializeHermesEnv } from './hermes/materializeEnv';
+import { parseBrowserBlock, type BrowserBlockState } from './hermes/browserBlock';
+import type { HermesBrowserDiagnostics } from './hermes/browserDiagnostics';
+import { collectBrowserDiagnostics } from './hermes/browserDiagnostics';
+import type { CommandOutputHandler } from './hermes/shell';
+import {
+  encodeScript,
+  toWslMountedPath,
+  ensureHermesChatCaps,
+  getHermesChatCaps,
+  HERMES_PATH_EXPORT,
+  runHermesShell,
+  runHermesCli,
+} from './hermes/shell';
+import { readHermesFile, writeHermesFile } from './hermes/files';
+import {
+  PERMS_BEGIN,
+  PERMS_END,
+  LOG_BEGIN,
+  LOG_END,
+  BROWSER_BEGIN,
+  BROWSER_END,
+  TOOLSETS_BEGIN,
+  TOOLSETS_END,
+  stripManagedBlock,
+  yamlList,
+  buildManagedBlockYaml,
+} from './hermes/managedBlocks';
+import {
+  parseCronListOutput,
+  parseProfileListOutput,
+  parsePluginsListOutput,
+  parseInsightsOutput,
+} from './hermes/cliParsers';
+import {
+  classifyChatError,
+  extractSessionId,
+  isBannerLine,
+  isEchoLine,
+  stripAnsi,
+} from './hermes/chatOutput';
+import { parseSubAgentLog } from './hermes/subAgentLog';
 
-const HERMES_DIR = '$HOME/.hermes';
-const HERMES_ENV = '$HOME/.hermes/.env';
-const HERMES_CONFIG = '$HOME/.hermes/config.yaml';
-const INSTALL_SCRIPT = 'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh';
-const INSTALLER_ENTRYPOINT = 'setsid bash /tmp/hermes-install.sh --skip-setup </dev/null 2>&1';
-export const buildInstallerRunScript = (): string => INSTALLER_ENTRYPOINT;
-
-// Anything beyond ~4 KB on the argv risks ENAMETOOLONG once Windows PATH +
-// cmd.exe quoting is added. Larger scripts are written to a temp file and
-// executed via `bash <file>` instead of being inlined as base64.
-const INLINE_SCRIPT_LIMIT = 4096;
-
-type CommandOutputHandler = (chunk: { type: string; data?: string; code?: number }) => void;
+export { buildInstallerRunScript, BROWSER_EXECUTABLE_FIX_SCRIPT } from './hermes/constants';
+export { parseCronListOutput, parseProfileListOutput, parsePluginsListOutput, parseInsightsOutput };
+export type { CommandOutputHandler } from './hermes/shell';
 
 export type StartupIssueSeverity = 'info' | 'warn' | 'error';
 export interface StartupIssue {
@@ -52,257 +103,6 @@ export interface StartupBootstrapReport {
   steps: StartupBootstrapStep[];
   issues: StartupIssue[];
 }
-
-const encodeScript = (value: string) => btoa(unescape(encodeURIComponent(value)));
-
-const toWslMountedPath = (windowsPath: string): string | null => {
-  const normalized = windowsPath.replace(/\\/g, '/');
-  const match = normalized.match(/^([A-Za-z]):\/(.*)$/);
-  if (!match) return null;
-  return `/mnt/${match[1].toLowerCase()}/${match[2]}`;
-};
-
-// Stage a shell script to a temp file. Returns the path bash should execute,
-// plus a cleanup snippet to remove it. In browser/sim mode returns empty path
-// so callers fall back to inline execution.
-const stageScript = async (
-  script: string,
-  tag: string,
-): Promise<{ path: string; cleanup: string } | null> => {
-  if (!isElectron()) return null;
-  const platform = await coreAPI.getPlatform();
-  const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  const fileName = `ronbot-${tag}-${stamp}.sh`;
-
-  if (platform.isWindows) {
-    // Write under %USERPROFILE%\.ronbot\tmp, then translate to /mnt/<drive>/...
-    const dir = `${platform.homeDir}\\.ronbot\\tmp`;
-    const writePath = `${dir}\\${fileName}`;
-    await coreAPI.mkdir(dir);
-    const wrote = await coreAPI.writeFile(writePath, script);
-    if (!wrote.success) return null;
-    const drive = writePath[0].toLowerCase();
-    const rest = writePath.slice(2).replace(/\\/g, '/');
-    const execPath = `/mnt/${drive}${rest}`;
-    return { path: execPath, cleanup: `rm -f "${execPath}" 2>/dev/null || true` };
-  }
-
-  const writePath = `/tmp/${fileName}`;
-  const wrote = await coreAPI.writeFile(writePath, script);
-  if (!wrote.success) return null;
-  return { path: writePath, cleanup: `rm -f "${writePath}" 2>/dev/null || true` };
-};
-
-const buildHermesShellCommand = async (script: string): Promise<string> => {
-  const platform = await coreAPI.getPlatform();
-
-  // Small scripts: inline via base64 (fast, no disk I/O).
-  if (script.length <= INLINE_SCRIPT_LIMIT) {
-    const b64 = encodeScript(script);
-    const decodeCmd = `echo ${b64} | base64 -d | bash`;
-    return platform.isWindows ? `wsl bash -lc "${decodeCmd}"` : `bash -lc "${decodeCmd}"`;
-  }
-
-  // Large scripts: stage to disk to avoid ENAMETOOLONG on the spawn argv.
-  const staged = await stageScript(script, 'hermes');
-  if (!staged) {
-    // Staging failed (browser mode or fs error) — fall back to inline and hope.
-    const b64 = encodeScript(script);
-    const decodeCmd = `echo ${b64} | base64 -d | bash`;
-    return platform.isWindows ? `wsl bash -lc "${decodeCmd}"` : `bash -lc "${decodeCmd}"`;
-  }
-
-  // Run the staged script and clean it up. Keep the entire pipeline inside
-  // the bash -lc payload (NOT visible to the outer shell), because on Windows
-  // cmd.exe does NOT honor single quotes — any `||`, `|`, `>`, `2>` chars
-  // outside double quotes would be eaten by cmd.exe and break the command.
-  // We use double quotes and escape the inner double-quoted paths.
-  const exec = `bash ${staged.path}; __rc=$?; ${staged.cleanup}; exit $__rc`;
-  if (platform.isWindows) {
-    // Inside cmd.exe's double-quoted argument to wsl, we cannot easily nest
-    // double quotes. Re-encode the exec line as base64 so the outer shell
-    // sees only safe characters; bash decodes and runs it.
-    const execB64 = encodeScript(exec);
-    return `wsl bash -lc "echo ${execB64} | base64 -d | bash"`;
-  }
-  return `bash -lc '${exec}'`;
-};
-
-/**
- * Cached probe of `hermes chat --help` so we know whether the binary
- * supports the documented modern flags (`-p`, `--no-color`) or only the
- * legacy `-q`. Probed once per session on first chat.
- */
-const HERMES_CHAT_CAPS: { probed: boolean; supportsModern: boolean; supportsNoColor: boolean } = {
-  probed: false,
-  supportsModern: true,
-  supportsNoColor: true,
-};
-
-let hermesCapsProbePromise: Promise<void> | null = null;
-
-async function ensureHermesChatCaps(): Promise<void> {
-  if (HERMES_CHAT_CAPS.probed) return;
-  if (hermesCapsProbePromise) return hermesCapsProbePromise;
-  hermesCapsProbePromise = (async () => {
-    try {
-      const platform = await coreAPI.getPlatform();
-      const inner = 'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH" && hermes chat --help 2>&1 || true';
-      const b64 = btoa(unescape(encodeURIComponent(inner)));
-      const cmd = platform.isWindows
-        ? `wsl bash -lc "echo ${b64} | base64 -d | bash"`
-        : `bash -lc "echo ${b64} | base64 -d | bash"`;
-      const r = await coreAPI.runCommand(cmd, { timeout: 10000 });
-      const out = (r.stdout || '') + (r.stderr || '');
-      const hasP = /\B-p\b|--prompt\b/.test(out);
-      const hasQ = /\B-q\b/.test(out);
-      HERMES_CHAT_CAPS.supportsModern = hasP || !hasQ;
-      HERMES_CHAT_CAPS.supportsNoColor = /--no-color/.test(out);
-    } catch {
-      /* keep optimistic defaults */
-    } finally {
-      HERMES_CHAT_CAPS.probed = true;
-    }
-  })();
-  return hermesCapsProbePromise;
-}
-
-
-const runHermesShell = async (
-  script: string,
-  options?: Record<string, unknown> & { onStreamId?: (id: string) => void; displayCommand?: string },
-  onOutput?: CommandOutputHandler,
-): Promise<CommandResult> => {
-  const cmd = await buildHermesShellCommand(script);
-  const displayCommand = options?.displayCommand || script;
-  const mergedOptions = { ...(options || {}), displayCommand };
-  // If the caller wants a streamId (so it can kill the process later) we
-  // must use the streaming path even when there's no onOutput handler.
-  const needsStream = !!onOutput || !!options?.onStreamId;
-  return needsStream
-    ? coreAPI.runCommandStream(cmd, mergedOptions, onOutput || (() => { /* sink */ }))
-    : coreAPI.runCommand(cmd, mergedOptions);
-};
-
-/** Prepended to Hermes CLI invocations so the venv/Homebrew/`~/.local/bin` resolve. */
-const HERMES_PATH_EXPORT =
-  'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/snap/bin:$PATH"';
-
-const runHermesCli = async (
-  command: string,
-  options?: Record<string, unknown>,
-  onOutput?: CommandOutputHandler,
-): Promise<CommandResult> => {
-  return runHermesShell(
-    [
-      'set -e',
-      HERMES_PATH_EXPORT,
-      'command -v hermes >/dev/null 2>&1 || { echo "[hermes] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
-      'echo "[hermes] using $(command -v hermes)"',
-      command,
-    ].join('\n'),
-    options,
-    onOutput,
-  );
-};
-
-
-let listSkillsCache: { at: number; value: { success: boolean; skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string; requiredSecrets?: string[] }>; error?: string } } | null = null;
-const LIST_SKILLS_CACHE_TTL_MS = 10_000;
-
-
-
-const readHermesFile = async (targetPath: string): Promise<{ success: boolean; content?: string; error?: string }> => {
-  const result = await runHermesShell([
-    `TARGET="${targetPath}"`,
-    'if [ -f "$TARGET" ]; then',
-    '  cat "$TARGET"',
-    'else',
-    '  exit 3',
-    'fi',
-  ].join('\n'));
-
-  if (result.success) return { success: true, content: result.stdout };
-  if (result.code === 3) return { success: false, error: 'File not found' };
-
-  return { success: false, error: result.stderr || result.stdout || 'Failed to read Hermes file' };
-};
-
-const writeHermesFile = async (
-  targetPath: string,
-  content: string,
-  mode?: string,
-): Promise<{ success: boolean; error?: string }> => {
-  const platform = await coreAPI.getPlatform();
-
-  // On Windows, writing through `wsl bash -lc "echo BIGB64 | base64 -d > ..."`
-  // is fragile: cmd.exe doesn't honor single quotes, and any `|`, `>`, `||`
-  // tokens that escape the WSL quoting get interpreted by cmd.exe — producing
-  // confusing errors like `'true' is not recognized as an internal or external
-  // command`. To sidestep this entirely, stage the file content to a Windows
-  // temp path (via the Node fs IPC, no shell), then run a TINY wsl command
-  // that just copies it into place and chmods.
-  if (platform.isWindows) {
-    const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    const winTmpDir = `${platform.homeDir}\\.ronbot\\tmp`;
-    const winTmpFile = `${winTmpDir}\\write-${stamp}.dat`;
-    await coreAPI.mkdir(winTmpDir);
-    const wrote = await coreAPI.writeFile(winTmpFile, content);
-    if (!wrote.success) {
-      return { success: false, error: wrote.error || 'Failed to stage file content' };
-    }
-    const drive = winTmpFile[0].toLowerCase();
-    const wslSource = `/mnt/${drive}${winTmpFile.slice(2).replace(/\\/g, '/')}`;
-    // Build the bash script and base64-encode it BEFORE handing it to cmd.exe.
-    // cmd.exe doesn't honor backslash-escaping of inner double quotes, so any
-    // nested `"` (like `"$(dirname "$TARGET")"`) gets chopped, leaving cp/chmod
-    // with missing operands. Encoding the whole script means cmd.exe only ever
-    // sees safe alphanumerics — bash decodes and runs the script intact.
-    const script = [
-      'set -e',
-      `TARGET="${targetPath}"`,
-      'mkdir -p "$(dirname "$TARGET")"',
-      `cp "${wslSource}" "$TARGET"`,
-      `rm -f "${wslSource}" 2>/dev/null || true`,
-      ...(mode ? [`chmod ${mode} "$TARGET" || true`] : []),
-      'echo "[writeHermesFile] wrote $TARGET"',
-    ].join('\n');
-    const b64 = encodeScript(script);
-    const result = await coreAPI.runCommand(
-      `wsl bash -c "echo ${b64} | base64 -d | bash"`,
-      { timeout: 30000 },
-    );
-    return {
-      success: result.success,
-      error: result.success ? undefined : (result.stderr || result.stdout || 'Failed to write Hermes file'),
-    };
-  }
-
-  const b64 = encodeScript(content);
-  const result = await runHermesShell(
-    [
-      `TARGET="${targetPath}"`,
-      'mkdir -p "$(dirname "$TARGET")"',
-      `echo ${b64} | base64 -d > "$TARGET"`,
-      ...(mode ? [`chmod ${mode} "$TARGET" || true`] : []),
-    ].join('\n'),
-    { timeout: 30000 },
-  );
-
-  return {
-    success: result.success,
-    error: result.success ? undefined : (result.stderr || result.stdout || 'Failed to write Hermes file'),
-  };
-};
-
-const hermesFileExists = async (targetPath: string): Promise<boolean> => {
-  const result = await runHermesShell([
-    `TARGET="${targetPath}"`,
-    '[ -f "$TARGET" ]',
-  ].join('\n'));
-
-  return result.success;
-};
 
 const repairLegacyWindowsInstall = async (): Promise<void> => {
   const platform = await coreAPI.getPlatform();
@@ -449,148 +249,6 @@ const finalizeInstallVerification = async (result: CommandResult, onOutput?: Com
   };
 };
 
-const quoteEnvValue = (value: string) => `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-
-const materializeHermesEnv = async (): Promise<{ success: boolean; count?: number; missing?: string[]; error?: string }> => {
-  const { keys, backend } = await secretsStore.list();
-  const secretEntries = (await Promise.all(
-    keys.map(async (key) => [key, await secretsStore.get(key)] as const),
-  )).filter(([, value]) => value !== '');
-
-  agentLogs.push({
-    source: 'system',
-    level: secretEntries.length === 0 ? 'warn' : 'info',
-    summary: `materializeHermesEnv: ${secretEntries.length}/${keys.length} non-empty key(s) from ${backend}`,
-    detail: secretEntries.length === 0
-      ? `Credential store has ${keys.length} key entries but all values are empty. Re-add your API keys in the Secrets tab — the OS credential backend (${backend}) may not be persisting them.`
-      : `Keys to write: ${secretEntries.map(([k, v]) => `${k}(${v.length}c)`).join(', ')}`,
-  });
-
-  // Heuristic: a line from the Hermes example template — placeholder values
-  // like KEY=your_key_here, KEY=<your-...>, KEY="changeme", or just KEY=.
-  // We strip these so the example template doesn't drown the managed block.
-  const isPlaceholderLine = (line: string): boolean => {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) return false;
-    const eq = t.indexOf('=');
-    if (eq < 1) return false;
-    let v = t.slice(eq + 1).trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-      v = v.slice(1, -1);
-    }
-    if (!v) return true;
-    return /^(your[-_]|<your|placeholder|changeme|xxx|sk-\.{3}|example|insert[-_]|todo$)/i.test(v);
-  };
-
-  const managedKeys = new Set(secretEntries.map(([key]) => key));
-  // Valid POSIX env var: letter/underscore + letters/digits/underscores.
-  // Anything else (e.g. OPENROUTER-API-KEY) crashes bash when sourcing .env.
-  const VALID_ENV = /^[A-Za-z_][A-Za-z0-9_]*$/;
-  const droppedInvalid: string[] = [];
-  const existing = await readHermesFile(HERMES_ENV);
-  const preserved = existing.success && existing.content
-    ? existing.content
-        .split('\n')
-        .filter((line) => {
-          const trimmed = line.trim();
-          if (!trimmed) return true;
-          // Strip the original Hermes template's helper comments — they only
-          // confuse users and add 100s of noise lines.
-          if (trimmed.startsWith('#')) {
-            if (/Copy this file to \.env/i.test(trimmed)) return false;
-            if (/fill in your API keys/i.test(trimmed)) return false;
-            if (/Hermes Agent Environment Configuration/i.test(trimmed)) return false;
-            return true;
-          }
-          const eqIndex = trimmed.indexOf('=');
-          if (eqIndex < 1) return true;
-          const k = trimmed.slice(0, eqIndex).trim();
-          // PURGE invalid env var names. Without this, a line like
-          // `OPENROUTER-API-KEY=sk-...` survives every sync and bash fails
-          // with "command not found" when the agent sources the file.
-          if (!VALID_ENV.test(k)) {
-            droppedInvalid.push(k);
-            return false;
-          }
-          if (managedKeys.has(k)) return false;
-          // Drop placeholder rows (KEY=your_key_here etc.) so they can't
-          // shadow the managed block when bash sources the file.
-          if (isPlaceholderLine(line)) return false;
-          return true;
-        })
-        .join('\n')
-        .replace(/\n+$/, '')
-    : '';
-
-  if (droppedInvalid.length > 0) {
-    agentLogs.push({
-      source: 'system',
-      level: 'warn',
-      summary: `materializeHermesEnv: purged ${droppedInvalid.length} invalid env var line(s)`,
-      detail: `These names contain characters bash can't parse (hyphens, spaces, etc.) and would crash the agent: ${droppedInvalid.join(', ')}. They've been removed from ~/.hermes/.env.`,
-    });
-  }
-
-  const managed = secretEntries.map(([key, value]) => `${key}=${quoteEnvValue(value)}`).join('\n');
-  const sections = [
-    preserved,
-    managed ? '# ─── Managed by Ronbot (do not edit by hand) ───' : '',
-    managed,
-  ].filter(Boolean);
-
-  if (sections.length === 0) {
-    agentLogs.push({
-      source: 'system',
-      level: 'warn',
-      summary: 'materializeHermesEnv: nothing to write (no secrets, no preserved lines)',
-    });
-    return { success: true, count: 0 };
-  }
-
-  const result = await writeHermesFile(HERMES_ENV, `${sections.join('\n')}\n`, '600');
-  if (!result.success) {
-    return { success: false, count: secretEntries.length, error: result.error };
-  }
-
-  // Defensive verification — read .env back and confirm every managed key
-  // landed with a non-empty value. If any are missing, the write silently
-  // failed (e.g. cmd.exe quoting bug, WSL not running) and the caller should
-  // surface a hard error rather than letting the agent run blind.
-  const verify = await readHermesFile(HERMES_ENV);
-  if (!verify.success || !verify.content) {
-    return { success: false, count: secretEntries.length, error: 'Verification failed: could not read back ~/.hermes/.env' };
-  }
-  const written: Record<string, string> = {};
-  for (const line of verify.content.split('\n')) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const eq = t.indexOf('=');
-    if (eq < 1) continue;
-    let v = t.slice(eq + 1).trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-      v = v.slice(1, -1);
-    }
-    written[t.slice(0, eq).trim()] = v;
-  }
-  const missing = secretEntries
-    .filter(([k]) => !(written[k] && written[k].length > 0))
-    .map(([k]) => k);
-  if (missing.length > 0) {
-    return {
-      success: false,
-      count: secretEntries.length,
-      missing,
-      error: `Verification failed: ${missing.length} key(s) missing from ~/.hermes/.env after write: ${missing.join(', ')}`,
-    };
-  }
-  agentLogs.push({
-    source: 'system',
-    level: 'info',
-    summary: `materializeHermesEnv: ✓ wrote ${secretEntries.length} key(s) to ~/.hermes/.env`,
-  });
-  return { success: true, count: secretEntries.length };
-};
-
 const normalizeDoctorIssues = (
   doctorOutput: string,
   platform: Awaited<ReturnType<typeof coreAPI.getPlatform>>,
@@ -646,31 +304,6 @@ const normalizeDoctorIssues = (
 // sentinel comments (same pattern we use for the .env managed block). The
 // rest of the file is left untouched.
 
-const PERMS_BEGIN = '# ─── Managed by Ronbot: permissions (do not edit) ───';
-const PERMS_END = '# ─── End Ronbot permissions ───';
-const LOG_BEGIN = '# ─── Managed by Ronbot: logging (do not edit) ───';
-const LOG_END = '# ─── End Ronbot logging ───';
-const BROWSER_BEGIN = '# ─── Managed by Ronbot: browser (do not edit) ───';
-const BROWSER_END = '# ─── End Ronbot browser ───';
-const TOOLSETS_BEGIN = '# ─── Managed by Ronbot: toolsets (do not edit) ───';
-const TOOLSETS_END = '# ─── End Ronbot toolsets ───';
-
-const stripManagedBlock = (yaml: string, begin: string, end: string): string => {
-  const startIdx = yaml.indexOf(begin);
-  if (startIdx === -1) return yaml;
-  const endIdx = yaml.indexOf(end, startIdx);
-  if (endIdx === -1) return yaml;
-  const after = yaml.slice(endIdx + end.length);
-  // Trim the leading newline of `after` so we don't accumulate blank lines
-  // each time we re-write.
-  return (yaml.slice(0, startIdx).replace(/\n+$/, '') + after.replace(/^\n+/, '\n')).replace(/\n{3,}/g, '\n\n');
-};
-
-const yamlList = (items: string[]): string => {
-  if (!items.length) return ' []';
-  return '\n' + items.map((p) => `    - "${p.replace(/"/g, '\\"')}"`).join('\n');
-};
-
 /** Write the current PermissionsConfig into ~/.hermes/config.yaml.
  *  Idempotent: only the managed block is touched.
  *
@@ -682,10 +315,7 @@ export const writeHermesPermissions = async (
 ): Promise<{ success: boolean; error?: string }> => {
   const cfg = await readHermesFile(HERMES_CONFIG);
   const existing = cfg.success && cfg.content ? cfg.content : 'model: openrouter/auto\n';
-  const stripped = stripManagedBlock(existing, PERMS_BEGIN, PERMS_END).replace(/\n+$/, '');
-
-  const block = [
-    PERMS_BEGIN,
+  const inner = [
     'permissions:',
     `  shell: ${perms.shell}`,
     `  shell_allow_readonly: ${perms.shellAllowReadOnly ? 'true' : 'false'}`,
@@ -705,10 +335,8 @@ export const writeHermesPermissions = async (
     `  default: ${perms.fallback}`,
     `  allowed_paths:${yamlList(perms.allowedFolders)}`,
     `  blocked_paths:${yamlList(perms.blockedFolders)}`,
-    PERMS_END,
-  ].join('\n');
-
-  const next = `${stripped}\n\n${block}\n`;
+  ];
+  const next = buildManagedBlockYaml(existing, PERMS_BEGIN, PERMS_END, inner);
   const w = await writeHermesFile(HERMES_CONFIG, next, '600');
   agentLogs.push({
     source: 'system',
@@ -726,15 +354,8 @@ export const writeHermesPermissions = async (
 export const enableHermesFileLogging = async (): Promise<{ success: boolean }> => {
   const cfg = await readHermesFile(HERMES_CONFIG);
   const existing = cfg.success && cfg.content ? cfg.content : 'model: openrouter/auto\n';
-  const stripped = stripManagedBlock(existing, LOG_BEGIN, LOG_END).replace(/\n+$/, '');
-  const block = [
-    LOG_BEGIN,
-    'logging:',
-    '  file: ~/.hermes/logs/agent.log',
-    '  level: info',
-    LOG_END,
-  ].join('\n');
-  const next = `${stripped}\n\n${block}\n`;
+  const inner = ['logging:', '  file: ~/.hermes/logs/agent.log', '  level: info'];
+  const next = buildManagedBlockYaml(existing, LOG_BEGIN, LOG_END, inner);
   const w = await writeHermesFile(HERMES_CONFIG, next, '600');
   agentLogs.push({
     source: 'system',
@@ -759,18 +380,6 @@ export const readHermesPermissionsBlock = async (): Promise<string | null> => {
   return cfg.content.slice(startIdx, endIdx + PERMS_END.length);
 };
 
-/**
- * Managed `browser:` block state in ~/.hermes/config.yaml.
- *
- * We keep the in-memory desired state (camofox persistence + CDP url) so each
- * surgical update preserves the other field. The BROWSER_BEGIN…BROWSER_END
- * block is rewritten as a unit; nothing outside it is touched.
- */
-interface BrowserBlockState {
-  camofoxPersistence: boolean;
-  cdpUrl: string | null;
-}
-
 // Official Hermes platform toolset bundle. Loading `hermes-cli` natively
 // registers `web`, `browser`, `terminal`, `file`, `vision`, `image_gen`,
 // `tts`, `memory`, `todo`, `clarify`, `delegation`, `code_execution`,
@@ -779,27 +388,6 @@ interface BrowserBlockState {
 // is not a real toolset name and caused the agent to report "missing skill"
 // for every web/browser call.
 const BROWSER_DEFAULT_TOOLSETS = ['hermes-cli'];
-
-const quoteYamlScalar = (value: string): string => `"${value.replace(/"/g, '\\"')}"`;
-
-const BROWSER_EXECUTABLE_FIX_SCRIPT = [
-  'if [ -d "$HOME/.hermes/hermes-agent/node_modules/.bin" ]; then',
-  '  find "$HOME/.hermes/hermes-agent/node_modules/.bin" -maxdepth 1 -type f \\( -name "agent-browser" -o -name "playwright" -o -name "playwright-core" \\) -exec chmod +x {} + 2>/dev/null || true',
-  'fi',
-].join('\n');
-
-const parseBrowserBlock = (yaml: string): BrowserBlockState => {
-  const startIdx = yaml.indexOf(BROWSER_BEGIN);
-  const state: BrowserBlockState = { camofoxPersistence: false, cdpUrl: null };
-  if (startIdx === -1) return state;
-  const endIdx = yaml.indexOf(BROWSER_END, startIdx);
-  if (endIdx === -1) return state;
-  const block = yaml.slice(startIdx, endIdx);
-  if (/managed_persistence:\s*true/.test(block)) state.camofoxPersistence = true;
-  const cdpMatch = block.match(/cdp_url:\s*"?([^"\n]+)"?/);
-  if (cdpMatch) state.cdpUrl = cdpMatch[1].trim();
-  return state;
-};
 
 const writeBrowserBlock = async (
   next: BrowserBlockState,
@@ -923,74 +511,11 @@ export const hermesAPI = {
   /** Read live browser diagnostics: CDP reachability, what config.yaml says,
    *  whether `hermes-web` is loaded, and the effective `internet` permission.
    *  This is what the Diagnostics page shows under "Browser toolset". */
-  async getBrowserDiagnostics(): Promise<{
-    cdpUrl: string | null;
-    cdpReachable: boolean | null;
-    cdpVersion?: string;
-    browserEnabledInConfig: boolean;
-    hermesWebToolsetLoaded: boolean;
-    internetPermission: string | null;
-    rawBrowserBlock: string | null;
-    rawToolsetsBlock: string | null;
-  }> {
+  async getBrowserDiagnostics(): Promise<HermesBrowserDiagnostics> {
     const cfg = await readHermesFile(HERMES_CONFIG);
     const yaml = cfg.success && cfg.content ? cfg.content : '';
-
-    // Browser block
-    const bIdx = yaml.indexOf(BROWSER_BEGIN);
-    const bEnd = yaml.indexOf(BROWSER_END, bIdx);
-    const rawBrowserBlock = bIdx !== -1 && bEnd !== -1
-      ? yaml.slice(bIdx, bEnd + BROWSER_END.length)
-      : null;
-    const browserState = parseBrowserBlock(yaml);
-    // In current Hermes config schema, presence of our managed browser block
-    // is the reliable signal. The old `browser.enabled: true` key is obsolete.
-    const browserEnabledInConfig = !!rawBrowserBlock;
-
-    // Toolsets block (managed or unmanaged — we accept either)
-    const tIdx = yaml.indexOf(TOOLSETS_BEGIN);
-    const tEnd = yaml.indexOf(TOOLSETS_END, tIdx);
-    const rawToolsetsBlock = tIdx !== -1 && tEnd !== -1
-      ? yaml.slice(tIdx, tEnd + TOOLSETS_END.length)
-      : null;
-    // Look for the official toolset bundle. Accept the legacy `hermes-web`
-    // name too so freshly-repaired and not-yet-repaired installs both report.
-    const hermesWebToolsetLoaded =
-      /(^|\n)\s*-\s*hermes-cli\b/.test(yaml) || /(^|\n)\s*-\s*hermes-web\b/.test(yaml);
-
-    // Internet permission (from managed perms block)
     const permsBlock = await readHermesPermissionsBlock();
-    const internetMatch = permsBlock?.match(/^\s*internet:\s*(\w+)/m);
-    const internetPermission = internetMatch ? internetMatch[1] : null;
-
-    // Probe CDP
-    let cdpReachable: boolean | null = null;
-    let cdpVersion: string | undefined;
-    if (browserState.cdpUrl) {
-      try {
-        // Hermes points cdp_url at e.g. http://127.0.0.1:9222 — append /json/version.
-        const probeUrl = browserState.cdpUrl.replace(/\/+$/, '') + '/json/version';
-        const resp = await fetch(probeUrl, { method: 'GET' });
-        cdpReachable = resp.ok;
-        if (resp.ok) {
-          const json = await resp.json().catch(() => ({} as { Browser?: string }));
-          cdpVersion = (json as { Browser?: string }).Browser;
-        }
-      } catch {
-        cdpReachable = false;
-      }
-    }
-
-    return {
-      cdpUrl: browserState.cdpUrl,
-      cdpReachable,
-      cdpVersion,
-      browserEnabledInConfig,
-      hermesWebToolsetLoaded,
-      internetPermission,
-      rawBrowserBlock,
-      rawToolsetsBlock,
-    };
+    return collectBrowserDiagnostics(yaml, permsBlock);
   },
 
   /** Toggle Camofox `managed_persistence` in the agent's config. */
@@ -1006,163 +531,7 @@ export const hermesAPI = {
    *  On Windows we always run inside WSL because hermes-agent is not published
    *  to PyPI and requires the install script (which expects a POSIX shell). */
   async install(extras?: string[], onOutput?: CommandOutputHandler): Promise<CommandResult> {
-    const wantsExtras = !!(extras && extras.length > 0);
-    const extrasFlag = wantsExtras ? `[${extras!.join(',')}]` : '';
-
-    // The official install script reads optional prompts (ffmpeg, etc.)
-    // directly from /dev/tty, bypassing piped stdin. To run it fully
-    // unattended we:
-    //   1. Download the script to a temp file (so we don't pipe to bash).
-    //   2. Run it with stdin redirected from /dev/null AND wrap with
-    //      `setsid` so it has no controlling terminal — every /dev/tty
-    //      read fails immediately and the script falls back to defaults
-    //      / non-interactive paths.
-    //   3. Force sudo to be non-interactive (SUDO_ASKPASS=/bin/false +
-    //      `sudo -n`) so optional system packages are skipped cleanly
-    //      instead of hanging on a password prompt.
-    //   4. Pass `--skip-setup` so the post-install wizard doesn't run.
-    //
-    // Note: ffmpeg / ripgrep / build-essential are OPTIONAL system
-    // packages. If they can't be installed without a password the script
-    // continues and just logs a manual-install hint.
-    const unattendedEnv =
-      'export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a SUDO_ASKPASS=/bin/false';
-    // Ensure pip + venv are present inside the POSIX env (WSL Ubuntu ships
-    // python3 without pip by default, which breaks the Hermes installer).
-    // Strategy: try every known method, log what we tried, and FAIL HARD
-    // with a clear message if pip is still missing at the end. We can't let
-    // the install script run without pip — it just produces a confusing
-    // "No module named pip" error.
-    // Strategy on modern Debian/Ubuntu (PEP 668 "externally-managed"):
-    // 1. Make sure python3 + venv module are available (apt if needed).
-    // 2. Create an isolated venv at ~/.hermes/venv and upgrade its pip.
-    // 3. Put that venv's bin/ on PATH for the rest of the script so the
-    //    Hermes installer (which calls `python3 -m pip install ...`) writes
-    //    into the venv instead of fighting the system Python.
-    // 4. Symlink ~/.hermes/venv/bin/hermes -> ~/.local/bin/hermes so the CLI
-    //    is reachable from a normal interactive shell.
-    const ensurePip = [
-      'echo "[pip-bootstrap] checking python3..."',
-      'command -v python3 >/dev/null || { echo "[pip-bootstrap] FATAL: python3 not found" >&2; exit 40; }',
-      'echo "[pip-bootstrap] python3: $(python3 --version 2>&1)"',
-      '',
-      'PY_VENV_PKG="$(python3 -c \'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}-venv")\')"',
-      'echo "[pip-bootstrap] expected venv package: $PY_VENV_PKG"',
-      '# Ensure both venv and ensurepip are available (Debian/Ubuntu split them out)',
-      'if ! python3 -c "import venv, ensurepip" 2>/dev/null; then',
-      '  echo "[pip-bootstrap] python venv bootstrap missing — trying apt-get (sudo -n)"',
-      '  sudo -n apt-get update 2>&1 | tail -3 || true',
-      '  sudo -n apt-get install -y "$PY_VENV_PKG" 2>&1 | tail -5 || echo "[pip-bootstrap] apt-get failed (no passwordless sudo?)"',
-      'fi',
-      'if ! python3 -c "import venv, ensurepip" 2>/dev/null; then',
-      '  echo "[pip-bootstrap] FATAL: Python venv bootstrap support is missing." >&2',
-      '  echo "[pip-bootstrap] Open a WSL/Ubuntu terminal and run:" >&2',
-      '  echo "[pip-bootstrap]   sudo apt update && sudo apt install -y $PY_VENV_PKG" >&2',
-      '  echo "[pip-bootstrap] then retry the install from this app." >&2',
-      '  exit 41',
-      'fi',
-      '',
-      'VENV="$HOME/.hermes/venv"',
-      'mkdir -p "$HOME/.hermes"',
-      '',
-      '# A previously-failed venv (created without ensurepip) leaves bin/python',
-      '# but no bin/pip. Detect and nuke it before recreating.',
-      'if [ -d "$VENV" ] && [ ! -x "$VENV/bin/pip" ]; then',
-      '  echo "[pip-bootstrap] existing venv at $VENV is missing pip — recreating"',
-      '  rm -rf "$VENV"',
-      'fi',
-      '',
-      'if [ ! -x "$VENV/bin/python" ] || [ ! -x "$VENV/bin/pip" ]; then',
-      '  echo "[pip-bootstrap] creating venv at $VENV"',
-      '  python3 -m venv "$VENV" || { echo "[pip-bootstrap] FATAL: failed to create venv" >&2; exit 43; }',
-      'else',
-      '  echo "[pip-bootstrap] reusing existing venv at $VENV"',
-      'fi',
-      '',
-      '# Sanity check: pip MUST exist now.',
-      'if [ ! -x "$VENV/bin/pip" ]; then',
-      '  echo "[pip-bootstrap] FATAL: $VENV/bin/pip missing after venv creation." >&2',
-      '  echo "[pip-bootstrap] python3-venv may not be properly installed. Try reopening WSL and retrying." >&2',
-      '  exit 44',
-      'fi',
-      '',
-      'echo "[pip-bootstrap] upgrading pip inside venv"',
-      '"$VENV/bin/python" -m pip install --upgrade pip wheel setuptools 2>&1 | tail -5',
-      '',
-      '# Put venv FIRST on PATH so any later `python3` / `pip` resolves to it.',
-      'export PATH="$VENV/bin:$HOME/.local/bin:$PATH"',
-      'export VIRTUAL_ENV="$VENV"',
-      'echo "[pip-bootstrap] using python: $(command -v python3)"',
-      'echo "[pip-bootstrap] using pip: $(command -v pip)"',
-      'echo "[pip-bootstrap] pip version: $(pip --version)"',
-    ].join('\n');
-    // The official installer aborts with "Directory exists but is not a git
-    // repository" if a previous attempt left a partial ~/.hermes/hermes-agent
-    // checkout (e.g. interrupted clone, or a stray folder). Clean it up so the
-    // installer can clone fresh — but ONLY when it's clearly not a real repo,
-    // so we never blow away a user's working clone.
-    const cleanupStaleCheckout = [
-      'HERMES_SRC="$HOME/.hermes/hermes-agent"',
-      'if [ -d "$HERMES_SRC" ] && [ ! -d "$HERMES_SRC/.git" ]; then',
-      '  echo "[install] removing stale non-repo directory at $HERMES_SRC (left from a previous failed install)"',
-      '  rm -rf "$HERMES_SRC"',
-      'fi',
-    ].join('\n');
-    const dl = [
-      'echo "[install] downloading installer script..."',
-      `curl -fsSL ${INSTALL_SCRIPT} -o /tmp/hermes-install.sh`,
-      'chmod +x /tmp/hermes-install.sh',
-    ].join('\n');
-    const runScript = [
-      'echo "[install] running installer (inside venv)..."',
-      // Inherit our PATH/VIRTUAL_ENV so the installer's `pip install` lands
-      // in the venv and PEP 668 protection no longer applies.
-      buildInstallerRunScript(),
-      '',
-      '# Expose the hermes CLI on the user PATH via ~/.local/bin symlink.',
-      'mkdir -p "$HOME/.local/bin"',
-      'if [ -x "$VENV/bin/hermes" ]; then',
-      '  ln -sf "$VENV/bin/hermes" "$HOME/.local/bin/hermes"',
-      '  echo "[install] linked $VENV/bin/hermes -> $HOME/.local/bin/hermes"',
-      'else',
-      '  echo "[install] note: $VENV/bin/hermes not found after install (extras may still install ok)"',
-      'fi',
-    ].join('\n');
-    // Use `set -e` so any failed step aborts immediately with a clear exit code.
-    const fullCmd = ['set -e', unattendedEnv, ensurePip, cleanupStaleCheckout, dl, runScript].join('\n');
-
-    // Extras must install into the same venv, from the LOCAL CHECKOUT that
-    // the official install script clones to ~/.hermes/hermes-agent.
-    const extrasCmd = (extrasFlagInner: string) => [
-      'set -e',
-      'HERMES_SRC="$HOME/.hermes/hermes-agent"',
-      'if [ ! -d "$HERMES_SRC" ]; then',
-      '  echo "[extras] FATAL: $HERMES_SRC not found — base install did not clone the repo" >&2',
-      '  exit 50',
-      'fi',
-      'PIP="$HOME/.hermes/venv/bin/pip"',
-      'if [ ! -x "$PIP" ]; then',
-      '  echo "[extras] FATAL: venv pip not found at $PIP" >&2',
-      '  exit 51',
-      'fi',
-      `echo "[extras] installing extras ${extrasFlagInner} from $HERMES_SRC"`,
-      `"$PIP" install --upgrade -e "$HERMES_SRC${extrasFlagInner}"`,
-    ].join('\n');
-
-    // runHermesShell auto-stages large scripts to a temp file, preventing
-    // ENAMETOOLONG on the spawn argv (the install payload is multi-KB and
-    // combined with the Windows PATH it overflows OS limits when inlined).
-    const baseResult = await runHermesShell(fullCmd, { timeout: 600000 }, onOutput);
-    if (!baseResult.success) return baseResult;
-    if (!extrasFlag) {
-      await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }, onOutput).catch(() => undefined);
-      return finalizeInstallVerification(baseResult, onOutput);
-    }
-
-    const extrasResult = await runHermesShell(extrasCmd(extrasFlag), { timeout: 300000 }, onOutput);
-    if (!extrasResult.success) return extrasResult;
-    await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }, onOutput).catch(() => undefined);
-    return finalizeInstallVerification(extrasResult, onOutput);
+    return runOfficialHermesInstall(extras, onOutput, finalizeInstallVerification);
   },
 
   /** Install from a local folder the user already has on disk
@@ -1176,10 +545,6 @@ export const hermesAPI = {
     onOutput?: CommandOutputHandler,
   ): Promise<CommandResult> {
     const platform = await coreAPI.getPlatform();
-    const wantsExtras = !!(extras && extras.length > 0);
-    const extrasFlag = wantsExtras ? `[${extras!.join(',')}]` : '';
-
-    // Resolve the folder path inside the POSIX env (WSL on Windows).
     let posixPath = folderPath;
     if (platform.isWindows) {
       const mounted = toWslMountedPath(folderPath);
@@ -1193,81 +558,7 @@ export const hermesAPI = {
       }
       posixPath = mounted;
     }
-
-    const script = [
-      'set -e',
-      'export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a SUDO_ASKPASS=/bin/false',
-      `SRC="${posixPath}"`,
-      'echo "[local-install] using source folder: $SRC"',
-      'if [ ! -d "$SRC" ]; then',
-      '  echo "[local-install] FATAL: folder does not exist: $SRC" >&2',
-      '  exit 60',
-      'fi',
-      // Heuristic sanity check: must look like a Python package (pyproject.toml or setup.py)
-      'if [ ! -f "$SRC/pyproject.toml" ] && [ ! -f "$SRC/setup.py" ]; then',
-      '  echo "[local-install] FATAL: $SRC does not contain pyproject.toml or setup.py — not a Python package" >&2',
-      '  exit 61',
-      'fi',
-      '',
-      'mkdir -p "$HOME/.hermes"',
-      'VENV="$HOME/.hermes/venv"',
-      'if [ -d "$VENV" ] && [ ! -x "$VENV/bin/pip" ]; then',
-      '  echo "[local-install] existing venv missing pip — recreating"',
-      '  rm -rf "$VENV"',
-      'fi',
-      'if [ ! -x "$VENV/bin/pip" ]; then',
-      '  echo "[local-install] creating venv at $VENV"',
-      '  python3 -m venv "$VENV" || { echo "[local-install] FATAL: failed to create venv" >&2; exit 62; }',
-      'fi',
-      '"$VENV/bin/python" -m pip install --upgrade pip wheel setuptools 2>&1 | tail -5',
-      '',
-      // Mirror the cloned-source layout so update/doctor flows that look in
-      // ~/.hermes/hermes-agent still work. We DON'T copy the user's folder —
-      // we install it editable so they keep working from their checkout.
-      'ln -sfn "$SRC" "$HOME/.hermes/hermes-agent"',
-      '',
-      `echo "[local-install] pip install -e \\"$SRC${extrasFlag}\\""`,
-      `"$VENV/bin/pip" install --upgrade -e "$SRC${extrasFlag}"`,
-      '',
-      'mkdir -p "$HOME/.local/bin"',
-      'if [ -x "$VENV/bin/hermes" ]; then',
-      '  ln -sf "$VENV/bin/hermes" "$HOME/.local/bin/hermes"',
-      '  echo "[local-install] linked $VENV/bin/hermes -> $HOME/.local/bin/hermes"',
-      'else',
-      '  echo "[local-install] WARNING: $VENV/bin/hermes not found after install" >&2',
-      'fi',
-      'echo "[local-install] done."',
-    ].join('\n');
-
-    const result = await runHermesShell(script, { timeout: 600000 }, onOutput);
-    if (!result.success) return result;
-    await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15000 }, onOutput).catch(() => undefined);
-    return finalizeInstallVerification(result, onOutput);
-  },
-
-  /** Alternative: install via git clone + editable pip into the dedicated venv.
-   *  hermes-agent is NOT on PyPI, so we clone from GitHub and install editable. */
-  async installViaPip(): Promise<CommandResult> {
-    const platform = await coreAPI.getPlatform();
-    const script =
-      'set -e; mkdir -p "$HOME/.hermes"; ' +
-      'if [ -d "$HOME/.hermes/venv" ] && [ ! -x "$HOME/.hermes/venv/bin/pip" ]; then rm -rf "$HOME/.hermes/venv"; fi; ' +
-      '[ -x "$HOME/.hermes/venv/bin/pip" ] || python3 -m venv "$HOME/.hermes/venv"; ' +
-      '"$HOME/.hermes/venv/bin/pip" install --upgrade pip wheel setuptools; ' +
-      'HERMES_SRC="$HOME/.hermes/hermes-agent"; ' +
-      'if [ ! -d "$HERMES_SRC/.git" ]; then ' +
-      '  rm -rf "$HERMES_SRC"; ' +
-      '  git clone --depth 1 https://github.com/NousResearch/hermes-agent.git "$HERMES_SRC"; ' +
-      'else ' +
-      '  git -C "$HERMES_SRC" pull --ff-only || true; ' +
-      'fi; ' +
-      '"$HOME/.hermes/venv/bin/pip" install --upgrade -e "$HERMES_SRC"; ' +
-      'mkdir -p "$HOME/.local/bin"; ' +
-      'ln -sf "$HOME/.hermes/venv/bin/hermes" "$HOME/.local/bin/hermes"';
-    const b64 = btoa(unescape(encodeURIComponent(script)));
-    const decode = `echo ${b64} | base64 -d | bash`;
-    const cmd = platform.isWindows ? `wsl bash -lc "${decode}"` : `bash -lc "${decode}"`;
-    return coreAPI.runCommand(cmd, { timeout: 300000 });
+    return runLocalFolderHermesInstall(posixPath, extras, onOutput, finalizeInstallVerification);
   },
 
   /** Run hermes doctor to verify installation */
@@ -1471,15 +762,6 @@ export const hermesAPI = {
     return writeHermesFile(HERMES_ENV, updated.join('\n'), '600');
   },
 
-  /** Remove a key from ~/.hermes/.env */
-  async removeEnvVar(key: string): Promise<{ success: boolean }> {
-    const result = await readHermesFile(HERMES_ENV);
-    if (!result.success || !result.content) return { success: true };
-
-    const lines = result.content.split('\n').filter((line) => !line.trim().startsWith(`${key}=`));
-    return writeHermesFile(HERMES_ENV, lines.join('\n'), '600');
-  },
-
   // ─── Config management (~/.hermes/config.yaml) ────────────
 
   /** Read the current config.yaml */
@@ -1503,10 +785,40 @@ export const hermesAPI = {
 
   // ─── Agent lifecycle ──────────────────────────────────────
 
+  /**
+   * Best-effort shutdown of Hermes gateway and stray `hermes chat` processes
+   * so the next start or seeded persona files are not shadowed by an old
+   * runtime. Safe to call repeatedly.
+   */
+  async stopHermesAgentRuntime(): Promise<{ success: boolean; error?: string }> {
+    if (!isElectron()) return { success: false, error: 'browser-mode' };
+    agentLogs.push({
+      source: 'system',
+      level: 'info',
+      summary: 'Stopping Hermes gateway / stray CLI (best-effort)',
+    });
+    const script = [
+      HERMES_PATH_EXPORT,
+      'if command -v hermes >/dev/null 2>&1; then',
+      '  hermes gateway stop 2>/dev/null || true',
+      'fi',
+      'sleep 2',
+      'pkill -f "hermes chat" 2>/dev/null || true',
+      'sleep 1',
+      'echo "[ronbot] stopHermesAgentRuntime done"',
+    ].join('\n');
+    const r = await runHermesShell(script, {
+      timeout: 35000,
+      displayCommand: 'hermes gateway stop; pkill hermes chat',
+    }).catch(() => ({ success: false, stdout: '', stderr: '', code: 1 } as CommandResult));
+    return { success: r.success !== false };
+  },
+
   /** Start the agent (interactive mode in a terminal).
    *  Decrypts secrets and materializes ~/.hermes/.env (chmod 600) right
    *  before launch, so plaintext secrets only exist on disk while running. */
   async start(): Promise<CommandResult> {
+    await this.stopHermesAgentRuntime().catch(() => undefined);
     agentLogs.push({ source: 'start', level: 'info', summary: 'Starting agent (interactive)…' });
     await materializeHermesEnv();
     const r = await runHermesCli('hermes', { timeout: 10000 });
@@ -1586,18 +898,15 @@ export const hermesAPI = {
     }
 
     const promptB64 = encodeScript(prompt);
-    // Modern Hermes (per docs): `hermes chat -p "..."` for one-shot, with
-    // `--resume <id>` as a top-level flag. Older builds only know `-q` and
-    // accept `chat --resume <id>` — capability probe selects automatically.
+    // Official Hermes CLI: one-shot non-interactive prompts use `hermes chat -q`
+    // / `--query` (see CLI reference). Session resume is a `chat` subcommand
+    // flag: `hermes chat --resume <id> -q "..."`. Do not use `-p` here — `-p`
+    // is the global profile selector, not a prompt flag.
     await ensureHermesChatCaps();
-    const noColorFlag = HERMES_CHAT_CAPS.supportsNoColor ? ' --no-color' : '';
+    const noColorFlag = getHermesChatCaps().supportsNoColor ? ' --no-color' : '';
     const chatInvocation = resumeId
-      ? (HERMES_CHAT_CAPS.supportsModern
-          ? `hermes --resume ${JSON.stringify(resumeId)} chat -p "$PROMPT"${noColorFlag} 2>&1`
-          : `hermes chat --resume ${JSON.stringify(resumeId)} -q "$PROMPT" 2>&1`)
-      : (HERMES_CHAT_CAPS.supportsModern
-          ? `hermes chat -p "$PROMPT"${noColorFlag} 2>&1`
-          : 'hermes chat -q "$PROMPT" 2>&1');
+      ? `hermes chat --resume ${JSON.stringify(resumeId)} -q "$PROMPT"${noColorFlag} 2>&1`
+      : `hermes chat -q "$PROMPT"${noColorFlag} 2>&1`;
     const script = [
       'set -e',
       'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
@@ -1624,7 +933,7 @@ export const hermesAPI = {
       'command -v hermes >/dev/null 2>&1 || { echo "[hermes-diag] FATAL: hermes CLI not found on PATH" >&2; exit 127; }',
       `PROMPT="$(echo ${promptB64} | base64 -d)"`,
       'cd "$HOME/.hermes" 2>/dev/null || true',
-      `echo "[hermes-diag] invocation: ${HERMES_CHAT_CAPS.supportsModern ? 'modern (-p)' : 'legacy (-q)'}" >&2`,
+      'echo "[hermes-diag] invocation: hermes chat -q (official one-shot)" >&2',
       chatInvocation,
     ].join('\n');
 
@@ -1701,23 +1010,12 @@ export const hermesAPI = {
         level: 'warn',
         summary: `Stale resume id ${resumeId} — starting a fresh session`,
       });
-      const freshInvocation = HERMES_CHAT_CAPS.supportsModern
-        ? `hermes chat -p "$PROMPT"${noColorFlag} 2>&1`
-        : 'hermes chat -q "$PROMPT" 2>&1';
+      const freshInvocation = `hermes chat -q "$PROMPT"${noColorFlag} 2>&1`;
       const freshScript = script.replace(chatInvocation, freshInvocation);
       result = await runHermesShell(freshScript, { timeout: effectiveTimeout, onStreamId: wrappedOnStreamId }, interceptingOnOutput);
     }
 
     const timedOut = !result.success && (result.code === 124 || /timed out after/i.test(result.stderr || ''));
-
-    // Clean the reply: strip ANSI codes and any leftover banner/status lines.
-    const stripAnsi = (s: string) =>
-      s
-        .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-        .replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, '')
-        .replace(/\x1b[@-Z\\-_]/g, '');
-
-    const boxChars = /[│┃┆┇┊┋║╎╏╽╿─━┄┅┈┉═╌╍╴╶╸╺▎▏▕▌▐▔▁▂▃▄▅▆▇█╭╮╯╰┌┐└┘├┤┬┴┼╔╗╚╝╠╣╦╩╬]/;
 
     // Pull diagnostic lines out separately so we can show them to the user
     // when there's an error, but keep them out of the normal reply.
@@ -1735,59 +1033,15 @@ export const hermesAPI = {
     // We need this so the next turn can call `hermes chat --resume <id>` and
     // keep the conversation context — without it every turn is a fresh
     // session and the agent has no memory of what we just said.
-    const sessionIdMatch = (result.stdout || '').match(/hermes\s+--resume\s+([A-Za-z0-9_\-:.]+)/);
-    const sessionId = sessionIdMatch?.[1] || (sessionWasInvalid ? null : resumeId);
+    const sessionId = extractSessionId(result.stdout || '', resumeId, sessionWasInvalid);
     const cleaned = (() => {
-      const filtered = rawLines
-        .filter((line) => {
-          const t = line.trim();
-          if (!t) return false;
-          if (boxChars.test(t)) return false;
-          if (/^(hermes agent v|available tools|available skills|session:|tip:|warning:|⚠|✦|⚕|❯)/i.test(t)) return false;
-          if (/^\[hermes(-diag)?\]/.test(t)) return false;
-          if (/^\d+\s+tools\s+·\s+\d+\s+skills/i.test(t)) return false;
-          if (/^\/(exit|help)\b/.test(t)) return false;
-          if (/^query:\s/i.test(t)) return false;
-          if (/^goodbye/i.test(t)) return false;
-          // Strip the lifecycle/footer noise Hermes prints around every reply.
-          if (/^initializing agent\.{0,3}$/i.test(t)) return false;
-          if (/^resume this session( with)?:?$/i.test(t)) return false;
-          if (/^hermes\s+--resume\b/i.test(t)) return false;
-          // "↻ Resumed session 20260421_171422_bdbc76 (3 user messages, 10 total messages)"
-          if (/^[↻⟳⭯⟲]?\s*resumed session\b/i.test(t)) return false;
-          // "▶ Starting new session ..." or similar lifecycle banners
-          if (/^[▶►▷]?\s*starting (a )?new session\b/i.test(t)) return false;
-          if (/^session id:\s/i.test(t)) return false;
-          if (/^duration:\s/i.test(t)) return false;
-          if (/^messages:\s/i.test(t)) return false;
-          if (/^tokens?:\s/i.test(t)) return false;
-          if (/^cost:\s/i.test(t)) return false;
-          if (/^\d+\s+(user|tool calls?|assistant)/i.test(t)) return false;
-          return true;
-        });
+      const filtered = rawLines.filter((line) => !isBannerLine(line));
 
       // Hermes sometimes echoes the user's prompt at the start of the reply
       // (often wrapped/indented, sometimes only the tail). Detect and remove
       // any leading lines that are a substring of, or fully contained within,
       // the original prompt.
-      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-      const promptNorm = norm(prompt);
-      const promptWords = promptNorm.split(' ').filter(Boolean);
-      const isEchoLine = (line: string) => {
-        const ln = norm(line);
-        if (!ln) return false;
-        if (ln.length < 4) return false;
-        // Whole line is contained in the prompt.
-        if (promptNorm.includes(ln)) return true;
-        // Or the line is a tail/head of the prompt (≥3 consecutive words match).
-        const lnWords = ln.split(' ').filter(Boolean);
-        if (lnWords.length >= 3) {
-          const joined = lnWords.join(' ');
-          if (promptNorm.endsWith(joined) || promptNorm.startsWith(joined)) return true;
-        }
-        return false;
-      };
-      while (filtered.length > 0 && isEchoLine(filtered[0])) {
+      while (filtered.length > 0 && isEchoLine(filtered[0], prompt)) {
         filtered.shift();
       }
 
@@ -1797,10 +1051,7 @@ export const hermesAPI = {
     // Detect Hermes's "no inference provider" / "missing API key" error so the
     // UI can render an actionable CTA → Secrets tab.
     let missingKey: { provider: string; envVar: string } | undefined;
-    const hardErrorRe = /missing api key|api key.*not (set|found)|invalid api key|unauthorized.*api key|401.*unauthorized/i;
-    const noProviderRe = /no inference provider configured/i;
-
-    if (hardErrorRe.test(cleaned) || noProviderRe.test(cleaned)) {
+    if (classifyChatError(cleaned) !== 'other') {
       const cfg = await readHermesFile(HERMES_CONFIG);
       const modelLine = cfg.success ? cfg.content?.match(/^\s*model:\s*(.+)\s*$/m)?.[1]?.trim() ?? '' : '';
       const provider = modelLine.split('/')[0]?.toLowerCase() ?? '';
@@ -1898,27 +1149,15 @@ export const hermesAPI = {
   async setAgentName(name: string): Promise<{ success: boolean }> {
     const trimmed = (name || '').trim();
     if (!trimmed) return { success: false };
-    const soul = `# ${trimmed}
-
-You are ${trimmed}, the user's personal AI agent.
-
-Your name is **${trimmed}**. When the user asks who you are or what your name is,
-respond as ${trimmed} — not as "Hermes" or "an AI assistant". You were set up by
-the user with this name during installation, and they expect you to use it.
-
-You are still powered by the Hermes Agent framework (built by Nous Research)
-and have full access to its tools, skills, and memory — but your identity to
-the user is **${trimmed}**.
-`;
+    const soul = buildDefaultSoulMarkdown(trimmed);
     return writeHermesFile('$HOME/.hermes/SOUL.md', soul, '600');
   },
 
-  /** Read the agent's name from SOUL.md (first H1), if any. */
+  /** Read the agent's display name from SOUL.md (Ronbot template or legacy H1). */
   async getAgentName(): Promise<string | null> {
     const r = await readHermesFile('$HOME/.hermes/SOUL.md');
     if (!r.success || !r.content) return null;
-    const m = r.content.match(/^#\s+(.+?)\s*$/m);
-    return m ? m[1].trim() : null;
+    return parseAgentDisplayNameFromSoul(r.content);
   },
 
   /** Write initial config for first-time setup.
@@ -1979,135 +1218,7 @@ model: ${options.model || 'openrouter/auto'}
     skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string; requiredSecrets?: string[] }>;
     error?: string;
   }> {
-    if (listSkillsCache && Date.now() - listSkillsCache.at < LIST_SKILLS_CACHE_TTL_MS) {
-      return {
-        success: listSkillsCache.value.success,
-        skills: listSkillsCache.value.skills.map((s) => ({ ...s })),
-        error: listSkillsCache.value.error,
-      };
-    }
-    const script = [
-      'set +e',
-      'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
-      // Locations to scan. The bundled skills dir lives inside the venv's
-      // site-packages — find it dynamically because the python version varies.
-      'USER_SKILLS="$HOME/.hermes/skills"',
-      'BUNDLED_SKILLS=""',
-      'if [ -x "$HOME/.hermes/venv/bin/python" ]; then',
-      '  BUNDLED_SKILLS="$($HOME/.hermes/venv/bin/python - <<PYEOF 2>/dev/null',
-      'import importlib.util, os, sys',
-      'for mod in ("hermes_agent", "hermes"):',
-      '    spec = importlib.util.find_spec(mod)',
-      '    if spec and spec.submodule_search_locations:',
-      '        for loc in spec.submodule_search_locations:',
-      '            cand = os.path.join(loc, "skills")',
-      '            if os.path.isdir(cand):',
-      '                print(cand); sys.exit(0)',
-      'PYEOF',
-      '  )"',
-      'fi',
-      // Walk both trees, max depth 2, emit "SOURCE\tCATEGORY\tNAME\tDESC_PATH"
-      'walk_skills() {',
-      '  local root="$1" source="$2"',
-      '  [ -d "$root" ] || return 0',
-      '  for entry in "$root"/*; do',
-      '    [ -d "$entry" ] || continue',
-      '    name="$(basename "$entry")"',
-      '    # If this dir itself contains a SKILL.md or a python module, treat it as a skill (flat layout).',
-      '    if [ -f "$entry/SKILL.md" ] || [ -f "$entry/skill.md" ] || [ -f "$entry/__init__.py" ] || [ -f "$entry/skill.yaml" ]; then',
-      '      desc=""',
-      '      for d in "$entry/SKILL.md" "$entry/skill.md"; do',
-      '        if [ -f "$d" ]; then desc="$d"; break; fi',
-      '      done',
-      '      printf "%s\\t%s\\t%s\\t%s\\n" "$source" "general" "$name" "$desc"',
-      '      continue',
-      '    fi',
-      '    # Otherwise treat this dir as a category and descend one level.',
-      '    for sub in "$entry"/*; do',
-      '      [ -d "$sub" ] || continue',
-      '      sub_name="$(basename "$sub")"',
-      '      desc=""',
-      '      for d in "$sub/SKILL.md" "$sub/skill.md"; do',
-      '        if [ -f "$d" ]; then desc="$d"; break; fi',
-      '      done',
-      '      printf "%s\\t%s\\t%s\\t%s\\n" "$source" "$name" "$sub_name" "$desc"',
-      '    done',
-      '  done',
-      '}',
-      'walk_skills "$USER_SKILLS" user',
-      'if [ -n "$BUNDLED_SKILLS" ]; then walk_skills "$BUNDLED_SKILLS" bundled; fi',
-      'exit 0',
-    ].join('\n');
-
-    const result = await runHermesShell(script, { timeout: 30000 });
-    if (!result.success && !result.stdout) {
-      return { success: false, skills: [], error: result.stderr || 'Failed to list skills' };
-    }
-
-    const seen = new Set<string>();
-    const skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string; requiredSecrets?: string[] }> = [];
-    const descPaths: Array<{ key: string; path: string }> = [];
-
-    for (const line of (result.stdout || '').split('\n')) {
-      const parts = line.split('\t');
-      if (parts.length < 3) continue;
-      const [source, category, name, descPath] = parts;
-      if (!name) continue;
-      const key = `${category}/${name}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const skill = {
-        name,
-        category: category || 'general',
-        source: (source === 'user' ? 'user' : 'bundled') as 'user' | 'bundled',
-      };
-      skills.push(skill);
-      if (descPath) descPaths.push({ key, path: descPath });
-    }
-
-    // Pull the first non-empty markdown line as a short description AND extract
-    // any UPPER_SNAKE_CASE env-var names mentioned in the SKILL.md so we can
-    // tell users exactly what secrets each skill needs.
-    if (descPaths.length > 0) {
-      const descScript = descPaths
-        .map(({ key, path }) =>
-          `printf "DESC\\t%s\\t" "${key}"; head -n 20 "${path}" 2>/dev/null | grep -m1 -E "^[A-Za-z]" | head -c 200; printf "\\n"; ` +
-          `printf "ENV\\t%s\\t" "${key}"; cat "${path}" 2>/dev/null | grep -oE "[A-Z][A-Z0-9_]{3,}_(API_KEY|TOKEN|SECRET|PASSWORD|HOST|USER|PASS|ID|URL|BEARER_TOKEN|ACCESS_TOKEN|CLIENT_ID|CLIENT_SECRET|VERIFY_TOKEN|PHONE_NUMBER_ID)" | sort -u | tr "\\n" "," | head -c 500; printf "\\n"`,
-        )
-        .join('\n');
-      const descResult = await runHermesShell(descScript, { timeout: 20000 });
-      const descMap = new Map<string, string>();
-      const envMap = new Map<string, string[]>();
-      for (const line of (descResult.stdout || '').split('\n')) {
-        const parts = line.split('\t');
-        if (parts.length < 3) continue;
-        const [tag, key, ...rest] = parts;
-        const value = rest.join('\t').trim();
-        if (tag === 'DESC' && value) descMap.set(key, value);
-        if (tag === 'ENV' && value) {
-          const vars = value.split(',').map((s) => s.trim()).filter(Boolean);
-          if (vars.length) envMap.set(key, Array.from(new Set(vars)));
-        }
-      }
-      for (const skill of skills) {
-        const k = `${skill.category}/${skill.name}`;
-        const d = descMap.get(k);
-        if (d) skill.description = d;
-        const e = envMap.get(k);
-        if (e && e.length) skill.requiredSecrets = e;
-      }
-    }
-
-    skills.sort((a, b) =>
-      a.category.localeCompare(b.category) || a.name.localeCompare(b.name),
-    );
-    const finalResult = { success: true, skills } as {
-      success: boolean;
-      skills: Array<{ name: string; category: string; source: 'user' | 'bundled'; description?: string; requiredSecrets?: string[] }>;
-      error?: string;
-    };
-    listSkillsCache = { at: Date.now(), value: finalResult };
-    return finalResult;
+    return fetchInstalledSkillsList();
   },
 
   /** Read the `skills:` block from config.yaml and return enabled/disabled lists. */
@@ -2262,177 +1373,14 @@ model: ${options.model || 'openrouter/auto'}
       };
     }
 
-    const lines = (result.stdout || '').split('\n');
-    const tsRe = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})(?:[,.](\d{1,3}))?/;
-    const parseTs = (line: string): number | null => {
-      const m = line.match(tsRe);
-      if (!m) return null;
-      const ms = m[2] ? parseInt(m[2].padEnd(3, '0'), 10) : 0;
-      const t = Date.parse(m[1].replace(' ', 'T'));
-      return Number.isNaN(t) ? null : t + ms;
-    };
-
-    type Pending = { id: string; goal: string; startedAt: number; lastActivity?: number; lastEvent?: string };
-    type Done = { id: string; goal: string; startedAt: number; completedAt: number; summary?: string };
-    type Failed = { id: string; goal: string; startedAt: number; failedAt: number; reason?: string };
-
-    const pending: Pending[] = [];
-    const completed: Done[] = [];
-    const failed: Failed[] = [];
-    let lastDelegateGoal: string | null = null;
-
-    const goalFromLine = (line: string): string | null => {
-      const patterns = [
-        /goal\s*[:=]\s*"([^"]{1,400})"/,
-        /goal\s*[:=]\s*'([^']{1,400})'/,
-        /"task"\s*:\s*"([^"]{1,400})"/,
-        /preview\s*=\s*"([^"]{1,400})"/,
-        /task\s*[:=]\s*"([^"]{1,400})"/,
-        /spawned\s+(?:sub[-_ ]?agent|child\s+agent)\s+(?:for\s+)?["']?([^"'\n]{4,200})/i,
-      ];
-      for (const re of patterns) {
-        const m = line.match(re);
-        if (m) return m[1];
-      }
-      return null;
-    };
-
-    // Broadened classifiers — match the variety of phrasings Hermes (and
-    // its versions / forks) use. We accept anything that looks like a
-    // delegated/child agent lifecycle event.
-    const isDelegate = (l: string) => /\bdelegate_task\b|\bdelegate\(.*task/i.test(l);
-    const isStart = (l: string) =>
-      /\bsub[-_]?agent\.start\b/i.test(l) ||
-      /\bworker\.start\b/i.test(l) ||
-      /\bchild[-_ ]?agent\b.*\b(started|spawn(ed)?|launch(ed)?)\b/i.test(l) ||
-      /\bspawn(ed)?\s+(sub[-_ ]?agent|child\s+agent|worker)\b/i.test(l) ||
-      /\b(task|delegation)\b.*\bstarted\b/i.test(l);
-    const isComplete = (l: string) =>
-      /\bsub[-_]?agent\.complete\b/i.test(l) ||
-      /\bworker\.complete\b/i.test(l) ||
-      /\bchild[-_ ]?agent\b.*\b(complete|finish(ed)?|done)\b/i.test(l) ||
-      /\b(task|delegation)\b.*\bcompleted\b/i.test(l);
-    const isFailed = (l: string) =>
-      /\bsub[-_]?agent\.(failed|error|denied)\b/i.test(l) ||
-      /\bworker\.failed\b/i.test(l) ||
-      /\b(task|delegation)\b.*\b(failed|denied|errored)\b/i.test(l) ||
-      /\bchild[-_ ]?agent\b.*\b(failed|denied|crashed)\b/i.test(l);
-    const isHeartbeat = (l: string) =>
-      /\bsub[-_]?agent\.(thinking|tool|progress)\b/i.test(l) ||
-      /\bworker\.(thinking|tool|progress)\b/i.test(l);
-
-    const reasonFromLine = (line: string): string | undefined => {
-      const m =
-        line.match(/(?:reason|error|denied)\s*[:=]\s*"([^"]{1,300})"/i) ||
-        line.match(/(?:reason|error|denied)\s*[:=]\s*'([^']{1,300})'/i) ||
-        line.match(/permission denied[:\s]*([^\n]{1,200})/i);
-      return m ? m[1] : undefined;
-    };
-
-    for (const line of lines) {
-      if (!line) continue;
-      const ts = parseTs(line);
-
-      if (isDelegate(line)) {
-        const g = goalFromLine(line);
-        if (g) lastDelegateGoal = g;
-      }
-
-      if (isStart(line) && ts !== null) {
-        const goal = goalFromLine(line) || lastDelegateGoal || '(no goal recorded)';
-        const id = `${ts}-${goal.slice(0, 40)}`;
-        pending.push({ id, goal, startedAt: ts, lastActivity: ts, lastEvent: 'started' });
-        lastDelegateGoal = null;
-        continue;
-      }
-
-      if (isComplete(line) && ts !== null && pending.length > 0) {
-        const open = pending.shift()!;
-        const summary = goalFromLine(line) || undefined;
-        completed.push({
-          id: open.id,
-          goal: open.goal,
-          startedAt: open.startedAt,
-          completedAt: ts,
-          summary,
-        });
-        continue;
-      }
-
-      if (isFailed(line) && ts !== null) {
-        const reason = reasonFromLine(line);
-        const open = pending.shift();
-        if (open) {
-          failed.push({
-            id: open.id,
-            goal: open.goal,
-            startedAt: open.startedAt,
-            failedAt: ts,
-            reason,
-          });
-        } else {
-          // Failure without a paired start (denied at spawn time).
-          const goal = goalFromLine(line) || lastDelegateGoal || '(no goal recorded)';
-          failed.push({
-            id: `${ts}-fail-${goal.slice(0, 40)}`,
-            goal,
-            startedAt: ts,
-            failedAt: ts,
-            reason,
-          });
-          lastDelegateGoal = null;
-        }
-        continue;
-      }
-
-      if (isHeartbeat(line) && ts !== null && pending.length > 0) {
-        const last = pending[pending.length - 1];
-        last.lastActivity = ts;
-        if (/thinking/i.test(line)) last.lastEvent = 'thinking';
-        else if (/tool/i.test(line)) last.lastEvent = 'using a tool';
-        else last.lastEvent = 'working';
-      }
-    }
-
-    const STALE_AFTER_MS = 60 * 60 * 1000;
-    const now = Date.now();
-    const stillActive = pending.filter(
-      (p) => now - (p.lastActivity ?? p.startedAt) < STALE_AFTER_MS,
-    );
-
-    const toIso = (t: number) => new Date(t).toISOString();
+    const parsed = parseSubAgentLog((result.stdout || '').split('\n'));
 
     return {
       success: true,
       logPath: '~/.hermes/logs/agent.log',
-      active: stillActive.map((p) => ({
-        id: p.id,
-        goal: p.goal,
-        startedAt: toIso(p.startedAt),
-        lastActivity: p.lastActivity ? toIso(p.lastActivity) : undefined,
-        lastEvent: p.lastEvent,
-      })),
-      recent: completed
-        .sort((a, b) => b.completedAt - a.completedAt)
-        .slice(0, 25)
-        .map((c) => ({
-          id: c.id,
-          goal: c.goal,
-          startedAt: toIso(c.startedAt),
-          completedAt: toIso(c.completedAt),
-          durationMs: c.completedAt - c.startedAt,
-          summary: c.summary,
-        })),
-      failed: failed
-        .sort((a, b) => b.failedAt - a.failedAt)
-        .slice(0, 25)
-        .map((f) => ({
-          id: f.id,
-          goal: f.goal,
-          startedAt: toIso(f.startedAt),
-          failedAt: toIso(f.failedAt),
-          reason: f.reason,
-        })),
+      active: parsed.active,
+      recent: parsed.recent,
+      failed: parsed.failed,
     };
   },
 
@@ -2456,7 +1404,7 @@ model: ${options.model || 'openrouter/auto'}
       // Also surgically strip any legacy `enabled:` / `allow_network:` /
       // `tool_allowlist:` lines that might be sitting outside our managed
       // block (left over from an older config).
-      let cleaned = existing
+      const cleaned = existing
         .replace(/^\s*enabled:\s*true\s*$/gim, '')
         .replace(/^\s*allow_network:\s*true\s*$/gim, '')
         .replace(/^\s*tool_allowlist:[\s\S]*?(?=\n\S|\n#|$)/gim, '');
@@ -3150,6 +2098,7 @@ model: ${options.model || 'openrouter/auto'}
    */
   async restartAgent(): Promise<{ success: boolean; error?: string }> {
     if (!isElectron()) return { success: false, error: 'Desktop only' };
+    await this.stopHermesAgentRuntime().catch(() => undefined);
     // Official restart for the long-lived service.
     await runHermesCli('hermes gateway restart 2>&1', { timeout: 30000 }).catch(() => undefined);
     // Drop any stuck streaming chat process so the next turn picks up a
@@ -3218,126 +2167,49 @@ model: ${options.model || 'openrouter/auto'}
     if (body.includes(RONBOT_APP_GUIDE_VERSION)) return { success: true };
     return writeHermesFile(path, RONBOT_APP_GUIDE, '600');
   },
-};
 
-/* ─────────────────────  CLI text-output parsers  ───────────────────── */
+  /**
+   * Short Electron UI primer under ~/.hermes/ (next to SOUL / AGENTS).
+   * Idempotent when the version header matches.
+   */
+  async writeElectronAppGuide(): Promise<{ success: boolean; error?: string }> {
+    if (!isElectron()) return { success: false, error: 'browser-mode' };
+    const path = '$HOME/.hermes/ELECTRON_APP_GUIDE.md';
+    const existing = await readHermesFile(path).catch(
+      () => ({ success: false, content: '' }),
+    );
+    const body = existing.success && existing.content ? existing.content : '';
+    if (body.includes(RONBOT_ELECTRON_APP_GUIDE_VERSION)) return { success: true };
+    return writeHermesFile(path, RONBOT_ELECTRON_APP_GUIDE, '600');
+  },
 
-/** `hermes cron list` parser. Tolerates header rows, ANSI, and reordered cols. */
-export const parseCronListOutput = (
-  text: string,
-): Array<{ id: string; description: string; schedule?: string; nextRun?: string; recurring?: boolean; enabled?: boolean }> => {
-  const out: Array<{ id: string; description: string; schedule?: string; nextRun?: string; recurring?: boolean; enabled?: boolean }> = [];
-  const ansi = /\x1b\[[0-9;]*m/g;
-  const lines = text.split('\n').map((l) => l.replace(ansi, ''));
-  let headerCols: string[] | null = null;
-  for (const raw of lines) {
-    const line = raw.trimEnd();
-    if (!line.trim()) continue;
-    if (/^\s*(no\s+(scheduled\s+)?(cron\s+)?jobs|nothing scheduled)/i.test(line)) {
-      return [];
+  /**
+   * After a successful Hermes install: back up any existing persona files,
+   * write Ronbot defaults (SOUL, PERSONALITY, MEMORY, USER), then refresh
+   * AGENTS / app guides.
+   */
+  async seedRonbotPersonalityAfterInstall(agentName: string): Promise<{
+    success: boolean;
+    backupDir?: string;
+    filesMoved?: number;
+    error?: string;
+  }> {
+    if (!isElectron()) return { success: false, error: 'browser-mode' };
+    const backup = await backupHermesPersonalityToTimestampedFolder();
+    if (!backup.success) {
+      return { success: false, error: backup.error || 'Personality backup failed' };
     }
-    if (!headerCols && /\bid\b/i.test(line) && /\bschedule\b/i.test(line)) {
-      headerCols = line.trim().split(/\s{2,}/).map((c) => c.toLowerCase());
-      continue;
+    const wrote = await writeRonbotDefaultPersonalityFiles(agentName);
+    if (!wrote.success) {
+      return { success: false, error: wrote.error || 'Writing default persona files failed' };
     }
-    if (/^[-=─]{3,}/.test(line.trim())) continue;
-    const parts = line.trim().split(/\s{2,}/);
-    if (parts.length < 2) continue;
-    let id = parts[0];
-    let schedule: string | undefined;
-    let nextRun: string | undefined;
-    let description = '';
-    if (headerCols && parts.length >= headerCols.length) {
-      const map: Record<string, string> = {};
-      headerCols.forEach((col, i) => { map[col] = parts[i] ?? ''; });
-      id = map['id'] || id;
-      schedule = map['schedule'] || map['cron'] || undefined;
-      nextRun = map['next run'] || map['next'] || map['next_run'] || undefined;
-      description = map['prompt'] || map['task'] || map['description'] || map['name'] || parts[parts.length - 1];
-    } else {
-      schedule = parts[1];
-      nextRun = parts.length >= 4 ? parts[2] : undefined;
-      description = parts.slice(parts.length >= 4 ? 3 : 2).join(' ');
-    }
-    if (!id || /^id$/i.test(id)) continue;
-    const recurring = !!schedule && /[\s*/]/.test(schedule) && !/^\d{4}-\d{2}-\d{2}/.test(schedule);
-    out.push({
-      id,
-      description: (description || '(no description)').trim(),
-      schedule: schedule?.trim(),
-      nextRun: nextRun?.trim(),
-      recurring,
-    });
-  }
-  return out;
-};
-
-/** `hermes profile list` parser. Active profile usually marked with `*`. */
-export const parseProfileListOutput = (
-  text: string,
-): Array<{ name: string; active?: boolean }> => {
-  const ansi = /\x1b\[[0-9;]*m/g;
-  const out: Array<{ name: string; active?: boolean }> = [];
-  const seen = new Set<string>();
-  for (const raw of text.split('\n')) {
-    const line = raw.replace(ansi, '').trim();
-    if (!line) continue;
-    if (/^(profiles?|name|---|===)/i.test(line)) continue;
-    const m = line.match(/^(\*?)\s*([A-Za-z0-9_.-]+)\b/);
-    if (!m) continue;
-    const name = m[2];
-    if (seen.has(name)) continue;
-    seen.add(name);
-    out.push({ name, active: !!m[1] || /\(active\)/i.test(line) });
-  }
-  return out;
-};
-
-/** `hermes plugins list` parser. */
-export const parsePluginsListOutput = (
-  text: string,
-): Array<{ name: string; enabled?: boolean; description?: string }> => {
-  const ansi = /\x1b\[[0-9;]*m/g;
-  const out: Array<{ name: string; enabled?: boolean; description?: string }> = [];
-  for (const raw of text.split('\n')) {
-    const line = raw.replace(ansi, '').trim();
-    if (!line) continue;
-    if (/^(plugins?|name|---|===)/i.test(line)) continue;
-    if (/^no\s+plugins/i.test(line)) return [];
-    const parts = line.split(/\s{2,}/);
-    const name = parts[0]?.replace(/^[*•]\s*/, '');
-    if (!name || !/^[A-Za-z0-9_.@/-]+$/.test(name)) continue;
-    const rest = parts.slice(1).join(' ');
-    let enabled: boolean | undefined;
-    if (/\b(enabled|on)\b/i.test(rest)) enabled = true;
-    else if (/\b(disabled|off)\b/i.test(rest)) enabled = false;
-    out.push({ name, enabled, description: rest || undefined });
-  }
-  return out;
-};
-
-/** `hermes insights` text-output parser. Matches "Tokens in: 12,345" style. */
-export const parseInsightsOutput = (
-  text: string,
-): {
-  sessionsLast7d?: number;
-  messagesLast7d?: number;
-  tokensIn?: number;
-  tokensOut?: number;
-  costUsd?: number;
-} => {
-  const stripped = text.replace(/\x1b\[[0-9;]*m/g, '');
-  const num = (re: RegExp): number | undefined => {
-    const m = stripped.match(re);
-    if (!m) return undefined;
-    const v = parseFloat(m[1].replace(/[, ]/g, ''));
-    return Number.isFinite(v) ? v : undefined;
-  };
-  return {
-    sessionsLast7d: num(/sessions[^\d-]*([\d,]+)/i),
-    messagesLast7d: num(/messages[^\d-]*([\d,]+)/i),
-    tokensIn: num(/(?:tokens?\s*(?:in|input)|input\s*tokens?)[^\d-]*([\d,]+)/i),
-    tokensOut: num(/(?:tokens?\s*(?:out|output)|output\s*tokens?)[^\d-]*([\d,]+)/i),
-    costUsd: num(/(?:cost|total\s*cost|spend)[^\d-]*\$?\s*([\d,.]+)/i),
-  };
+    await this.writeElectronAppGuide().catch(() => undefined);
+    await this.writeRonbotAgentRules().catch(() => undefined);
+    await this.writeRonbotAppGuide().catch(() => undefined);
+    return {
+      success: true,
+      backupDir: backup.backupDir,
+      filesMoved: backup.movedCount,
+    };
+  },
 };

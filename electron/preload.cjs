@@ -1,71 +1,53 @@
+const path = require('path');
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('electronAPI', {
-  // Run a shell command and get stdout/stderr
-  runCommand: (cmd, options) => ipcRenderer.invoke('run-command', cmd, options),
+const IPC = require(path.join(__dirname, 'ipc', 'channels.cjs'));
 
-  // Run a command with streaming output via callback
+contextBridge.exposeInMainWorld('electronAPI', {
+  runCommand: (cmd, options) => ipcRenderer.invoke(IPC.RUN_COMMAND, cmd, options),
+
   runCommandStream: (cmd, options) => {
     const id = Date.now().toString();
-    const promise = ipcRenderer.invoke('run-command-stream', cmd, { ...options, streamId: id });
+    const promise = ipcRenderer.invoke(IPC.RUN_COMMAND_STREAM, cmd, { ...options, streamId: id });
     return { id, promise };
   },
 
-  // Listen for streaming output
   onCommandOutput: (callback) => {
     const handler = (_event, data) => callback(data);
-    ipcRenderer.on('command-output', handler);
-    return () => ipcRenderer.removeListener('command-output', handler);
+    ipcRenderer.on(IPC.COMMAND_OUTPUT, handler);
+    return () => ipcRenderer.removeListener(IPC.COMMAND_OUTPUT, handler);
   },
 
-  // Kill an in-flight streamed command (used by chat "Stop")
-  killStream: (streamId) => ipcRenderer.invoke('kill-stream', streamId),
+  killStream: (streamId) => ipcRenderer.invoke(IPC.KILL_STREAM, streamId),
 
-  // Write a chunk of data to the stdin of a running streamed command.
-  // Used by the Permissions approval dialog to answer Hermes' interactive
-  // [o]nce / [s]ession / [a]lways / [d]eny prompts.
-  writeStreamStdin: (streamId, data) => ipcRenderer.invoke('write-stream-stdin', streamId, data),
+  writeStreamStdin: (streamId, data) => ipcRenderer.invoke(IPC.WRITE_STREAM_STDIN, streamId, data),
 
-  // Background mode + tray
-  setRunInBackground: (enabled) => ipcRenderer.invoke('set-run-in-background', enabled),
-  setAgentRunningState: (running) => ipcRenderer.invoke('set-agent-running-state', running),
-  quitApp: () => ipcRenderer.invoke('quit-app'),
+  setRunInBackground: (enabled) => ipcRenderer.invoke(IPC.SET_RUN_IN_BACKGROUND, enabled),
+  setAgentRunningState: (running) => ipcRenderer.invoke(IPC.SET_AGENT_RUNNING_STATE, running),
+  quitApp: () => ipcRenderer.invoke(IPC.QUIT_APP),
 
-  // Platform detection
-  getPlatform: () => ipcRenderer.invoke('get-platform'),
+  getPlatform: () => ipcRenderer.invoke(IPC.GET_PLATFORM),
 
-  // File system operations
-  fileExists: (filePath) => ipcRenderer.invoke('file-exists', filePath),
-  readFile: (filePath) => ipcRenderer.invoke('read-file', filePath),
-  writeFile: (filePath, content, options) => ipcRenderer.invoke('write-file', filePath, content, options),
-  mkdir: (dirPath) => ipcRenderer.invoke('mkdir', dirPath),
+  fileExists: (filePath) => ipcRenderer.invoke(IPC.FILE_EXISTS, filePath),
+  readFile: (filePath) => ipcRenderer.invoke(IPC.READ_FILE, filePath),
+  writeFile: (filePath, content, options) => ipcRenderer.invoke(IPC.WRITE_FILE, filePath, content, options),
+  mkdir: (dirPath) => ipcRenderer.invoke(IPC.MKDIR, dirPath),
 
-  // Disk space on the drive holding the user's home directory
-  getDiskSpace: () => ipcRenderer.invoke('get-disk-space'),
+  getDiskSpace: () => ipcRenderer.invoke(IPC.GET_DISK_SPACE),
 
-  // Open or highlight a path in the OS file manager (Finder/Explorer/Nautilus)
-  revealInFolder: (targetPath) => ipcRenderer.invoke('reveal-in-folder', targetPath),
+  selectFolder: (options) => ipcRenderer.invoke(IPC.SELECT_FOLDER, options),
 
-  // Open native folder picker (macOS/Windows/Linux). Returns the chosen
-  // absolute path (collapsed to ~ when under $HOME) or { canceled: true }.
-  selectFolder: (options) => ipcRenderer.invoke('select-folder', options),
+  secretsBackend: () => ipcRenderer.invoke(IPC.SECRETS_BACKEND),
+  secretsList: () => ipcRenderer.invoke(IPC.SECRETS_LIST),
+  secretsGet: (key) => ipcRenderer.invoke(IPC.SECRETS_GET, key),
+  secretsSet: (key, value) => ipcRenderer.invoke(IPC.SECRETS_SET, key, value),
+  secretsDelete: (key) => ipcRenderer.invoke(IPC.SECRETS_DELETE, key),
 
-  // Secure secrets storage (OS keychain → safeStorage → plaintext fallback)
-  secretsBackend: () => ipcRenderer.invoke('secrets-backend'),
-  secretsList: () => ipcRenderer.invoke('secrets-list'),
-  secretsGet: (key) => ipcRenderer.invoke('secrets-get', key),
-  secretsSet: (key, value) => ipcRenderer.invoke('secrets-set', key, value),
-  secretsDelete: (key) => ipcRenderer.invoke('secrets-delete', key),
-  secretsMaterializeEnv: (envPath) => ipcRenderer.invoke('secrets-materialize-env', envPath),
-  secretsMigrateFromEnv: (envPath) => ipcRenderer.invoke('secrets-migrate-from-env', envPath),
-
-  // Listen for agent running state changes from tray menu
   onAgentRunningChanged: (callback) => {
     const handler = (_event, running) => callback(running);
-    ipcRenderer.on('agent-running-changed', handler);
-    return () => ipcRenderer.removeListener('agent-running-changed', handler);
+    ipcRenderer.on(IPC.AGENT_RUNNING_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.AGENT_RUNNING_CHANGED, handler);
   },
 
-  // Check if running in Electron
   isElectron: true,
 });

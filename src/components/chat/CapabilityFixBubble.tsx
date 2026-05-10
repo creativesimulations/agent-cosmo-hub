@@ -1,11 +1,10 @@
-import { useState } from "react";
 import { Wrench, KeyRound, Puzzle, ShieldAlert, CheckCircle2, AlertTriangle, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCapabilities } from "@/contexts/CapabilitiesContext";
 import { useSettings } from "@/contexts/SettingsContext";
+import { useChat } from "@/contexts/ChatContext";
 import type { ToolUnavailableHit } from "@/lib/toolUnavailable";
 import { cn } from "@/lib/utils";
-import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 
 /**
  * REACTIVE capability fix bubble — replaces the previous generic
@@ -23,7 +22,7 @@ import BrowserSetupDialog from "@/components/skills/BrowserSetupDialog";
 const CapabilityFixBubble = ({ hit }: { hit: ToolUnavailableHit }) => {
   const { registry, policy, setPolicy, readinessFor } = useCapabilities();
   const { settings } = useSettings();
-  const [browserOpen, setBrowserOpen] = useState(false);
+  const { setDraft } = useChat();
   // toolUnavailable.capability ids: "browser" → "webBrowser", "webSearch" → "webSearch"
   const idMap: Record<string, string> = {
     browser: "webBrowser",
@@ -110,10 +109,14 @@ const CapabilityFixBubble = ({ hit }: { hit: ToolUnavailableHit }) => {
           </div>
           <Button
             size="sm"
-            onClick={() => setBrowserOpen(true)}
+            onClick={() =>
+              setDraft(
+                "Please set up browser automation for me. Ask which backend I prefer and configure it step by step.",
+              )
+            }
             className="gradient-primary text-primary-foreground shrink-0 h-7"
           >
-            Set up browser
+            Ask agent to set up
           </Button>
         </div>
       )}
@@ -171,9 +174,6 @@ const CapabilityFixBubble = ({ hit }: { hit: ToolUnavailableHit }) => {
         </div>
       )}
     </div>
-    {isBrowser && (
-      <BrowserSetupDialog open={browserOpen} onOpenChange={setBrowserOpen} />
-    )}
     </>
   );
 };

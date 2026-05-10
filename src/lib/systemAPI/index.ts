@@ -72,6 +72,7 @@ export const systemAPI = {
   writeConfig: hermesAPI.writeConfig.bind(hermesAPI),
   setModel: hermesAPI.setModel.bind(hermesAPI),
   startAgent: hermesAPI.start.bind(hermesAPI),
+  stopHermesAgentRuntime: hermesAPI.stopHermesAgentRuntime.bind(hermesAPI),
   chatAgent: hermesAPI.chat.bind(hermesAPI),
   writeInitialConfig: hermesAPI.writeInitialConfig.bind(hermesAPI),
   setAgentName: hermesAPI.setAgentName.bind(hermesAPI),
@@ -112,6 +113,8 @@ export const systemAPI = {
   restartAgent: hermesAPI.restartAgent.bind(hermesAPI),
   writeRonbotAgentRules: hermesAPI.writeRonbotAgentRules.bind(hermesAPI),
   writeRonbotAppGuide: hermesAPI.writeRonbotAppGuide.bind(hermesAPI),
+  writeElectronAppGuide: hermesAPI.writeElectronAppGuide.bind(hermesAPI),
+  seedRonbotPersonalityAfterInstall: hermesAPI.seedRonbotPersonalityAfterInstall.bind(hermesAPI),
   // Prereqs (extras)
   checkRipgrep: prereqAPI.checkRipgrep.bind(prereqAPI),
   installRipgrep: prereqAPI.installRipgrep.bind(prereqAPI),

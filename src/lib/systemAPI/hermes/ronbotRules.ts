@@ -1,10 +1,27 @@
 /**
- * Static markdown content the agent reads from disk:
+ * Static markdown the agent reads from disk (written by `hermes.ts`):
  *   - RONBOT_RULES_BLOCK   → injected into ~/.hermes/AGENTS.md
  *   - RONBOT_APP_GUIDE     → written to ~/.ronbot/APP_GUIDE.md
+ *   - RONBOT_ELECTRON_APP_GUIDE → ~/.hermes/ELECTRON_APP_GUIDE.md (short index)
  *
- * Pulled out of `hermes.ts` so the parent module stays focused on shell
- * orchestration. No runtime behavior — just strings + a version marker.
+ * ## Hermes alignment (official)
+ *
+ * Hermes loads conversation context from the agent workspace (typically
+ * `~/.hermes/`): `AGENTS.md`, `SOUL.md`, `.cursorrules`, memory files, skills,
+ * etc. The CLI documents `--ignore-rules` to skip that auto-injection — see
+ * https://hermes-agent.nousresearch.com/docs/reference/cli-commands/
+ *
+ * Ronbot therefore ships UI protocol instructions in **AGENTS.md** (small
+ * managed block) plus **long-form** reference under `~/.ronbot/` for the
+ * model to `read_file` / grep when needed. That matches Hermes’ model and
+ * avoids inventing a custom Hermes skill for the same content.
+ *
+ * ## Drift guard
+ *
+ * Intent wire types are canonical in `src/lib/agentIntents/protocol.ts`
+ * (`AGENT_INTENT_TYPES`). When adding intents or fields, update this file and
+ * bump `RONBOT_APP_GUIDE_VERSION` / `RONBOT_ELECTRON_APP_GUIDE_VERSION` so
+ * `writeRonbotAppGuide` / `writeElectronAppGuide` refresh user disks.
  */
 
 /**
@@ -26,28 +43,62 @@ export const RONBOT_RULES_BLOCK = [
   '  NEVER ask for a secret in plain prose.',
   '- The user reply comes back as a ```ronbot-intent-response``` block keyed',
   '  by the `id` you chose.',
-  '- Full intent envelope, every type with JSON examples, and end-to-end',
-  '  recipes (WhatsApp QR pairing, Google Workspace OAuth, Telegram, generic',
-  '  credential prompts) live in `~/.ronbot/APP_GUIDE.md` — read or grep it',
-  '  whenever you are unsure what shape to emit.',
+  '- **Full protocol:** `~/.ronbot/APP_GUIDE.md` — intent types, optional fields,',
+  '  response shapes, recipes, and how Ronbot’s Skills/Capabilities UI relates to',
+  '  Hermes (there is no `ronbot-intent` to edit that UI).',
+  '- **Short index (Hermes dir + in-app routes):** `~/.hermes/ELECTRON_APP_GUIDE.md`.',
   '- Identify yourself by the name in `~/.hermes/SOUL.md`, never as "Hermes".',
   '',
 ].join('\n');
 
-export const RONBOT_APP_GUIDE_VERSION = '<!-- ronbot-app-guide v1 -->';
+export const RONBOT_APP_GUIDE_VERSION = '<!-- ronbot-app-guide v2 -->';
+
+export const RONBOT_ELECTRON_APP_GUIDE_VERSION = '<!-- ronbot-electron-app-guide v2 -->';
+
+/**
+ * Lives under ~/.hermes/ so it sits beside SOUL / AGENTS where Hermes loads
+ * workspace docs. Keep short: the authoritative spec is APP_GUIDE.md.
+ */
+export const RONBOT_ELECTRON_APP_GUIDE = [
+  RONBOT_ELECTRON_APP_GUIDE_VERSION,
+  '# Ronbot + Hermes on this machine',
+  '',
+  '## Hermes workspace (what loads into context)',
+  '',
+  '- Default agent dir: `~/.hermes/` — `SOUL.md`, `AGENTS.md` (includes Ronbot’s',
+  '  managed block), `memories/MEMORY.md`, `memories/USER.md`, skills, config.',
+  '- Official CLI: `hermes chat` auto-injects those unless `--ignore-rules` is',
+  '  set (see Nous Hermes CLI reference).',
+  '',
+  '## Ronbot desktop routes (HashRouter)',
+  '',
+  '- Home / dashboard: `#/`',
+  '- Agent chat: same shell as Home when connected (primary chat UI).',
+  '- Channels: `#/channels` · Skills & tools: `#/skills` · Secrets: `#/secrets`',
+  '  · Diagnostics / repair: `#/diagnostics` · Install wizard: `#/install`',
+  '  · Settings: `#/settings` · Terminal: `#/terminal` · Sub-agents: `#/agents`',
+  '',
+  '## Where the UI protocol is documented',
+  '',
+  '- **Read this for every `ronbot-intent` field and response shape:**',
+  '  `~/.ronbot/APP_GUIDE.md`',
+  '',
+].join('\n');
 
 /**
  * Full reference for the Ronbot UI protocol. Written to ~/.ronbot/APP_GUIDE.md
  * on every connect (idempotent via version header).
+ *
+ * Keep in sync with `src/lib/agentIntents/protocol.ts` (`AGENT_INTENT_TYPES`,
+ * `IntentBase`, per-intent interfaces, `IntentResponse`).
  */
 export const RONBOT_APP_GUIDE = [
   RONBOT_APP_GUIDE_VERSION,
   '# Ronbot App Guide',
   '',
   'This file is the authoritative reference for talking to the Ronbot desktop',
-  'renderer. AGENTS.md only points here — grep this file whenever you need',
-  'the exact JSON shape for a UI card, or a worked recipe for a multi-step',
-  'channel/auth setup.',
+  'renderer. `~/.hermes/AGENTS.md` only points here — grep this file whenever you',
+  'need the exact JSON shape for a UI card, optional fields, or a worked recipe.',
   '',
   '## Environment',
   '',
@@ -56,6 +107,35 @@ export const RONBOT_APP_GUIDE = [
   '  `subprocess`/your shell tool. Do not ask the user to open a terminal.',
   '- `~/.hermes` is your install dir; `~/.ronbot` is the app-owned dir.',
   '- Identify yourself by the name in `~/.hermes/SOUL.md`.',
+  '',
+  '## Hermes context vs Ronbot UI (official boundary)',
+  '',
+  '- **Hermes owns:** skills, gateway, `hermes` subcommands, `~/.hermes/config.yaml`,',
+  '  permissions YAML, messaging bridges, cron, etc.',
+  '- **Ronbot renderer owns:** fenced ```ronbot-intent``` / ```ronbot-intent-response```',
+  '  cards, secrets keychain sync, and in-app navigation.',
+  '- Hermes auto-loads `AGENTS.md` + persona files from `~/.hermes/` into model',
+  '  context (unless the user passes `--ignore-rules`). Ronbot’s AGENTS block',
+  '  points you here for anything that must drive the Electron UI.',
+  '',
+  '## Capabilities, Skills, and Dashboard tiles',
+  '',
+  '- There is **no** `ronbot-intent` type to edit the capability registry or',
+  '  skill list in the Ronbot UI. Do not invent one.',
+  '- **What to do:** install / enable skills with the official `hermes` CLI;',
+  '  keep `SKILL.md` under `~/.hermes/skills/…`. The app merges `hermes capabilities`',
+  '  JSON (when available), `listSkills`-style scans, and a small static seed for',
+  '  tiles, Channels, and the slash palette.',
+  '- **When the UI looks stale after you change skills or config:** tell the user',
+  '  to revisit the Skills or Channels tab, reconnect the agent, or restart the',
+  '  gateway — the app re-runs discovery on connection refresh (`rediscover`).',
+  '- Emit `done` with a relevant `capabilityId` after channel setup so the host',
+  '  may refresh probes best-effort; it is not a hard guarantee.',
+  '',
+  '## In-app navigation (HashRouter)',
+  '',
+  '- Base pattern: `#/<path>` e.g. `#/diagnostics`, `#/skills`, `#/channels`.',
+  '- Diagnostics (repairs, logs): `#/diagnostics` — often linked from chat errors.',
   '',
   '## Intent envelope',
   '',
@@ -68,19 +148,26 @@ export const RONBOT_APP_GUIDE = [
   '  "id": "intent_<unique>",',
   '  "type": "<one of the types below>",',
   '  "title": "Short header",',
-  '  "description": "Optional 1-2 sentence body",',
+  '  "description": "Optional 1-3 sentence body",',
+  '  "openUrl": "https://optional-related-link.example",',
   '  "expiresInSec": 600',
   '}',
   '```',
   '',
+  '- **Common optional fields (all intents):** `description`, `openUrl` (extra',
+  '  “Open in browser” affordance), `expiresInSec` (TTL; card greys out after).',
+  '',
   'The user reply arrives on the next turn as:',
   '',
   '```ronbot-intent-response',
-  '{ "id": "intent_<same>", "ok": true, "values": { "FIELD_KEY": "..." } }',
+  '{ "id": "intent_<same>", "ok": true, "values": { "FIELD_OR_OPTION_KEY": "..." } }',
   '```',
   '',
-  '`ok: false` means the user cancelled or the card expired (`reason` may',
-  'explain). Never proceed with a setup as if you got the value.',
+  '- **`credential_request` / `choice`:** populate `values` with keys matching',
+  '  each field `key` / selected option `value`.',
+  '- **`file_pick`:** on success `ok: true` and `path` set to the picked folder or file.',
+  '- **`ok: false`:** user cancelled or the card expired; optional `reason`',
+  '  (`cancelled`, `expired`, …). Never treat a declined card as consent.',
   '',
   '## Intent types',
   '',
@@ -92,20 +179,25 @@ export const RONBOT_APP_GUIDE = [
   '  "title": "Google Workspace OAuth",',
   '  "description": "Paste the client ID and secret from the Google Cloud Console.",',
   '  "fields": [',
-  '    { "key": "GOOGLE_CLIENT_ID", "label": "Client ID" },',
+  '    { "key": "GOOGLE_CLIENT_ID", "label": "Client ID", "hint": "from Google Cloud" },',
   '    { "key": "GOOGLE_CLIENT_SECRET", "label": "Client secret", "secret": true }',
   '  ],',
   '  "materialize": true',
   '}',
   '```',
-  'Field options: `secret` (mask), `hint`, `validate` (regex string),',
-  '`defaultValue`, `optional`. Values arrive in `values` keyed by `key`.',
+  '- **Per-field options:** `secret` (mask input), `hint`, `validate` (regex string,',
+  '  enforced client-side before submit), `defaultValue`, `optional` (skip allowed).',
+  '- **`materialize` (intent-level, optional, default true):** when true, Ronbot',
+  '  also writes submitted keys into the OS secrets store and syncs non-empty',
+  '  values into `~/.hermes/.env` for Hermes. Set `false` for values that must',
+  '  never hit Hermes env (rare).',
   '',
   '### confirm — yes/no',
   '```ronbot-intent',
   '{ "id": "intent_x", "type": "confirm", "title": "Delete config?",',
   '  "destructive": true, "confirmLabel": "Delete", "cancelLabel": "Keep" }',
   '```',
+  '- Optional: `confirmLabel`, `cancelLabel`, `destructive`.',
   '',
   '### choice — pick one',
   '```ronbot-intent',
@@ -115,44 +207,58 @@ export const RONBOT_APP_GUIDE = [
   '    { "value": "claude-sonnet", "label": "Claude Sonnet" }',
   '  ], "defaultValue": "gpt-4o" }',
   '```',
+  '- Response: `values.choice` is set to the selected option’s `value` string.',
   '',
   '### qr_display — show a QR for the user to scan',
   '```ronbot-intent',
   '{ "id": "intent_wa_qr", "type": "qr_display", "title": "Scan with WhatsApp",',
   '  "qr": "data:image/png;base64,iVBORw0K...",',
-  '  "pairingCode": "AB12-CD34" }',
+  '  "pairingCode": "AB12-CD34",',
+  '  "doneLabel": "I scanned it" }',
   '```',
+  '- `qr` is required (`data:image/png;base64,…` or raw base64 the renderer normalizes).',
+  '- Optional: `pairingCode`, `doneLabel` (button after scan).',
   '',
   '### oauth_open — open a URL externally and wait',
   '```ronbot-intent',
   '{ "id": "intent_x", "type": "oauth_open", "title": "Authorize Google",',
-  '  "url": "https://accounts.google.com/o/oauth2/v2/auth?..." }',
+  '  "url": "https://accounts.google.com/o/oauth2/v2/auth?...",',
+  '  "openLabel": "Open in browser",',
+  '  "doneLabel": "I\'m back" }',
   '```',
+  '- Optional: `openLabel`, `doneLabel` (defaults match Ronbot UI).',
   '',
   '### file_pick — native folder/file picker',
   '```ronbot-intent',
   '{ "id": "intent_x", "type": "file_pick", "title": "Pick project folder",',
   '  "pickKind": "folder" }',
   '```',
+  '- `pickKind`: `"folder"` (default) or `"file"`.',
+  '- Response: `{ "id": "…", "ok": true, "path": "/absolute/path" }`.',
   '',
   '### progress — heartbeat, no input',
   '```ronbot-intent',
   '{ "id": "intent_x", "type": "progress", "title": "Installing bridge…",',
   '  "percent": 45, "status": "Downloading dependencies" }',
   '```',
+  '- Optional: `percent` (0–100, omit for indeterminate spinner), `status` line.',
   '',
   '### done — multi-step setup completed',
   '```ronbot-intent',
   '{ "id": "intent_x", "type": "done", "title": "WhatsApp connected",',
   '  "capabilityId": "whatsapp", "message": "Bridge is online." }',
   '```',
+  '- Optional: `capabilityId` (best-effort UI refresh), `message` (success copy).',
   '',
   '### pairing_approve — display a pairing code',
   '```ronbot-intent',
   '{ "id": "intent_x", "type": "pairing_approve", "title": "Approve Matrix link",',
   '  "pairingCode": "AB12-CD34", "platform": "Matrix",',
-  '  "instructions": "Enter this code on your phone." }',
+  '  "instructions": "Enter this code on your phone.",',
+  '  "approveLabel": "Approve", "rejectLabel": "Reject" }',
   '```',
+  '- Required: `pairingCode`. Optional: `platform`, `instructions`, `approveLabel`,',
+  '  `rejectLabel`.',
   '',
   '## Recipes',
   '',

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { systemAPI } from "@/lib/systemAPI";
 import { useSettings } from "./SettingsContext";
 
@@ -171,8 +171,35 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const agentConnectionValue = useMemo(
+    () => ({
+      connected,
+      status,
+      error,
+      location,
+      agentRunning,
+      setAgentRunning,
+      refresh,
+      markConnected,
+      connectedSince,
+      frozenUptimeMs,
+    }),
+    [
+      connected,
+      status,
+      error,
+      location,
+      agentRunning,
+      setAgentRunning,
+      refresh,
+      markConnected,
+      connectedSince,
+      frozenUptimeMs,
+    ],
+  );
+
   return (
-    <AgentConnectionContext.Provider value={{ connected, status, error, location, agentRunning, setAgentRunning, refresh, markConnected, connectedSince, frozenUptimeMs }}>
+    <AgentConnectionContext.Provider value={agentConnectionValue}>
       {children}
     </AgentConnectionContext.Provider>
   );

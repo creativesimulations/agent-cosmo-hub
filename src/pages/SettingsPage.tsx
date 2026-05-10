@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Settings as SettingsIcon,
   AlertCircle,
@@ -18,7 +19,6 @@ import {
   Play,
   History,
   Network,
-  ChevronDown,
   Box,
   Users,
   Keyboard,
@@ -33,11 +33,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import GlassCard from "@/components/ui/GlassCard";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -53,7 +48,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
-import { useSettings, ThemeMode } from "@/contexts/SettingsContext";
+import { useSettings } from "@/contexts/SettingsContext";
 import { useChat } from "@/contexts/ChatContext";
 import { systemAPI } from "@/lib/systemAPI";
 import {
@@ -66,130 +61,17 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import ActionableError from "@/components/ui/ActionableError";
 import PersonalityDialog from "@/components/settings/PersonalityDialog";
-
-/** A labelled toggle row — keeps the page readable when there are 8+ settings. */
-const ToggleRow = ({
-  title,
-  description,
-  checked,
-  onCheckedChange,
-  disabled,
-  trailing,
-}: {
-  title: string;
-  description: string;
-  checked: boolean;
-  onCheckedChange: (v: boolean) => void;
-  disabled?: boolean;
-  trailing?: React.ReactNode;
-}) => (
-  <div className="flex items-start justify-between gap-4 py-3 border-b border-border/40 last:border-b-0">
-    <div className="space-y-0.5 min-w-0 flex-1">
-      <Label className="text-sm font-medium text-foreground cursor-pointer">{title}</Label>
-      <p className="text-xs text-muted-foreground">{description}</p>
-    </div>
-    <div className="flex items-center gap-2 shrink-0">
-      {trailing}
-      <Switch checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
-    </div>
-  </div>
-);
-
-const ThemeOption = ({
-  mode,
-  current,
-  onSelect,
-  icon: Icon,
-  label,
-}: {
-  mode: ThemeMode;
-  current: ThemeMode;
-  onSelect: (m: ThemeMode) => void;
-  icon: typeof Sun;
-  label: string;
-}) => {
-  const active = mode === current;
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(mode)}
-      className={cn(
-        "flex flex-col items-center gap-2 px-4 py-3 rounded-lg border transition-all",
-        active
-          ? "border-primary bg-primary/10 text-foreground"
-          : "border-border bg-background/30 text-muted-foreground hover:text-foreground hover:border-border",
-      )}
-    >
-      <Icon className={cn("w-5 h-5", active && "text-primary")} />
-      <span className="text-xs font-medium">{label}</span>
-    </button>
-  );
-};
-
-/**
- * A collapsible Settings section. Header (icon + title) is the trigger,
- * a chevron rotates 180° when open. Always starts closed.
- *
- * `bare` skips the outer GlassCard frame — used for panels that render
- * their own GlassCard internally.
- */
-const SettingsSection = ({
-  icon: Icon,
-  title,
-  iconClassName,
-  bare,
-  className,
-  children,
-}: {
-  icon: typeof Sun;
-  title: string;
-  iconClassName?: string;
-  bare?: boolean;
-  className?: string;
-  children: React.ReactNode;
-}) => {
-  const Header = (
-    <CollapsibleTrigger
-      className={cn(
-        "group w-full flex items-center justify-between gap-3 rounded-lg text-left transition-colors",
-        bare ? "px-5 py-4 glass hover:bg-foreground/5" : "hover:bg-foreground/5 -m-2 p-2",
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <Icon className={cn("w-5 h-5 text-primary", iconClassName)} />
-        <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-      </div>
-      <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
-    </CollapsibleTrigger>
-  );
-
-  if (bare) {
-    return (
-      <Collapsible defaultOpen={false} className={cn("rounded-xl", className)}>
-        {Header}
-        <CollapsibleContent>
-          <div className="mt-3">{children}</div>
-        </CollapsibleContent>
-      </Collapsible>
-    );
-  }
-
-  return (
-    <GlassCard className={cn("p-6", className)}>
-      <Collapsible defaultOpen={false}>
-        {Header}
-        <CollapsibleContent>
-          <div className="pt-4 space-y-4">{children}</div>
-        </CollapsibleContent>
-      </Collapsible>
-    </GlassCard>
-  );
-};
+import {
+  SettingsSection,
+  ThemeOption,
+  ToggleRow,
+} from "@/components/settings/SettingsLayoutPrimitives";
 
 const SettingsPage = () => {
+  const navigate = useNavigate();
   const { connected: agentConnected, refresh: refreshConnection } = useAgentConnection();
   const { settings, update, reset } = useSettings();
-  const { clearAll, startNewSession } = useChat();
+  const { clearAll, startNewSession, setDraft } = useChat();
 
   const [name, setName] = useState("");
   const [originalName, setOriginalName] = useState("");
@@ -214,7 +96,6 @@ const SettingsPage = () => {
 
   // Busy-input mode — what happens when the user types while the agent is replying
   const [busyInputMode, setBusyInputMode] = useState<"queue" | "interrupt" | "steer">("queue");
-  const [busyInputSaving, setBusyInputSaving] = useState(false);
 
   const [personalityOpen, setPersonalityOpen] = useState(false);
 
@@ -234,28 +115,24 @@ const SettingsPage = () => {
     };
   }, [agentConnected]);
 
-  const handleTerminalBackendChange = async (next: "local" | "docker" | "ssh") => {
-    setTerminalBackend(next);
-    const cfg = await systemAPI.readConfig();
-    let body = cfg.success && cfg.content ? cfg.content : "";
-    // Strip any existing managed terminal block, then append a fresh one.
-    body = body.replace(/^terminal:\s*\n(?:[ \t]+.*\n?)*/im, "").trimEnd();
-    body += `\n\nterminal:\n  backend: ${next}\n`;
-    const w = await systemAPI.writeConfig(body);
-    if (w.success) {
-      setSettingsError("");
-      toast.success(`Terminal backend set to ${next}`, {
-        description:
-          next === "local"
-            ? "Commands run directly on this machine."
-            : next === "docker"
-              ? "Commands run inside a sandboxed Docker container. Set DOCKER_IMAGE in Secrets."
-              : "Commands run over SSH. Set SSH_HOST / SSH_USER / SSH_KEY_PATH in Secrets.",
-      });
-    } else {
-      setSettingsError(w.error || "Failed to update config");
-      toast.error("Couldn't save", { description: w.error || "Failed to update config" });
-    }
+  const delegateToAgent = (prompt: string) => {
+    setDraft(prompt);
+    navigate("/");
+  };
+
+  const handleTerminalBackendChange = (next: "local" | "docker" | "ssh") => {
+    const detail =
+      next === "local"
+        ? "Use local terminal backend."
+        : next === "docker"
+          ? "Use Docker terminal backend. If needed, ask me for DOCKER_IMAGE."
+          : "Use SSH terminal backend. Ask me for SSH_HOST, SSH_USER, SSH_KEY_PATH if needed.";
+    delegateToAgent(
+      `Please update my Hermes terminal backend to "${next}". ${detail} Confirm when complete.`,
+    );
+    toast.info("Prompt sent to agent", {
+      description: "The agent will apply terminal backend changes through chat.",
+    });
   };
 
   useEffect(() => {
@@ -298,27 +175,13 @@ const SettingsPage = () => {
     return () => { cancelled = true; };
   }, [agentConnected]);
 
-  const handleBusyInputModeChange = async (next: "queue" | "interrupt" | "steer") => {
-    setBusyInputSaving(true);
-    const prev = busyInputMode;
-    setBusyInputMode(next); // optimistic
-    const r = await systemAPI.setBusyInputMode(next);
-    setBusyInputSaving(false);
-    if (r.success) {
-      setSettingsError("");
-      toast.success(`Typing while busy: ${next}`, {
-        description:
-          next === "queue"
-            ? "New messages will queue and run after the current reply."
-            : next === "interrupt"
-              ? "New messages will interrupt the current reply."
-              : "New messages will steer the current reply mid-flight.",
-      });
-    } else {
-      setBusyInputMode(prev);
-      setSettingsError(r.error || "Could not save busy-input mode");
-      toast.error("Couldn't save", { description: r.error });
-    }
+  const handleBusyInputModeChange = (next: "queue" | "interrupt" | "steer") => {
+    delegateToAgent(
+      `Please set Hermes busy-input mode to "${next}" and confirm once it's applied.`,
+    );
+    toast.info("Prompt sent to agent", {
+      description: "The agent will change busy-input mode via chat.",
+    });
   };
 
   const handleSaveName = async () => {
@@ -769,7 +632,6 @@ const SettingsPage = () => {
             <Select
               value={busyInputMode}
               onValueChange={(v) => void handleBusyInputModeChange(v as "queue" | "interrupt" | "steer")}
-              disabled={busyInputSaving}
             >
               <SelectTrigger className="w-full sm:w-72 bg-background/50">
                 <SelectValue />

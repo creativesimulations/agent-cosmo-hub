@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useState, ReactNode, useCallback } from "react";
+import { createContext, useContext, useRef, useState, ReactNode, useCallback, useMemo, useEffect } from "react";
 import { systemAPI } from "@/lib/systemAPI";
 import { sudoAPI, promptForPasswordMac } from "@/lib/systemAPI/sudo";
 import { useAgentConnection } from "./AgentConnectionContext";
@@ -48,6 +48,10 @@ interface InstallContextValue {
   setInstallSource: (s: InstallSource) => void;
   localAgentPath: string;
   setLocalAgentPath: (p: string) => void;
+
+  /** Local-folder install only: if true, back up SOUL/MEMORY/PERSONALITY/USER and replace with Ronbot defaults. */
+  replaceWithRonbotPersonalityTemplates: boolean;
+  setReplaceWithRonbotPersonalityTemplates: (v: boolean) => void;
 
   // Optional features
   selectedFeatures: string[];
@@ -111,8 +115,13 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
   }, []);
   const [installSource, setInstallSource] = useState<InstallSource>("bundled");
   const [localAgentPath, setLocalAgentPath] = useState<string>("");
+  const [replaceWithRonbotPersonalityTemplates, setReplaceWithRonbotPersonalityTemplates] = useState(true);
 
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>(["voice", "messaging", "web"]);
+
+  useEffect(() => {
+    setReplaceWithRonbotPersonalityTemplates(installSource !== "local");
+  }, [installSource]);
 
   const [installing, setInstalling] = useState(false);
   const [installComplete, setInstallComplete] = useState(false);
@@ -301,75 +310,139 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       setInstallOutput((prev) => [...prev, `… still working (elapsed ${mm}:${ss})`]);
     }, 15000);
 
-    // Stream installer output line-by-line so the log keeps moving.
-    let buffered = "";
-    const handleOutput = (event: { type: string; data?: string; code?: number }) => {
-      if ((event.type !== "stdout" && event.type !== "stderr") || !event.data) return;
-      buffered += event.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      const parts = buffered.split("\n");
-      buffered = parts.pop() ?? "";
-      const lines = parts.map((l) => l.trimEnd()).filter(Boolean);
-      if (lines.length === 0) return;
-      if (installIdRef.current !== myInstallId) return;
-      setInstallOutput((prev) => [...prev, ...lines]);
-      // Once real output is flowing, nudge the bar past 90% to show progress.
-      setInstallProgress((prev) => Math.min(Math.max(prev, 92), 97));
-    };
+    try {
+      // Stream installer output line-by-line so the log keeps moving.
+      let buffered = "";
+      const handleOutput = (event: { type: string; data?: string; code?: number }) => {
+        if ((event.type !== "stdout" && event.type !== "stderr") || !event.data) return;
+        buffered += event.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+        const parts = buffered.split("\n");
+        buffered = parts.pop() ?? "";
+        const lines = parts.map((l) => l.trimEnd()).filter(Boolean);
+        if (lines.length === 0) return;
+        if (installIdRef.current !== myInstallId) return;
+        setInstallOutput((prev) => [...prev, ...lines]);
+        // Once real output is flowing, nudge the bar past 90% to show progress.
+        setInstallProgress((prev) => Math.min(Math.max(prev, 92), 97));
+      };
 
-    const extras = selectedFeatures.map((f) => OPTIONAL_FEATURES.find((o) => o.id === f)?.pipExtra).filter(Boolean) as string[];
-    const result = installSource === "local" && localAgentPath
-      ? await systemAPI.installHermesFromLocalFolder(
-          localAgentPath,
-          extras.length > 0 ? extras : undefined,
-          handleOutput,
-        )
-      : await systemAPI.installHermes(
-          extras.length > 0 ? extras : undefined,
-          handleOutput,
-        );
+      const extras = selectedFeatures.map((f) => OPTIONAL_FEATURES.find((o) => o.id === f)?.pipExtra).filter(Boolean) as string[];
+      const result = installSource === "local" && localAgentPath
+        ? await systemAPI.installHermesFromLocalFolder(
+            localAgentPath,
+            extras.length > 0 ? extras : undefined,
+            handleOutput,
+          )
+        : await systemAPI.installHermes(
+            extras.length > 0 ? extras : undefined,
+            handleOutput,
+          );
 
-    // Flush any trailing partial line.
-    if (buffered.trim() && installIdRef.current === myInstallId) {
-      setInstallOutput((prev) => [...prev, buffered.trim()]);
-    }
-    buffered = "";
-
-    clearInterval(progressInterval);
-    clearInterval(heartbeatInterval);
-
-    if (installIdRef.current !== myInstallId) return;
-
-    setInstallProgress(100);
-
-    if (result.success) {
-      setInstallOutput((prev) => [...prev, "✓ Agent installed successfully!"]);
-      setInstallComplete(true);
-      // Mark the agent as connected immediately and re-verify in the
-      // background so every screen flips out of the "No Agent Connected"
-      // state without requiring the user to click "Connect".
-      markConnected("~/.hermes");
-      void refreshConnection();
-      toast.success("Agent installed and connected", {
-        description: "You can now chat with your agent in the Agent Chat tab.",
-        duration: 8000,
-      });
-      setTimeout(() => {
-        if (installIdRef.current === myInstallId) setInstallStepState(3);
-      }, 1000);
-    } else {
-      const stderr = (result.stderr || "").trim();
-      const stdout = (result.stdout || "").trim();
-      const tail = (text: string, n = 20) => text.split("\n").slice(-n).join("\n");
-      const lines: string[] = [`✗ Installation failed (exit code ${result.code ?? "?"})`];
-      if (stderr) lines.push("--- stderr ---", tail(stderr));
-      if (stdout) lines.push("--- stdout (last 20 lines) ---", tail(stdout));
-      if (!stderr && !stdout) {
-        lines.push("No output was captured from the installer.");
+      // Flush any trailing partial line.
+      if (buffered.trim() && installIdRef.current === myInstallId) {
+        setInstallOutput((prev) => [...prev, buffered.trim()]);
       }
-      setInstallOutput((prev) => [...prev, ...lines]);
+
+      if (installIdRef.current !== myInstallId) return;
+
+      setInstallProgress(100);
+
+      if (result.success) {
+        setInstallOutput((prev) => [...prev, "✓ Agent installed successfully!"]);
+
+        const shouldSeedPersona = installSource !== "local" || replaceWithRonbotPersonalityTemplates;
+        const nameForSeed = agentName.trim() || "Ron";
+        if (shouldSeedPersona) {
+          setInstallOutput((prev) => [...prev, "Saving Ronbot personality files (SOUL, PERSONALITY, MEMORY, USER)…"]);
+          try {
+            const seed = await systemAPI.seedRonbotPersonalityAfterInstall(nameForSeed);
+            if (installIdRef.current !== myInstallId) return;
+            if (seed.success) {
+              const moved = seed.filesMoved ?? 0;
+              setInstallOutput((prev) => [
+                ...prev,
+                moved > 0
+                  ? `✓ Moved ${moved} existing file(s) to backup: ${seed.backupDir ?? "~/.hermes/.ronbot-personality-backup/<timestamp>"}`
+                  : `✓ Backup folder ready${seed.backupDir ? ` (${seed.backupDir})` : ""} — no prior Ronbot-target persona files to move.`,
+                "✓ Installed Ronbot SOUL.md, PERSONALITY.md, memories/MEMORY.md, memories/USER.md, ELECTRON_APP_GUIDE.md, and refreshed AGENTS.md / app guide.",
+              ]);
+            } else {
+              setInstallOutput((prev) => [
+                ...prev,
+                `⚠ Personality seed did not complete: ${seed.error ?? "unknown error"}`,
+              ]);
+              toast.warning("Personality files may be incomplete", {
+                description: seed.error ?? "Check install log.",
+                duration: 10000,
+              });
+            }
+          } catch (e) {
+            if (installIdRef.current !== myInstallId) return;
+            const msg = e instanceof Error ? e.message : String(e);
+            setInstallOutput((prev) => [...prev, `⚠ Personality seed crashed: ${msg}`]);
+            toast.warning("Personality seed failed", { description: msg, duration: 10000 });
+          }
+        } else {
+          setInstallOutput((prev) => [
+            ...prev,
+            "ℹ Left your agent’s existing SOUL.md, MEMORY.md, PERSONALITY.md, and USER.md unchanged (per your choice).",
+          ]);
+        }
+
+        setInstallOutput((prev) => [...prev, "Stopping any Hermes gateway / CLI left over from install…"]);
+        try {
+          await systemAPI.stopHermesAgentRuntime();
+          if (installIdRef.current !== myInstallId) return;
+          setInstallOutput((prev) => [
+            ...prev,
+            "✓ Hermes runtime stopped — the next launch will load files from disk (including any new persona seed).",
+          ]);
+        } catch (e) {
+          if (installIdRef.current !== myInstallId) return;
+          const msg = e instanceof Error ? e.message : String(e);
+          setInstallOutput((prev) => [...prev, `⚠ Could not fully stop Hermes runtime: ${msg}`]);
+        }
+
+        setInstallComplete(true);
+        // Mark the agent as connected immediately and re-verify in the
+        // background so every screen flips out of the "No Agent Connected"
+        // state without requiring the user to click "Connect".
+        markConnected("~/.hermes");
+        void refreshConnection();
+        toast.success("Agent installed and connected", {
+          description: "You can now chat with your agent in the Agent Chat tab.",
+          duration: 8000,
+        });
+        setTimeout(() => {
+          if (installIdRef.current === myInstallId) setInstallStepState(3);
+        }, 1000);
+      } else {
+        const stderr = (result.stderr || "").trim();
+        const stdout = (result.stdout || "").trim();
+        const tail = (text: string, n = 20) => text.split("\n").slice(-n).join("\n");
+        const lines: string[] = [`✗ Installation failed (exit code ${result.code ?? "?"})`];
+        if (stderr) lines.push("--- stderr ---", tail(stderr));
+        if (stdout) lines.push("--- stdout (last 20 lines) ---", tail(stdout));
+        if (!stderr && !stdout) {
+          lines.push("No output was captured from the installer.");
+        }
+        setInstallOutput((prev) => [...prev, ...lines]);
+      }
+    } finally {
+      clearInterval(progressInterval);
+      clearInterval(heartbeatInterval);
     }
     setInstalling(false);
-  }, [selectedFeatures, requestSudoPassword, markConnected, refreshConnection, installSource, localAgentPath]);
+  }, [
+    selectedFeatures,
+    requestSudoPassword,
+    markConnected,
+    refreshConnection,
+    installSource,
+    localAgentPath,
+    agentName,
+    replaceWithRonbotPersonalityTemplates,
+  ]);
 
   const cancelInstall = useCallback(() => {
     installIdRef.current++;
@@ -548,49 +621,85 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
     setLaunching(false);
   }, [agentName]);
 
+  const installContextValue = useMemo(
+    () => ({
+      mode,
+      setMode,
+      installStep,
+      setInstallStep,
+      installSource,
+      setInstallSource,
+      localAgentPath,
+      setLocalAgentPath,
+      replaceWithRonbotPersonalityTemplates,
+      setReplaceWithRonbotPersonalityTemplates,
+      selectedFeatures,
+      toggleFeature,
+      installing,
+      installComplete,
+      installProgress,
+      installOutput,
+      handleInstallAgent,
+      cancelInstall,
+      sudoPrompt,
+      closeSudoPrompt,
+      submitSudoPassword,
+      sudoPasswordless,
+      agentName,
+      setAgentName,
+      selectedProvider,
+      setSelectedProvider,
+      apiKey,
+      setApiKey,
+      keySaved,
+      setKeySaved,
+      selectedModel,
+      setSelectedModel,
+      doctorRunning,
+      doctorOutput,
+      doctorProgress,
+      doctorPassed,
+      runDoctor,
+      launching,
+      launchOutput,
+      runLaunch,
+    }),
+    [
+      mode,
+      installStep,
+      installSource,
+      localAgentPath,
+      replaceWithRonbotPersonalityTemplates,
+      selectedFeatures,
+      installing,
+      installComplete,
+      installProgress,
+      installOutput,
+      handleInstallAgent,
+      cancelInstall,
+      sudoPrompt,
+      closeSudoPrompt,
+      submitSudoPassword,
+      sudoPasswordless,
+      agentName,
+      selectedProvider,
+      apiKey,
+      keySaved,
+      selectedModel,
+      doctorRunning,
+      doctorOutput,
+      doctorProgress,
+      doctorPassed,
+      runDoctor,
+      launching,
+      launchOutput,
+      runLaunch,
+      toggleFeature,
+    ],
+  );
+
   return (
-    <InstallContext.Provider
-      value={{
-        mode,
-        setMode,
-        installStep,
-        setInstallStep,
-        installSource,
-        setInstallSource,
-        localAgentPath,
-        setLocalAgentPath,
-        selectedFeatures,
-        toggleFeature,
-        installing,
-        installComplete,
-        installProgress,
-        installOutput,
-        handleInstallAgent,
-        cancelInstall,
-        sudoPrompt,
-        closeSudoPrompt,
-        submitSudoPassword,
-        sudoPasswordless,
-        agentName,
-        setAgentName,
-        selectedProvider,
-        setSelectedProvider,
-        apiKey,
-        setApiKey,
-        keySaved,
-        setKeySaved,
-        selectedModel,
-        setSelectedModel,
-        doctorRunning,
-        doctorOutput,
-        doctorProgress,
-        doctorPassed,
-        runDoctor,
-        launching,
-        launchOutput,
-        runLaunch,
-      }}
-    >
+    <InstallContext.Provider value={installContextValue}>
       {children}
     </InstallContext.Provider>
   );

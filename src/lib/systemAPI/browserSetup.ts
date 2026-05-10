@@ -299,7 +299,7 @@ export const setupAndStartCamofox = async (onOutput?: StreamLogger): Promise<Com
     // keeps the spawned cmd window invisible.
     const psCmd =
       `powershell -NoProfile -Command "Start-Process -WindowStyle Hidden -WorkingDirectory '${dir}' ` +
-      `-FilePath cmd.exe -ArgumentList '/c','npm start > \\\"${logPath}\\\" 2>&1'"`;
+      `-FilePath cmd.exe -ArgumentList '/c','npm start > \\"${logPath}\\" 2>&1'"`;
     const start = await coreAPI.runCommand(psCmd, { timeout: 15000 });
     if (start.stdout) log(onOutput, start.stdout);
     if (start.stderr) log(onOutput, start.stderr, 'stderr');
@@ -416,9 +416,6 @@ export const installChrome = async (
   if (inst.stderr) log(onOutput, inst.stderr, 'stderr');
   return inst;
 };
-
-// Track the spawned Chrome stream so we can stop it later.
-let launchedChromeStreamId: string | null = null;
 
 export const launchChromeWithCdp = async (
   chromePath: string,

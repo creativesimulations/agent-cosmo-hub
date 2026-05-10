@@ -7,25 +7,25 @@ import { useAgentConnection } from "@/contexts/AgentConnectionContext";
  * protocol primer in ~/.hermes/AGENTS.md so the agent knows how to emit
  * `ronbot-intent` cards. Idempotent and cheap — just a file diff/write.
  */
-const RonbotRulesBridge = () => {
+export function useRonbotRulesBridge(): void {
   const { connected } = useAgentConnection();
   useEffect(() => {
     if (!connected) return;
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         if (cancelled) return;
         await Promise.all([
           systemAPI.writeRonbotAgentRules?.(),
           systemAPI.writeRonbotAppGuide?.(),
+          systemAPI.writeElectronAppGuide?.(),
         ]);
       } catch {
         /* best effort */
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [connected]);
-  return null;
-};
-
-export default RonbotRulesBridge;
+}

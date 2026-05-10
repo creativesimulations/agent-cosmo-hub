@@ -43,7 +43,6 @@ declare global {
       writeFile: (path: string, content: string, options?: { mode?: number }) => Promise<{ success: boolean; error?: string }>;
       mkdir: (path: string) => Promise<{ success: boolean; error?: string }>;
       getDiskSpace: () => Promise<DiskSpaceInfo>;
-      revealInFolder?: (targetPath: string) => Promise<{ success: boolean; error?: string }>;
       selectFolder?: (options?: { title?: string; defaultPath?: string }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
 
       // Secure secrets storage
@@ -52,8 +51,6 @@ declare global {
       secretsGet: (key: string) => Promise<{ success: boolean; value?: string; error?: string }>;
       secretsSet: (key: string, value: string) => Promise<{ success: boolean; backend?: string; error?: string }>;
       secretsDelete: (key: string) => Promise<{ success: boolean; error?: string }>;
-      secretsMaterializeEnv: (envPath?: string) => Promise<{ success: boolean; count?: number; path?: string; error?: string }>;
-      secretsMigrateFromEnv: (envPath?: string) => Promise<{ success: boolean; migrated?: number; keys?: string[]; error?: string }>;
 
       // Process control + window lifecycle
       killStream: (streamId: string) => Promise<{ success: boolean; error?: string }>;
