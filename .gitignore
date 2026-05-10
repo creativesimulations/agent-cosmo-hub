@@ -8,6 +8,10 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+
+# Do not commit a root symlink named like the repo (WSL paths break @electron/packager on Windows).
+/agent-cosmo-hub
+
 dist
 dist-ssr
 *.local
