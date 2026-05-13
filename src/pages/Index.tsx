@@ -158,16 +158,38 @@ const Index = () => {
   };
 
   const handlePickLocalAgent = async () => {
+    const pickToastId = "ronbot-select-agent-folder";
+    toast.loading("Opening system folder picker…", {
+      id: pickToastId,
+      description:
+        "On Linux or WSL, the dialog can open behind Ronbot—check other windows or the taskbar.",
+    });
     try {
       const res = await systemAPI.selectFolder({ title: "Select your agent folder" });
       if (!res.success) {
-        toast.error("Could not open folder picker", { description: res.error ?? "Unknown error" });
+        toast.error("Could not open folder picker", {
+          id: pickToastId,
+          description: res.error ?? "Unknown error",
+        });
         return;
       }
-      if (res.canceled || !res.path) return;
+      if (res.canceled || !res.path) {
+        toast.info("No folder selected", {
+          id: pickToastId,
+          description:
+            'The picker was canceled or closed with no folder. Click "Use My Own Agent" again when you are ready.',
+        });
+        return;
+      }
+      toast.success("Local agent folder selected", {
+        id: pickToastId,
+        description: res.path,
+        duration: 8000,
+      });
       await beginInstallFlow("local", res.path);
     } catch (e) {
       toast.error("Could not open folder picker", {
+        id: pickToastId,
         description: e instanceof Error ? e.message : String(e),
       });
     }
