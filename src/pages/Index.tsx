@@ -81,6 +81,8 @@ const Index = () => {
   const [connecting, setConnecting] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [preflightReady, setPreflightReady] = useState(false);
+  /** True while probing ~/.hermes before opening bundled install or guard (IPC + shell). */
+  const [bundledInstallBusy, setBundledInstallBusy] = useState(false);
 
   // Guard-screen state (shown when ~/.hermes already exists)
   const [existingAgentName, setExistingAgentName] = useState<string | null>(null);
@@ -196,7 +198,14 @@ const Index = () => {
   };
 
   const handleStartBundledInstall = () => {
-    void beginInstallFlow("bundled");
+    setBundledInstallBusy(true);
+    void (async () => {
+      try {
+        await beginInstallFlow("bundled");
+      } finally {
+        setBundledInstallBusy(false);
+      }
+    })();
   };
 
   const handleGuardConnect = async () => {
@@ -367,16 +376,25 @@ const Index = () => {
               </GlassCard>
 
               <GlassCard
-                className="cursor-pointer hover:border-accent/30 transition-all group"
+                className={cn(
+                  "cursor-pointer hover:border-accent/30 transition-all group",
+                  bundledInstallBusy && "pointer-events-none cursor-wait opacity-80",
+                )}
                 onClick={handleStartBundledInstall}
               >
                 <div className="space-y-3">
                   <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center group-hover:bg-accent/20 transition-colors">
-                    <Package className="w-6 h-6 text-accent" />
+                    {bundledInstallBusy ? (
+                      <Loader2 className="w-6 h-6 text-accent animate-spin" aria-hidden />
+                    ) : (
+                      <Package className="w-6 h-6 text-accent" />
+                    )}
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">Install Ronbot Agent</h3>
                   <p className="text-sm text-muted-foreground">
-                    Download and install the bundled Ronbot agent
+                    {bundledInstallBusy
+                      ? "Checking for an existing install…"
+                      : "Download and install the bundled Ronbot agent"}
                   </p>
                 </div>
               </GlassCard>

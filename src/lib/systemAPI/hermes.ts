@@ -125,11 +125,11 @@ const repairLegacyWindowsInstall = async (): Promise<void> => {
   const legacyDirs = [`${mountedHome}/~/.hermes`, `${mountedHome}/.hermes`];
   await runHermesShell(
     [
-      'TARGET="$HOME/.hermes"',
-      'mkdir -p "$TARGET"',
       ...legacyDirs.flatMap((legacyDir, index) => [
         `LEGACY_${index}="${legacyDir}"`,
         `if [ -d "$LEGACY_${index}" ]; then`,
+        '  TARGET="$HOME/.hermes"',
+        '  mkdir -p "$TARGET"',
         '  for item in venv hermes-agent config.yaml .env skills state.db; do',
         `    if [ -e "$LEGACY_${index}/$item" ] && [ ! -e "$TARGET/$item" ]; then`,
         `      cp -R "$LEGACY_${index}/$item" "$TARGET/$item"`,
@@ -163,50 +163,49 @@ const parseProbeOutput = (stdout: string): Record<string, string> => {
   }, {});
 };
 
-/** One-shot in-place repair for configs left broken by older builds of this
- *  app:
- *   1. `allowed_paths:[]` / `blocked_paths:[]` (no space → invalid YAML).
- *   2. `browser:` followed only by a comment line — PyYAML loads it as None,
- *      crashing Hermes' `if key in browser_config:`. Replace with `browser: {}`.
- *  Safe to run repeatedly. */
-const repairBrokenYamlList = async (): Promise<void> => {
-  await runHermesShell(
-    [
-      `CFG="${HERMES_CONFIG}"`,
-      '[ -f "$CFG" ] || exit 0',
-      // Match keys followed immediately by `[` (no space) and insert one.
-      `if grep -Eq '^[[:space:]]*(allowed_paths|blocked_paths):\\[' "$CFG"; then`,
-      '  echo "[repair] fixing missing space in allowed_paths/blocked_paths"',
-      `  sed -i -E 's/^([[:space:]]*(allowed_paths|blocked_paths)):\\[/\\1: [/' "$CFG"`,
-      'fi',
-      // Heal the null-browser-block case: a bare `browser:` line whose only
-      // child is a comment ("  # (no overrides ...)") parses as None.
-      `if grep -Eq '^browser:[[:space:]]*$' "$CFG" && grep -Eq '^[[:space:]]+# \\(no overrides' "$CFG"; then`,
-      '  echo "[repair] replacing null browser: block with empty mapping {}"',
-      // Drop the placeholder comment line, then turn the bare `browser:` into `browser: {}`.
-      `  sed -i -E '/^[[:space:]]+# \\(no overrides[^)]*\\)[[:space:]]*$/d' "$CFG"`,
-      `  sed -i -E 's/^browser:[[:space:]]*$/browser: {}/' "$CFG"`,
-      'fi',
-    ].join('\n'),
-    { timeout: 10000 },
-  ).catch(() => undefined);
-};
+/** Bash fragment: in-place repair for configs left broken by older builds.
+ *  Must not `exit` the shell — it is composed ahead of the install probe so
+ *  both run in one `runHermesShell` (critical on Windows where each shell is
+ *  a separate `wsl` launch). */
+const repairBrokenYamlBashFragment = [
+  `CFG="${HERMES_CONFIG}"`,
+  'if [ -f "$CFG" ]; then',
+  // Match keys followed immediately by `[` (no space) and insert one.
+  `  if grep -Eq '^[[:space:]]*(allowed_paths|blocked_paths):\\[' "$CFG"; then`,
+  '    echo "[repair] fixing missing space in allowed_paths/blocked_paths"',
+  `    sed -i -E 's/^([[:space:]]*(allowed_paths|blocked_paths)):\\[/\\1: [/' "$CFG"`,
+  '  fi',
+  // Heal the null-browser-block case: bare `browser:` whose only child is a comment.
+  `  if grep -Eq '^browser:[[:space:]]*$' "$CFG" && grep -Eq '^[[:space:]]+# \\(no overrides' "$CFG"; then`,
+  '    echo "[repair] replacing null browser: block with empty mapping {}"',
+  `    sed -i -E '/^[[:space:]]+# \\(no overrides[^)]*\\)[[:space:]]*$/d' "$CFG"`,
+  `    sed -i -E 's/^browser:[[:space:]]*$/browser: {}/' "$CFG"`,
+  '  fi',
+  'fi',
+].join('\n');
 
 const inspectHermesInstall = async (): Promise<HermesInstallState> => {
   await repairLegacyWindowsInstall();
-  await repairBrokenYamlList();
   // Match PATH expansion used by `runHermesCli` / chat so Homebrew, snap,
   // and ~/.local installs are visible — a bare venv+.local PATH misses
   // `/opt/homebrew/bin` and makes `isConfigured` false while `hermes --version`
   // from the GUI shell (richer PATH) still succeeds.
-  const result = await runHermesShell([
+  const mergedScript = [
+    repairBrokenYamlBashFragment,
     HERMES_PATH_EXPORT,
     `if [ -d "${HERMES_DIR}" ]; then echo "HAS_DIR=1"; else echo "HAS_DIR=0"; fi`,
     `if [ -f "${HERMES_ENV}" ]; then echo "HAS_ENV=1"; else echo "HAS_ENV=0"; fi`,
     `if [ -f "${HERMES_CONFIG}" ]; then echo "HAS_CONFIG=1"; else echo "HAS_CONFIG=0"; fi`,
     'if [ -x "$HOME/.hermes/venv/bin/hermes" ]; then echo "HAS_VENV_CLI=1"; else echo "HAS_VENV_CLI=0"; fi',
     'if command -v hermes >/dev/null 2>&1; then echo "HAS_PATH_CLI=1"; else echo "HAS_PATH_CLI=0"; fi',
-  ].join('\n'));
+  ].join('\n');
+
+  const result = await runHermesShell(mergedScript, { timeout: 15000 }).catch(() => ({
+    success: false,
+    stdout: '',
+    stderr: '',
+    code: 1,
+  }));
 
   const parsed = parseProbeOutput(result.stdout);
 
@@ -220,7 +219,13 @@ const inspectHermesInstall = async (): Promise<HermesInstallState> => {
 };
 
 const hasUsableHermesInstall = (state: HermesInstallState) => {
-  return state.hasDir && (state.hasVenvCli || state.hasPathCli);
+  // Require a real layout: venv CLI (canonical install) OR Hermes on PATH
+  // together with config.yaml under ~/.hermes. A bare empty ~/.hermes plus a
+  // global `hermes` binary (e.g. after legacy Windows repair used to mkdir -p
+  // unconditionally) must not count as "configured" — that blocked reinstall.
+  if (!state.hasDir) return false;
+  if (state.hasVenvCli) return true;
+  return state.hasPathCli && state.hasConfig;
 };
 
 const finalizeInstallVerification = async (result: CommandResult, onOutput?: CommandOutputHandler): Promise<CommandResult> => {
@@ -244,8 +249,8 @@ const finalizeInstallVerification = async (result: CommandResult, onOutput?: Com
   }
 
   const failure = [
-    '[verify] Install finished, but no usable Hermes CLI was found.',
-    '[verify] Expected either ~/.hermes/venv/bin/hermes or a hermes binary on PATH.',
+    '[verify] Install finished, but no usable Hermes install was found under ~/.hermes.',
+    '[verify] Expected ~/.hermes/venv/bin/hermes, or config.yaml plus a hermes binary on PATH.',
   ].join('\n');
 
   onOutput?.({ type: 'stderr', data: `${failure}\n` });
