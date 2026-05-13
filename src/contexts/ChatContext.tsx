@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from "react";
+// Hermes v0.13.0 sync — May 2026 (Ronbot)
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type Dispatch, type SetStateAction } from "react";
 import { useLocation } from "react-router-dom";
 import { systemAPI } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
@@ -28,6 +29,7 @@ import type { ChatMessage } from "@/lib/chat/types";
 import { analyzePermissionMismatch } from "@/lib/chat/permissionMismatch";
 import { ChatStreamTurnState } from "@/lib/chat/streamHandlers";
 import { fireToolUnavailableNotice } from "@/lib/chat/toolUnavailableNotice";
+import { stripHermesMarkers, publishHermesMarkers } from "@/lib/chat/hermesMarkers";
 
 export type { ChatMessage };
 
@@ -68,7 +70,7 @@ interface ChatContextValue {
   markChatViewed: () => void;
   startNewSession: () => void;
   draft: string;
-  setDraft: (value: string) => void;
+  setDraft: Dispatch<SetStateAction<string>>;
   sendIntentResponse: (
     assistantMsgId: string,
     intent: AgentIntent,
@@ -362,13 +364,20 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             ? splitIntentsFromText(reply)
             : { text: reply, intents: [] as AgentIntent[], errors: [] };
 
+          let assistantVisible = split.text;
+          if (result.success && !result.missingKey && !matFailed) {
+            const stripped = stripHermesMarkers(split.text);
+            assistantVisible = stripped.text;
+            publishHermesMarkers(stripped.markers);
+          }
+
           setMessages((prev) =>
             prev.map((m) =>
               m.id === item.placeholderId
                 ? {
                     ...m,
                     content: result.success && !result.missingKey
-                      ? split.text
+                      ? assistantVisible
                       : matFailed
                         ? `Failed to sync your secrets to the agent. Open App Diagnostics for the exact shell error.\n\n${result.stderr || ""}`
                         : result.missingKey

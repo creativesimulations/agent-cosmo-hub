@@ -7,6 +7,7 @@ import AppLayout from "./components/layout/AppLayout";
 import { InstallProvider } from "./contexts/InstallContext";
 import { AgentConnectionProvider } from "./contexts/AgentConnectionContext";
 import { ChatProvider } from "./contexts/ChatContext";
+import MarkerModalHost from "./components/chat/MarkerModalHost";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { PermissionsProvider } from "./contexts/PermissionsContext";
 import { CapabilitiesProvider } from "./contexts/CapabilitiesContext";
@@ -46,6 +47,7 @@ const App = () => (
               <CapabilitiesProvider>
                 <InstallProvider>
                   <ChatProvider>
+                    <MarkerModalHost />
                     <WelcomeDialog />
                     <Routes>
                       <Route element={<AppLayout />}>

@@ -1,3 +1,4 @@
+// Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { coreAPI } from './core';
 import { secretsStore } from './secretsStore';
 import { sudoAPI } from './sudo';
@@ -22,10 +23,14 @@ import {
   RONBOT_ELECTRON_APP_GUIDE_VERSION,
 } from './hermes/ronbotRules';
 import { buildDefaultSoulMarkdown, parseAgentDisplayNameFromSoul } from './hermes/defaultPersonalityMarkdown';
+import { seedCustomPersonalityFiles } from './hermes/personalitySeed';
 import {
-  backupHermesPersonalityToTimestampedFolder,
-  writeRonbotDefaultPersonalityFiles,
-} from './hermes/personalitySeed';
+  saveDefaultPersonalityPreset,
+  listPersonalityPresets,
+  savePersonalityPreset,
+  applyPersonalityPreset as installPersonalityPresetFiles,
+  deletePersonalityPreset,
+} from './hermes/personalities';
 import {
   HERMES_DIR,
   HERMES_ENV,
@@ -77,7 +82,7 @@ import {
 } from './hermes/chatOutput';
 import { parseSubAgentLog } from './hermes/subAgentLog';
 
-export { buildInstallerRunScript, BROWSER_EXECUTABLE_FIX_SCRIPT } from './hermes/constants';
+export { buildOfficialHermesInstallScript, buildInstallerRunScript, BROWSER_EXECUTABLE_FIX_SCRIPT } from './hermes/constants';
 export { parseCronListOutput, parseProfileListOutput, parsePluginsListOutput, parseInsightsOutput };
 export type { CommandOutputHandler } from './hermes/shell';
 
@@ -190,8 +195,12 @@ const repairBrokenYamlList = async (): Promise<void> => {
 const inspectHermesInstall = async (): Promise<HermesInstallState> => {
   await repairLegacyWindowsInstall();
   await repairBrokenYamlList();
+  // Match PATH expansion used by `runHermesCli` / chat so Homebrew, snap,
+  // and ~/.local installs are visible — a bare venv+.local PATH misses
+  // `/opt/homebrew/bin` and makes `isConfigured` false while `hermes --version`
+  // from the GUI shell (richer PATH) still succeeds.
   const result = await runHermesShell([
-    'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
+    HERMES_PATH_EXPORT,
     `if [ -d "${HERMES_DIR}" ]; then echo "HAS_DIR=1"; else echo "HAS_DIR=0"; fi`,
     `if [ -f "${HERMES_ENV}" ]; then echo "HAS_ENV=1"; else echo "HAS_ENV=0"; fi`,
     `if [ -f "${HERMES_CONFIG}" ]; then echo "HAS_CONFIG=1"; else echo "HAS_CONFIG=0"; fi`,
@@ -527,6 +536,27 @@ export const hermesAPI = {
   async setBrowserCdpUrl(url: string | null) {
     return setBrowserCdpUrl(url);
   },
+  /** Probe Hermes CLI version text (`hermes version` then `hermes --version`). */
+  async getHermesCliVersionSummary(): Promise<{
+    ok: boolean;
+    text: string;
+    /** True when output suggests Hermes v0.13.x is already present. */
+    looksLikeV013: boolean;
+  }> {
+    const r = await runHermesShell(
+      [
+        HERMES_PATH_EXPORT,
+        'OUT="$(hermes version 2>/dev/null || true)"',
+        'if [ -z "$OUT" ]; then OUT="$(hermes --version 2>/dev/null || true)"; fi',
+        'echo "$OUT"',
+      ].join('\n'),
+      { timeout: 20_000 },
+    );
+    const text = ((r.stdout || '') + (r.stderr || '')).trim();
+    const looksLikeV013 = /\b0\.13\.\d+/.test(text) || /\bhermes\s+0\.13\b/i.test(text);
+    return { ok: r.success, text: text.slice(0, 800), looksLikeV013 };
+  },
+
   /** Install the agent using the official install script.
    *  On Windows we always run inside WSL because hermes-agent is not published
    *  to PyPI and requires the install script (which expects a POSIX shell). */
@@ -2114,6 +2144,28 @@ model: ${options.model || 'openrouter/auto'}
     return { success: r.success !== false, error: r.success === false ? r.stderr || 'restart failed' : undefined };
   },
 
+  async listPersonalityPresets() {
+    if (!isElectron()) return { success: false, presets: [], error: 'browser-mode' };
+    return listPersonalityPresets();
+  },
+
+  async savePersonalityPreset(name: string) {
+    if (!isElectron()) return { success: false, error: 'browser-mode' };
+    return savePersonalityPreset(name);
+  },
+
+  async applyPersonalityPreset(name: string): Promise<{ success: boolean; error?: string }> {
+    if (!isElectron()) return { success: false, error: 'browser-mode' };
+    const applied = await installPersonalityPresetFiles(name);
+    if (!applied.success) return applied;
+    return this.restartAgent();
+  },
+
+  async deletePersonalityPreset(name: string) {
+    if (!isElectron()) return { success: false, error: 'browser-mode' };
+    return deletePersonalityPreset(name);
+  },
+
   /**
    * Write/refresh the Ronbot-owned rules block inside ~/.hermes/AGENTS.md.
    *
@@ -2195,21 +2247,26 @@ model: ${options.model || 'openrouter/auto'}
     error?: string;
   }> {
     if (!isElectron()) return { success: false, error: 'browser-mode' };
-    const backup = await backupHermesPersonalityToTimestampedFolder();
-    if (!backup.success) {
-      return { success: false, error: backup.error || 'Personality backup failed' };
-    }
-    const wrote = await writeRonbotDefaultPersonalityFiles(agentName);
+    const wrote = await seedCustomPersonalityFiles(agentName);
     if (!wrote.success) {
       return { success: false, error: wrote.error || 'Writing default persona files failed' };
     }
     await this.writeElectronAppGuide().catch(() => undefined);
     await this.writeRonbotAgentRules().catch(() => undefined);
     await this.writeRonbotAppGuide().catch(() => undefined);
+    const preset = await saveDefaultPersonalityPreset();
+    if (!preset.success) {
+      return {
+        success: false,
+        backupDir: wrote.backupDir,
+        filesMoved: wrote.filesMoved,
+        error: preset.error ?? 'Default Saved Personality snapshot failed',
+      };
+    }
     return {
       success: true,
-      backupDir: backup.backupDir,
-      filesMoved: backup.movedCount,
+      backupDir: wrote.backupDir,
+      filesMoved: wrote.filesMoved,
     };
   },
 };

@@ -182,7 +182,14 @@ export const coreAPI = {
   },
 
   async selectFolder(options?: { title?: string; defaultPath?: string }): Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }> {
-    if (isElectron() && window.electronAPI?.selectFolder) {
+    if (isElectron()) {
+      if (typeof window.electronAPI?.selectFolder !== 'function') {
+        return {
+          success: false,
+          error:
+            'Folder picker is not available (preload bridge missing selectFolder). Rebuild or reinstall the Ronbot desktop app.',
+        };
+      }
       return window.electronAPI.selectFolder(options);
     }
     // Browser dev fallback — prompt for a path so the panel still functions.

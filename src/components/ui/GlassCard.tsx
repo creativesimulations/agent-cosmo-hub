@@ -37,7 +37,7 @@ const GlassCard = React.forwardRef<HTMLDivElement, GlassCardProps>(
         ref={ref}
         className={cn("rounded-xl p-5", glassClass, glowClass, className)}
         {...animProps}
-        {...(props as any)}
+        {...(props as React.HTMLAttributes<HTMLDivElement>)}
       >
         {children}
       </Wrapper>

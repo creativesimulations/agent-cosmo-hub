@@ -57,7 +57,7 @@ export const systemAPI = {
   sudo: sudoAPI,
 
   // Hermes Agent
-  installHermes: hermesAPI.install.bind(hermesAPI),
+  getHermesCliVersionSummary: hermesAPI.getHermesCliVersionSummary.bind(hermesAPI),
   installHermesFromLocalFolder: hermesAPI.installFromLocalFolder.bind(hermesAPI),
   hermesDoctor: hermesAPI.doctor.bind(hermesAPI),
   analyzeDoctorIssues: hermesAPI.analyzeDoctorIssues.bind(hermesAPI),
@@ -111,6 +111,10 @@ export const systemAPI = {
   setBusyInputMode: hermesAPI.setBusyInputMode.bind(hermesAPI),
   launchHermesDashboard: hermesAPI.launchHermesDashboard.bind(hermesAPI),
   restartAgent: hermesAPI.restartAgent.bind(hermesAPI),
+  listPersonalityPresets: hermesAPI.listPersonalityPresets.bind(hermesAPI),
+  savePersonalityPreset: hermesAPI.savePersonalityPreset.bind(hermesAPI),
+  applyPersonalityPreset: hermesAPI.applyPersonalityPreset.bind(hermesAPI),
+  deletePersonalityPreset: hermesAPI.deletePersonalityPreset.bind(hermesAPI),
   writeRonbotAgentRules: hermesAPI.writeRonbotAgentRules.bind(hermesAPI),
   writeRonbotAppGuide: hermesAPI.writeRonbotAppGuide.bind(hermesAPI),
   writeElectronAppGuide: hermesAPI.writeElectronAppGuide.bind(hermesAPI),

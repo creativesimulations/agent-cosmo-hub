@@ -1,3 +1,4 @@
+// Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { useState } from "react";
 import {
   Activity,
@@ -202,27 +203,40 @@ const RightInfoPanel = () => {
           ) : live.subAgents.length === 0 ? (
             <EmptyRow>No active sub-agents.</EmptyRow>
           ) : (
-            live.subAgents.map((s) => (
+            live.subAgents.map((s) => {
+              const title = (s.displayName && s.displayName !== s.goal ? s.displayName : s.goal) || s.id;
+              return (
               <div
                 key={s.id}
                 className="text-[12px] glass-subtle rounded-md px-2 py-1.5"
               >
-                <p className="text-foreground font-medium truncate" title={s.goal}>
-                  {s.goal || s.id}
+                <p className="text-foreground font-medium truncate" title={title}>
+                  {title}
                 </p>
+                {s.displayName && s.displayName !== s.goal && (
+                  <p className="text-[10px] text-muted-foreground truncate" title={s.goal}>
+                    {s.goal}
+                  </p>
+                )}
+                {s.model && (
+                  <p className="text-[10px] text-muted-foreground/90 font-mono truncate" title={s.model}>
+                    {s.model}
+                  </p>
+                )}
                 {s.lastEvent && (
                   <p className="text-[10px] text-muted-foreground truncate">
                     {s.lastEvent}
                   </p>
                 )}
               </div>
-            ))
+            );
+            })
           )}
         </Section>
 
         {/* Cron */}
         <Section
-          title="Cron"
+          title="Scheduled jobs"
           icon={CalendarClock}
           count={live.cronJobs.length}
           storageKey="ronbot.right.cron"
@@ -230,7 +244,7 @@ const RightInfoPanel = () => {
           {live.loading ? (
             <Skeleton className="h-8 w-full" />
           ) : live.cronJobs.length === 0 ? (
-            <EmptyRow>No scheduled jobs. Ask Ron to create one.</EmptyRow>
+            <EmptyRow>No one-shot or calendar triggers. Ask Ron to schedule something.</EmptyRow>
           ) : (
             live.cronJobs.map((j) => (
               <div
@@ -263,7 +277,7 @@ const RightInfoPanel = () => {
 
         {/* Recurring jobs */}
         <Section
-          title="Recurring jobs"
+          title="Recurring schedules"
           icon={Heart}
           count={live.recurringJobs.length}
           storageKey="ronbot.right.recurring"
@@ -271,7 +285,7 @@ const RightInfoPanel = () => {
           {live.loading ? (
             <Skeleton className="h-8 w-full" />
           ) : live.recurringJobs.length === 0 ? (
-            <EmptyRow>No recurring jobs. Ask Ron to create one.</EmptyRow>
+            <EmptyRow>No cron-style recurring jobs (from hermes cron list).</EmptyRow>
           ) : (
             live.recurringJobs.map((j) => (
               <div

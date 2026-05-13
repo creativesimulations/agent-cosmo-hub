@@ -98,6 +98,10 @@ const SettingsPage = () => {
   const [busyInputMode, setBusyInputMode] = useState<"queue" | "interrupt" | "steer">("queue");
 
   const [personalityOpen, setPersonalityOpen] = useState(false);
+  const [personalityPresets, setPersonalityPresets] = useState<Array<{ name: string; mtimeSec: number }>>([]);
+  const [presetsLoading, setPresetsLoading] = useState(false);
+  const [presetBusy, setPresetBusy] = useState(false);
+  const [newPresetName, setNewPresetName] = useState("");
 
   useEffect(() => {
     if (!agentConnected) return;
@@ -174,6 +178,77 @@ const SettingsPage = () => {
     })();
     return () => { cancelled = true; };
   }, [agentConnected]);
+
+  useEffect(() => {
+    if (!agentConnected) return;
+    let cancelled = false;
+    void (async () => {
+      setPresetsLoading(true);
+      const r = await systemAPI.listPersonalityPresets();
+      if (cancelled) return;
+      if (r.success) setPersonalityPresets(r.presets);
+      setPresetsLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [agentConnected]);
+
+  const refreshPersonalityPresets = async () => {
+    const r = await systemAPI.listPersonalityPresets();
+    if (r.success) setPersonalityPresets(r.presets);
+  };
+
+  const handleSavePersonalityPreset = async () => {
+    const trimmed = newPresetName.trim();
+    if (!trimmed) {
+      toast.error("Enter a preset name");
+      return;
+    }
+    setPresetBusy(true);
+    const r = await systemAPI.savePersonalityPreset(trimmed);
+    setPresetBusy(false);
+    if (r.success) {
+      setNewPresetName("");
+      toast.success("Saved personality preset", {
+        description: `Stored under ~/.hermes/personalities/${trimmed}/`,
+      });
+      await refreshPersonalityPresets();
+    } else {
+      toast.error("Could not save preset", { description: r.error });
+    }
+  };
+
+  const handleApplyPersonalityPreset = async (presetName: string) => {
+    setPresetBusy(true);
+    const r = await systemAPI.applyPersonalityPreset(presetName);
+    setPresetBusy(false);
+    if (r.success) {
+      toast.success("Preset applied", {
+        description: "Live persona files updated and gateway restarted.",
+      });
+      await refreshConnection();
+      await refreshPersonalityPresets();
+    } else {
+      toast.error("Apply failed", { description: r.error });
+    }
+  };
+
+  const handleDeletePersonalityPreset = async (presetName: string) => {
+    if (presetName === "Default") {
+      toast.error("Refusing to delete the Default snapshot");
+      return;
+    }
+    setPresetBusy(true);
+    const r = await systemAPI.deletePersonalityPreset(presetName);
+    setPresetBusy(false);
+    if (r.success) {
+      toast.success("Preset deleted");
+      await refreshPersonalityPresets();
+    } else {
+      toast.error("Delete failed", { description: r.error });
+    }
+  };
 
   const handleBusyInputModeChange = (next: "queue" | "interrupt" | "steer") => {
     delegateToAgent(
@@ -400,6 +475,84 @@ const SettingsPage = () => {
               <Sparkles className="w-4 h-4 mr-1.5" />
               Change personality
             </Button>
+          </div>
+        </SettingsSection>
+      )}
+
+      {agentConnected && (
+        <SettingsSection icon={Users} title="Saved Personalities">
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Snapshot the live SOUL / PERSONALITY / AGENTS / memory files into{" "}
+              <code className="font-mono text-xs">~/.hermes/personalities/&lt;name&gt;/</code>. Applying
+              overwrites the active files (after a backup) and restarts the Hermes gateway.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-end">
+              <div className="flex-1 space-y-1">
+                <Label htmlFor="preset-name">Save current as preset</Label>
+                <Input
+                  id="preset-name"
+                  placeholder="e.g. WorkFocus"
+                  value={newPresetName}
+                  onChange={(e) => setNewPresetName(e.target.value)}
+                  disabled={presetBusy}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={presetBusy || !newPresetName.trim()}
+                onClick={() => void handleSavePersonalityPreset()}
+              >
+                {presetBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 mr-1.5" />}
+                Save
+              </Button>
+            </div>
+            <div className="rounded-md border border-white/10 divide-y divide-white/10">
+              {presetsLoading ? (
+                <p className="p-3 text-xs text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading presets…
+                </p>
+              ) : personalityPresets.length === 0 ? (
+                <p className="p-3 text-xs text-muted-foreground">No presets yet. Save one after install.</p>
+              ) : (
+                personalityPresets.map((p) => (
+                  <div
+                    key={p.name}
+                    className="flex flex-col sm:flex-row sm:items-center gap-2 p-3 text-sm"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-foreground truncate">{p.name}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Updated {new Date(p.mtimeSec * 1000).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={presetBusy}
+                        onClick={() => void handleApplyPersonalityPreset(p.name)}
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                        Apply
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        disabled={presetBusy || p.name === "Default"}
+                        onClick={() => void handleDeletePersonalityPreset(p.name)}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </SettingsSection>
       )}

@@ -1,3 +1,4 @@
+// Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { useRef, useEffect, useState } from "react";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { useChat } from "@/contexts/ChatContext";
@@ -28,6 +29,7 @@ import { IntentCard } from "@/components/intents";
 import ChatEmptyState from "@/components/chat/ChatEmptyState";
 import SlashCommandPalette from "@/components/chat/SlashCommandPalette";
 import { useChatComposer } from "@/hooks/useChatComposer";
+import { LazyChatMessageMarkdown } from "@/components/chat/LazyChatMessageMarkdown";
 
 const AgentChat = () => {
   const { connected: agentConnected } = useAgentConnection();
@@ -358,13 +360,16 @@ const AgentChat = () => {
                       <Clock className="w-3 h-3" /> Queued — waiting for previous reply…
                     </p>
                   )}
-                  {(!msg.queued || msg.role === "user" || msg.content) && (
+                  {(!msg.queued || msg.role === "user" || msg.content) &&
+                    (msg.role === "assistant" && !msg.streaming ? (
+                      <LazyChatMessageMarkdown content={msg.content} />
+                    ) : (
                     <p className="text-sm whitespace-pre-wrap">
                       {msg.role === "user" && msg.intentResponseSummary
                         ? msg.intentResponseSummary
                         : msg.content}
                     </p>
-                  )}
+                    ))}
                   {msg.streaming && (
                     <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
                   )}

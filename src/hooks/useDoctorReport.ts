@@ -121,7 +121,6 @@ export const useDoctorReport = () => {
 
   useEffect(() => {
     refreshSummaries();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSyncSecrets = async () => {

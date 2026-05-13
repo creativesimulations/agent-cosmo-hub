@@ -1,11 +1,22 @@
+// Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { createContext, useContext, useRef, useState, ReactNode, useCallback, useMemo, useEffect } from "react";
 import { systemAPI } from "@/lib/systemAPI";
 import { sudoAPI, promptForPasswordMac } from "@/lib/systemAPI/sudo";
 import { useAgentConnection } from "./AgentConnectionContext";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export type Mode = "choose" | "connect" | "install" | "guard";
-export type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type InstallStep = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 export type InstallSource = "bundled" | "local";
 
 export interface OptionalFeature {
@@ -22,6 +33,9 @@ export const OPTIONAL_FEATURES: OptionalFeature[] = [
   { id: "web", label: "Web tools (search + extract)", description: "Built-in web_search and web_extract — recommended; basic browsing works without a backend", pipExtra: "web" },
 ];
 
+/** Pip extras passed to every official / local-folder Hermes install (no UI toggles). */
+const ALL_HERMES_PIP_EXTRAS = OPTIONAL_FEATURES.map((o) => o.pipExtra);
+
 const ALLOWED_STEP_TRANSITIONS: Record<InstallStep, InstallStep[]> = {
   0: [1],
   1: [0, 2],
@@ -29,8 +43,7 @@ const ALLOWED_STEP_TRANSITIONS: Record<InstallStep, InstallStep[]> = {
   3: [2, 4],
   4: [3, 5],
   5: [4, 6],
-  6: [5, 7],
-  7: [6],
+  6: [5],
 };
 
 interface InstallContextValue {
@@ -52,10 +65,6 @@ interface InstallContextValue {
   /** Local-folder install only: if true, back up SOUL/MEMORY/PERSONALITY/USER and replace with Ronbot defaults. */
   replaceWithRonbotPersonalityTemplates: boolean;
   setReplaceWithRonbotPersonalityTemplates: (v: boolean) => void;
-
-  // Optional features
-  selectedFeatures: string[];
-  toggleFeature: (id: string) => void;
 
   // Install run state
   installing: boolean;
@@ -117,10 +126,9 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
   const [localAgentPath, setLocalAgentPath] = useState<string>("");
   const [replaceWithRonbotPersonalityTemplates, setReplaceWithRonbotPersonalityTemplates] = useState(true);
 
-  const [selectedFeatures, setSelectedFeatures] = useState<string[]>(["voice", "messaging", "web"]);
-
   useEffect(() => {
     setReplaceWithRonbotPersonalityTemplates(installSource !== "local");
+    bundledForceReinstallRef.current = false;
   }, [installSource]);
 
   const [installing, setInstalling] = useState(false);
@@ -128,6 +136,9 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
   const [installProgress, setInstallProgress] = useState(0);
   const [installOutput, setInstallOutput] = useState<string[]>([]);
   const installIdRef = useRef(0);
+  /** User confirmed running the official installer again while v0.13.x is already detected. */
+  const bundledForceReinstallRef = useRef(false);
+  const [bundledReinstallDialogOpen, setBundledReinstallDialogOpen] = useState(false);
 
   const [agentName, setAgentName] = useState("Ron");
   const [selectedProvider, setSelectedProvider] = useState("openrouter");
@@ -176,22 +187,40 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
     });
   }, []);
 
-  const toggleFeature = useCallback((featureId: string) => {
-    setSelectedFeatures((prev) =>
-      prev.includes(featureId) ? prev.filter((f) => f !== featureId) : [...prev, featureId]
-    );
-  }, []);
-
   const handleInstallAgent = useCallback(async () => {
+    if (installSource === "bundled" && !bundledForceReinstallRef.current) {
+      try {
+        const probe = await systemAPI.getHermesCliVersionSummary();
+        if (probe.looksLikeV013 && probe.text.length > 0) {
+          setInstallOutput((prev) => [
+            ...prev,
+            "Checking installed Hermes version…",
+            `Detected: ${probe.text.split("\n")[0] ?? probe.text}`,
+            "Hermes v0.13.x is already installed. The official script is safe to re-run.",
+            "Use “Reinstall latest” in the dialog to continue, or cancel and use Connect if you only need the dashboard.",
+          ]);
+          setBundledReinstallDialogOpen(true);
+          return;
+        }
+      } catch {
+        /* continue with install */
+      }
+    }
+
     const myInstallId = ++installIdRef.current;
     setInstalling(true);
     setInstallComplete(false);
     setInstallProgress(0);
-    const extrasLabel = selectedFeatures.length > 0 ? ` with extras: ${selectedFeatures.join(", ")}` : "";
-    setInstallOutput([`Starting agent installation${extrasLabel}...`]);
+    setInstallOutput((prev) => [
+      ...prev.filter((l) => !l.includes("Use “Reinstall latest”")),
+      installSource === "bundled"
+        ? "Starting official Hermes install (curl … | bash from GitHub)…"
+        : `Starting local-folder install with extras: ${ALL_HERMES_PIP_EXTRAS.join(", ")}…`,
+    ]);
 
     // ─── Step 1: detect needed apt packages ─────────────────────
-    const needFfmpeg = selectedFeatures.includes("voice");
+    const needFfmpeg =
+      installSource === "local" && ALL_HERMES_PIP_EXTRAS.includes("voice");
     const aptPackages: string[] = [];
 
     if (needFfmpeg) {
@@ -281,9 +310,10 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
     // ─── Step 3: run the Hermes installer ───────────────────────
     setInstallOutput((prev) => [
       ...prev,
-      "Verifying Python and pip...",
-      "Downloading installer script...",
-      "ℹ This can take several minutes — pip is fetching dependencies. Live output will appear below.",
+      installSource === "bundled"
+        ? "Running the official Hermes installer (this may take several minutes)…"
+        : "Verifying Python and pip…",
+      "Live output will appear below.",
     ]);
 
     // Slowly creep the bar up to 90% so the user sees movement even before
@@ -326,17 +356,13 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
         setInstallProgress((prev) => Math.min(Math.max(prev, 92), 97));
       };
 
-      const extras = selectedFeatures.map((f) => OPTIONAL_FEATURES.find((o) => o.id === f)?.pipExtra).filter(Boolean) as string[];
       const result = installSource === "local" && localAgentPath
         ? await systemAPI.installHermesFromLocalFolder(
             localAgentPath,
-            extras.length > 0 ? extras : undefined,
+            ALL_HERMES_PIP_EXTRAS,
             handleOutput,
           )
-        : await systemAPI.installHermes(
-            extras.length > 0 ? extras : undefined,
-            handleOutput,
-          );
+        : await systemAPI.installHermes(undefined, handleOutput);
 
       // Flush any trailing partial line.
       if (buffered.trim() && installIdRef.current === myInstallId) {
@@ -358,13 +384,13 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
             const seed = await systemAPI.seedRonbotPersonalityAfterInstall(nameForSeed);
             if (installIdRef.current !== myInstallId) return;
             if (seed.success) {
-              const moved = seed.filesMoved ?? 0;
+              const updated = seed.filesMoved ?? 0;
               setInstallOutput((prev) => [
                 ...prev,
-                moved > 0
-                  ? `✓ Moved ${moved} existing file(s) to backup: ${seed.backupDir ?? "~/.hermes/.ronbot-personality-backup/<timestamp>"}`
-                  : `✓ Backup folder ready${seed.backupDir ? ` (${seed.backupDir})` : ""} — no prior Ronbot-target persona files to move.`,
-                "✓ Installed Ronbot SOUL.md, PERSONALITY.md, memories/MEMORY.md, memories/USER.md, ELECTRON_APP_GUIDE.md, and refreshed AGENTS.md / app guide.",
+                updated > 0
+                  ? `✓ Updated ${updated} persona file(s); prior copies saved under ~/.hermes/.ronbot-personality-backup/`
+                  : "✓ Core persona files left unchanged (already customized or match Ronbot defaults). Refreshed guides and Saved Personalities snapshot.",
+                "✓ Ronbot SOUL.md, PERSONALITY.md, memories/MEMORY.md, memories/USER.md, ELECTRON_APP_GUIDE.md, AGENTS.md / app guide, and personalities/Default preset.",
               ]);
             } else {
               setInstallOutput((prev) => [
@@ -414,7 +440,7 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
           duration: 8000,
         });
         setTimeout(() => {
-          if (installIdRef.current === myInstallId) setInstallStepState(3);
+          if (installIdRef.current === myInstallId) setInstallStepState(2);
         }, 1000);
       } else {
         const stderr = (result.stderr || "").trim();
@@ -428,13 +454,13 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
         }
         setInstallOutput((prev) => [...prev, ...lines]);
       }
+      bundledForceReinstallRef.current = false;
     } finally {
       clearInterval(progressInterval);
       clearInterval(heartbeatInterval);
     }
     setInstalling(false);
   }, [
-    selectedFeatures,
     requestSudoPassword,
     markConnected,
     refreshConnection,
@@ -443,6 +469,12 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
     agentName,
     replaceWithRonbotPersonalityTemplates,
   ]);
+
+  const confirmBundledHermesReinstall = useCallback(() => {
+    bundledForceReinstallRef.current = true;
+    setBundledReinstallDialogOpen(false);
+    void handleInstallAgent();
+  }, [handleInstallAgent]);
 
   const cancelInstall = useCallback(() => {
     installIdRef.current++;
@@ -633,8 +665,6 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       setLocalAgentPath,
       replaceWithRonbotPersonalityTemplates,
       setReplaceWithRonbotPersonalityTemplates,
-      selectedFeatures,
-      toggleFeature,
       installing,
       installComplete,
       installProgress,
@@ -670,7 +700,6 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       installSource,
       localAgentPath,
       replaceWithRonbotPersonalityTemplates,
-      selectedFeatures,
       installing,
       installComplete,
       installProgress,
@@ -694,14 +723,30 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       launching,
       launchOutput,
       runLaunch,
-      toggleFeature,
     ],
   );
 
   return (
-    <InstallContext.Provider value={installContextValue}>
-      {children}
-    </InstallContext.Provider>
+    <>
+      <InstallContext.Provider value={installContextValue}>
+        {children}
+      </InstallContext.Provider>
+      <AlertDialog open={bundledReinstallDialogOpen} onOpenChange={setBundledReinstallDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reinstall Hermes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Hermes v0.13.x is already installed. Running the official installer again will re-run the latest GitHub script
+              (safe, but may take several minutes). Cancel if you only wanted to open the app.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBundledHermesReinstall}>Reinstall latest</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 };
 

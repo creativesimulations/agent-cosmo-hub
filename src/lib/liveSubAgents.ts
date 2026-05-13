@@ -27,6 +27,10 @@ export interface LiveSubAgent {
   reason?: string; // for failures
   /** Short human-readable last activity ("using a tool", "thinking", etc.) */
   lastEvent?: string;
+  /** Optional friendly label parsed from streamed delegate_task metadata. */
+  displayName?: string;
+  /** Optional model hint when the parent names one for the delegate. */
+  model?: string;
 }
 
 type Listener = (snapshot: LiveSubAgent[]) => void;
@@ -106,6 +110,21 @@ class LiveSubAgentStore {
     const trimmed = goal.trim().slice(0, 400);
     if (!trimmed) return;
     item.goal = trimmed;
+    this.emit();
+  }
+
+  /** Merge optional display name / model parsed from later stream chunks. */
+  updateMeta(id: string, patch: { displayName?: string; model?: string }) {
+    const item = this.items.get(id);
+    if (!item) return;
+    if (patch.displayName) {
+      const d = patch.displayName.trim().slice(0, 120);
+      if (d) item.displayName = d;
+    }
+    if (patch.model) {
+      const m = patch.model.trim().slice(0, 120);
+      if (m) item.model = m;
+    }
     this.emit();
   }
 

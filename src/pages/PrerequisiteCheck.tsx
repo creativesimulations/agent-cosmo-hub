@@ -10,6 +10,7 @@ import {
   ChevronRight,
   RotateCcw,
   Sparkles,
+  Link2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -47,11 +48,18 @@ const initialPrereqs: Prerequisite[] = [
   { id: "pip", name: "pip", description: "Auto-installed by Hermes (uv) into its own venv", status: "pending", tier: "auto" },
 ];
 
-const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
+type PrerequisiteCheckProps = {
+  onComplete: () => void;
+  /** When Hermes CLI is detected, offer the same connect path as Home → Connect. */
+  onConnectExisting?: () => void | Promise<void>;
+};
+
+const PrerequisiteCheck = ({ onComplete, onConnectExisting }: PrerequisiteCheckProps) => {
   const [prereqs, setPrereqs] = useState(initialPrereqs);
   const [scanning, setScanning] = useState(false);
   const [scanComplete, setScanComplete] = useState(false);
   const [hermesInstalled, setHermesInstalled] = useState<{ installed: boolean; version?: string } | null>(null);
+  const [connectBusy, setConnectBusy] = useState(false);
 
   const updatePrereq = (id: string, updates: Partial<Prerequisite>) => {
     setPrereqs((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
@@ -237,21 +245,49 @@ const PrerequisiteCheck = ({ onComplete }: { onComplete: () => void }) => {
               )}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              Skip ahead — no system prerequisites needed.
+              You can open the dashboard now if Ronbot can see your <code className="text-foreground">~/.hermes</code> folder and CLI, or continue the wizard to reinstall or change setup.
             </p>
           </div>
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => { setHermesInstalled(null); setScanComplete(false); }}
-          >
-            <RotateCcw className="w-3 h-3 mr-1" /> Re-scan
-          </Button>
-          <Button onClick={onComplete} className="gradient-primary text-primary-foreground flex-1">
-            Continue <ChevronRight className="w-4 h-4 ml-1" />
-          </Button>
+        <div className="flex flex-col gap-2">
+          {onConnectExisting && (
+            <Button
+              type="button"
+              disabled={connectBusy}
+              onClick={async () => {
+                setConnectBusy(true);
+                try {
+                  await onConnectExisting();
+                } finally {
+                  setConnectBusy(false);
+                }
+              }}
+              className="w-full gradient-primary text-primary-foreground"
+            >
+              {connectBusy ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" /> Connecting…
+                </>
+              ) : (
+                <>
+                  <Link2 className="w-4 h-4 mr-2" /> Connect to this agent
+                </>
+              )}
+            </Button>
+          )}
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              onClick={() => { setHermesInstalled(null); setScanComplete(false); }}
+            >
+              <RotateCcw className="w-3 h-3 mr-1" /> Re-scan
+            </Button>
+            <Button type="button" onClick={onComplete} variant="outline" className="flex-1">
+              Continue setup wizard <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
         </div>
       </div>
     );

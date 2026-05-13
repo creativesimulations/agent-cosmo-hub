@@ -26,3 +26,35 @@ export function extractDelegationGoal(buf: string): string {
   }
   return "(no goal captured)";
 }
+
+const quoted = (key: string) =>
+  new RegExp(`["']?${key}["']?\\s*[:=]\\s*["']([^"']{1,200})["']`, "i");
+
+/**
+ * Best-effort parse of optional delegate_task / sub-agent fields from the
+ * trailing stream buffer (Hermes may emit JSON-ish argument blocks).
+ */
+export function extractDelegateMetadata(buf: string): {
+  displayName?: string;
+  model?: string;
+} {
+  const slice = buf.slice(-6000);
+  const out: { displayName?: string; model?: string } = {};
+  const nameKeys = ["display_name", "displayName", "agent_name", "name", "title", "label"];
+  for (const k of nameKeys) {
+    const m = slice.match(quoted(k));
+    if (m?.[1]) {
+      const v = m[1].trim();
+      if (v.length >= 2 && v.length <= 120) {
+        out.displayName = v;
+        break;
+      }
+    }
+  }
+  const modelM = slice.match(quoted("model")) || slice.match(/\bmodel\s*[:=]\s*([a-z0-9][a-z0-9._\-:/]{1,80})/i);
+  if (modelM?.[1]) {
+    const v = modelM[1].trim();
+    if (v.length >= 2 && v.length <= 120) out.model = v;
+  }
+  return out;
+}

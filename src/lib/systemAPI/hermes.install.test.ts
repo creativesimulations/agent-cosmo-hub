@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildInstallerRunScript } from "./hermes";
+import { buildOfficialHermesInstallScript, buildInstallerRunScript } from "./hermes/constants";
 
-describe("hermes installer run script", () => {
-  it("uses the exact non-interactive installer command", () => {
-    const script = buildInstallerRunScript();
-    expect(script).toContain("setsid bash /tmp/hermes-install.sh --skip-setup </dev/null 2>&1");
+describe("Hermes official bundled installer", () => {
+  it("uses curl | bash from GitHub (Hermes v0.13+)", () => {
+    const script = buildOfficialHermesInstallScript();
+    expect(script).toContain("curl -fsSL");
+    expect(script).toContain("| bash");
+    expect(buildInstallerRunScript()).toBe(script);
   });
 });
-

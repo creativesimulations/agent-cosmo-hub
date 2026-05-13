@@ -1,3 +1,4 @@
+// Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { coreAPI } from "../core";
 import { isElectron } from "../types";
 import type { CommandResult } from "../types";

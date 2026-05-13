@@ -1,76 +1,100 @@
-Ronbot Control Panel — Cursor Rules (v3.0)These rules apply to the Ronbot Control Panel: a clean, production-grade Electron desktop companion for the Hermes agent (Nous Research). The app’s role is to install the latest official Hermes (if requested) and seed custom personality files, then act as a novice-friendly live dashboard and chat interface. The agent itself owns all configuration, skills, platforms, and customization via natural chat.Core Product VisionThe app is a lightweight installer + companion dashboard, not a heavy controller or wizard system.
-Primary interface = in-app chat with Hermes (Home tab).
-After installation, the app seeds the user’s custom personality files so the agent immediately behaves as intended.
-The agent handles all ongoing configuration (connecting WhatsApp/Discord, adding skills, creating cron jobs, sub-agents, etc.) through chat.
-App is read-only for changes: buttons only insert helpful pre-filled prompts into the chat.
-Must remain novice-friendly, simple, clean, and suitable for casual users.
-Cross-platform: fully functional on macOS, Linux, and Windows (via WSL2). Never assume native Windows support.
+# Ronbot Control Panel — Cursor Rules (v3.1)
 
-Installer RequirementsOn first launch or via Install page: detect if Hermes is already installed (hermes version or binary check).
-If not installed or user chooses “Install latest Hermes”, run the official one-line installer from GitHub:bash
+**Hermes target:** v0.13.0 (The Tenacity Release) — May 2026. Keep CLI and file layout aligned with [official Hermes docs](https://hermes-agent.nousresearch.com/docs/) and [hermes-agent on GitHub](https://github.com/NousResearch/hermes-agent).
 
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+These rules apply to the Ronbot Control Panel: a production-grade Electron desktop companion for the Hermes agent (Nous Research). The app installs the latest official Hermes when requested, seeds custom personality files, and acts as a novice-friendly live dashboard and chat interface. The agent owns ongoing configuration (skills, platforms, cron, sub-agents) via natural chat.
 
-(This always installs the newest version.)
-Use runCommandStream with proper OS detection and WSL2 routing on Windows.
-After successful install: auto-start the gateway, then seed the custom personality files (see below).
-Show rich progress UI with live streamed output and clear success/failure states.
+## Core product vision
 
-Personality File Seeding (post-install)Immediately after install, atomically write the following files to ~/.hermes/ (or the equivalent WSL2 path):SOUL.md
-PERSONALITY.md
-memories/MEMORY.md
-memories/USER.md
-AGENTS.md (include a short instruction that points the agent to ELECTRON_APP_GUIDE.md for how to interact with the app — modals for QR codes, password/key requests, etc.)
+- Lightweight installer + companion dashboard — not a heavy wizard system.
+- Primary interface = in-app chat with Hermes (Home tab).
+- After installation, automatically seed the user’s custom personality files.
+- App is read-only for structural changes: buttons insert helpful pre-filled prompts into chat unless explicitly scoped (e.g. Saved Personalities apply).
+- Novice-friendly, simple, clean, suitable for casual users.
+- Cross-platform: macOS, Linux, Windows via **WSL2 only** for Hermes — never assume native Windows Hermes support.
 
-Use safe, managed file writing (read first if exists, only overwrite default Hermes content). Never blindly overwrite user customizations.Architecture — never break these patternsAll OS access goes through window.electronAPI → src/lib/systemAPI/*. Never import child_process, fs, path, os in renderer code.
-IPC handlers live in electron/main.cjs. Bridge surface is electron/preload.cjs (CommonJS).
-Secrets go through secretsStore (src/lib/systemAPI/secretsStore.ts). Never write secrets to ~/.hermes/.env from the UI. Materialize on demand only.
-Long-running commands use runCommandStream + onCommandOutput. Always store the unsubscribe function and call it in cleanup.
-State: React contexts only. No Redux, Zustand, Jotai, Recoil.
-Routing: HashRouter only (file:// compatible).
-Vite base: "./" in vite.config.ts is mandatory.
+## Installer (Hermes v0.13.0 sync)
 
-Hermes-Specific RulesUse only official Hermes CLI commands and the official install script. Never invent custom install methods.
-After seeding personality files, the agent is responsible for all further setup (platforms, skills, cron, sub-agents, etc.).
-Preserve existing left sidebar + tab structure.
-On the Home (chat) tab only: add a collapsible right sidebar showing live agent activity (sub-agents, cron jobs, heartbeat tasks).
-Auto-refresh right sidebar every 5 seconds via lightweight polling of official Hermes commands.
-Modals for QR codes, images, password/key requests, etc., triggered by special markers in agent responses.
-Maintain ~/.hermes/ELECTRON_APP_GUIDE.md so the agent knows how to interact with the app.
-Gateway: auto-start on app launch after install. Provide simple dashboard controls (start/stop/restart).
+- On first launch or Install page: detect Hermes via **`hermes version`** (fallback: `hermes --version`) and optional “reinstall latest” when already current.
+- **Bundled install path:** After prerequisite checks pass, run **only** the official one-liner (streamed, OS-aware, WSL2 on Windows):
 
-Code Quality & Maintainability (new emphasis)Write clean, readable, efficient TypeScript code. Follow standard professional patterns.
-Prefer small, focused functions and components.
-Regularly remove unused code, dead imports, and commented-out sections.
-Avoid spaghetti code, deep nesting, and duplicated logic.
-Keep the codebase minimal — the app is intentionally lightweight.
-Use existing contexts (CapabilitiesContext, InstallContext, etc.) as the single source of truth.
-Preserve all existing architecture rules (IPC boundary, secretsStore, etc.).
-Avoid patches and workarounds.
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+  ```
 
-Stack — do not deviateVite 5 + React 18 + TypeScript 5 + Tailwind 3 + shadcn/ui + framer-motion
-Electron 41, packaged with @electron/packager (NOT electron-builder)
-Package manager: bun (bun.lockb)
-Testing: vitest + @testing
--library/react
+- Do **not** add a separate post-install `pip install -e ...[extras]` for the bundled flow unless official docs require it.
+- Use `runCommandStream` + proper OS detection and WSL2 routing. Never run installers from the renderer.
+- After successful install: auto-start gateway as today, then run **post-install personality seeding** (see below). Rich progress UI with live logs and clear success/failure.
 
-Design system — token-driven onlyAll colors are HSL CSS variables in src/index.css. Never use raw hex/rgb.
-Use semantic Tailwind tokens and existing glass utilities.
-Fonts: Inter (body), JetBrains Mono (code/logs).
+## Post-install personality seeding
 
-SecurityNever echo secrets in logs.
-Never write secrets directly to .env from UI.
+Immediately after install, ensure `~/.hermes/` and `~/.hermes/memories/` exist. Atomically / safely write (read-first; only overwrite known default Hermes content — never blindly overwrite user customizations):
 
-NeverNever reintroduce heavy wizards for WhatsApp, skills, platforms, etc. The agent now owns these via chat.
-Never reintroduce Supabase, Lovable Cloud, or any remote backend.
-Never run package managers from renderer — always through runCommand.
-Never use electron-builder.
-Never assume native Windows support for Hermes — always route through WSL2 on Windows.
-Never expose raw CLI output to the user unless in a controlled progress view.
+- `SOUL.md`, `PERSONALITY.md`, `memories/MEMORY.md`, `memories/USER.md`, `AGENTS.md`, `ELECTRON_APP_GUIDE.md`
+- `AGENTS.md` must point the agent to `~/.hermes/ELECTRON_APP_GUIDE.md` for Ronbot UI interaction (modals, QR, passwords, graphs).
+- After seeding, save the **Default** Saved Personality preset under `~/.hermes/personalities/Default/`.
 
-App-specific notesIn-app chat is the primary way users communicate with Hermes.
-Ronbot / Hermes naming: use “Hermes” where it improves clarity.
-Provider-agnostic: all model/API keys managed via secretsStore.
-CapabilitiesContext remains the single source of truth for displayed capabilities.
-Preserve cross-platform installer and WSL2 support exactly as built.
+## Saved Personalities
 
+- Presets live under `~/.hermes/personalities/<name>/` (persona files: SOUL, PERSONALITY, memories, AGENTS as specified in product).
+- All file operations go through `window.electronAPI` / `src/lib/systemAPI/*` (shell-backed copies), not Node in the renderer.
+
+## Home / chat UX
+
+- Preserve left sidebar + tab structure.
+- **Home tab only:** collapsible **right** sidebar — sub-agents, cron / scheduled jobs, heartbeat or recurring activity; poll every **5 seconds** using official Hermes CLI commands.
+- Chat renders **Markdown** and **Mermaid** where appropriate.
+- **Modal markers** in agent text (examples): `[SHOW_QR]`, `[REQUEST_PASSWORD]`, `[SHOW_BRAID_GRAPH]` — global modal host; never echo secrets in logs.
+
+## Architecture — never break
+
+- All OS access: `window.electronAPI` → `src/lib/systemAPI/*`. Never import `child_process`, `fs`, `path`, `os` in renderer code.
+- IPC: `electron/main.cjs` (and modules); bridge: `electron/preload.cjs` (CommonJS).
+- Secrets: `secretsStore` only — never write secrets to `~/.hermes/.env` from the UI; materialize on demand.
+- Long-running commands: `runCommandStream` + `onCommandOutput`; unsubscribe in cleanup.
+- State: React contexts only (no Redux/Zustand/Jotai/Recoil).
+- Routing: **HashRouter** only (`file://` compatible).
+- Vite `base: "./"` in `vite.config.ts` is mandatory.
+
+## Hermes-specific
+
+- Use only official Hermes CLI commands and the official install script URL above.
+- Gateway: auto-start after install; dashboard start/stop/restart controls.
+- Maintain seeded `~/.hermes/ELECTRON_APP_GUIDE.md` for agent ↔ app protocol.
+
+## Stack — do not deviate
+
+- Vite 5 + React 18 + TypeScript 5 + Tailwind 3 + shadcn/ui + framer-motion
+- Electron 41, `@electron/packager` (NOT electron-builder)
+- Package manager: bun (`bun.lockb`)
+- Testing: vitest + @testing-library/react
+
+## Design system
+
+- Token-driven: HSL CSS variables in `src/index.css`; semantic Tailwind tokens; glass utilities.
+- Fonts: Inter (body), JetBrains Mono (code/logs).
+
+## Security
+
+- Never echo secrets in logs.
+- Never write secrets directly to `.env` from UI.
+
+## Never
+
+- Heavy wizards for WhatsApp/skills/platforms — agent owns via chat.
+- Supabase, Lovable Cloud, remote backends.
+- Run package managers from renderer — always through IPC `runCommand` / stream.
+- electron-builder.
+- Native Windows Hermes — WSL2 only.
+- Raw CLI dumps except in controlled install/diagnostic views.
+
+## Lockfiles and CI
+
+- GitHub Actions release workflow uses **`npm ci`** (requires `package-lock.json` at repo root).
+- When dependencies change, refresh **`package-lock.json`** with `npm install`. If you use **Bun** locally, also run `bun install` so `bun.lockb` stays in sync.
+
+## Code quality
+
+- Small focused functions; remove dead code and unused imports.
+- Single source of truth: CapabilitiesContext, InstallContext, etc.
+- Tier-1 Hermes-touching files carry a one-line banner: `Hermes v0.13.0 sync — May 2026 (Ronbot)`.

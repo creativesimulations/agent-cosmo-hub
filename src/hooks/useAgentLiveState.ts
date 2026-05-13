@@ -10,6 +10,8 @@ export interface SubAgentLite {
   goal: string;
   startedAt: string;
   lastEvent?: string;
+  displayName?: string;
+  model?: string;
 }
 
 export interface CronJobLite {
@@ -65,6 +67,20 @@ const toSubAgentLite = (s: LiveSubAgent): SubAgentLite => ({
   goal: s.goal,
   startedAt: s.startedAt,
   lastEvent: s.lastEvent,
+  displayName: s.displayName,
+  model: s.model,
+});
+
+const logRowToLite = (a: {
+  id: string;
+  goal: string;
+  startedAt: string;
+  lastEvent?: string;
+}): SubAgentLite => ({
+  id: a.id,
+  goal: a.goal,
+  startedAt: a.startedAt,
+  lastEvent: a.lastEvent,
 });
 
 export function useAgentLiveState(intervalMs = 5000): LiveState & { refresh: () => void } {
@@ -76,11 +92,12 @@ export function useAgentLiveState(intervalMs = 5000): LiveState & { refresh: () 
     if (!connected || ticking.current) return;
     ticking.current = true;
     try {
-      const [nameRes, cfgRes, cron, statusRes] = await Promise.all([
+      const [nameRes, cfgRes, cron, statusRes, subAgentsRes] = await Promise.all([
         systemAPI.getAgentName().catch(() => null),
         systemAPI.readConfig().catch(() => ({ success: false, content: "" })),
         systemAPI.listScheduledJobs().catch(() => ({ success: false, jobs: [] as CronJobLite[] })),
         systemAPI.hermesStatus().catch(() => ({ success: false, stdout: "", stderr: "" })),
+        systemAPI.listSubAgents().catch(() => ({ success: false, active: [] as SubAgentLite[] })),
       ]);
 
       const cfgText = (cfgRes as { content?: string }).content || "";
@@ -95,12 +112,39 @@ export function useAgentLiveState(intervalMs = 5000): LiveState & { refresh: () 
       const recurring = allJobs.filter(isRecurring);
       const oneShots = allJobs.filter((j) => !isRecurring(j));
 
+      const subRes = subAgentsRes as {
+        success?: boolean;
+        active?: Array<{ id: string; goal: string; startedAt: string; lastEvent?: string }>;
+      };
+      const logActive = subRes?.success && Array.isArray(subRes.active) ? subRes.active : [];
+
+      const streamRunning = liveSubAgents
+        .list()
+        .filter((s) => s.status === "running")
+        .slice(0, 6)
+        .map(toSubAgentLite);
+      let subAgents = streamRunning;
+      if (subAgents.length === 0 && logActive.length > 0) {
+        subAgents = logActive.slice(0, 6).map(logRowToLite);
+      } else if (subAgents.length > 0 && logActive.length > 0) {
+        for (const row of logActive) {
+          const g = row.goal.slice(0, 48);
+          const match = subAgents.find(
+            (s) =>
+              s.goal.slice(0, 48) === g ||
+              s.goal.includes(g) ||
+              row.goal.includes(s.goal.slice(0, 48)),
+          );
+          if (match && !match.lastEvent && row.lastEvent) match.lastEvent = row.lastEvent;
+        }
+      }
+
       setState({
         agentName: nameRes || "Agent",
         model,
         health,
         healthDetail,
-        subAgents: liveSubAgents.list().filter((s) => s.status === "running").slice(0, 6).map(toSubAgentLite),
+        subAgents,
         cronJobs: oneShots.slice(0, 8),
         recurringJobs: recurring.slice(0, 8),
         loading: false,

@@ -1,3 +1,4 @@
+// Hermes v0.13.0 sync — May 2026 (Ronbot)
 /**
  * Static markdown the agent reads from disk (written by `hermes.ts`):
  *   - RONBOT_RULES_BLOCK   → injected into ~/.hermes/AGENTS.md
@@ -41,19 +42,24 @@ export const RONBOT_RULES_BLOCK = [
   '- For passwords, codes, QRs, OAuth links, confirms, file pickers, and',
   '  long-running progress: emit a fenced ```ronbot-intent``` JSON card.',
   '  NEVER ask for a secret in plain prose.',
+  '- **Stream markers (Ronbot chat modals):** when you must trigger the desktop',
+  '  UI outside of intents, you may emit `[SHOW_QR]`, `[REQUEST_PASSWORD]`, or',
+  '  `[SHOW_BRAID_GRAPH]` exactly as documented in `~/.hermes/ELECTRON_APP_GUIDE.md`.',
   '- The user reply comes back as a ```ronbot-intent-response``` block keyed',
   '  by the `id` you chose.',
   '- **Full protocol:** `~/.ronbot/APP_GUIDE.md` — intent types, optional fields,',
   '  response shapes, recipes, and how Ronbot’s Skills/Capabilities UI relates to',
   '  Hermes (there is no `ronbot-intent` to edit that UI).',
-  '- **Short index (Hermes dir + in-app routes):** `~/.hermes/ELECTRON_APP_GUIDE.md`.',
+  '- **Short index (Hermes dir + in-app routes + markers + Saved Personalities):**',
+  '  `~/.hermes/ELECTRON_APP_GUIDE.md`.',
+  '- See `~/.hermes/ELECTRON_APP_GUIDE.md` for how to interact with the Ronbot desktop app.',
   '- Identify yourself by the name in `~/.hermes/SOUL.md`, never as "Hermes".',
   '',
 ].join('\n');
 
 export const RONBOT_APP_GUIDE_VERSION = '<!-- ronbot-app-guide v2 -->';
 
-export const RONBOT_ELECTRON_APP_GUIDE_VERSION = '<!-- ronbot-electron-app-guide v2 -->';
+export const RONBOT_ELECTRON_APP_GUIDE_VERSION = '<!-- ronbot-electron-app-guide v3 -->';
 
 /**
  * Lives under ~/.hermes/ so it sits beside SOUL / AGENTS where Hermes loads
@@ -67,8 +73,41 @@ export const RONBOT_ELECTRON_APP_GUIDE = [
   '',
   '- Default agent dir: `~/.hermes/` — `SOUL.md`, `AGENTS.md` (includes Ronbot’s',
   '  managed block), `memories/MEMORY.md`, `memories/USER.md`, skills, config.',
-  '- Official CLI: `hermes chat` auto-injects those unless `--ignore-rules` is',
-  '  set (see Nous Hermes CLI reference).',
+  '- Official CLI (Hermes v0.13.x): `hermes chat` auto-injects those unless',
+  '  `--ignore-rules` is set (see Nous Hermes CLI reference).',
+  '',
+  '## Saved Personalities (Ronbot presets)',
+  '',
+  '- Ronbot can snapshot the active persona files into `~/.hermes/personalities/<name>/`',
+  '  (copies of `SOUL.md`, `PERSONALITY.md`, `AGENTS.md`, `memories/MEMORY.md`,',
+  '  `memories/USER.md`).',
+  '- After install, a **Default** preset is created from the seeded files.',
+  '- Applying a preset overwrites the live files under `~/.hermes/` (Ronbot backs',
+  '  up the previous copies first) and restarts the gateway.',
+  '- `ELECTRON_APP_GUIDE.md` is not duplicated per preset — it stays in `~/.hermes/`.',
+  '',
+  '## Stream markers → Ronbot modals (outside intent cards)',
+  '',
+  'Use these **single-line** markers in assistant prose when a `ronbot-intent`',
+  'card is not the right fit. Ronbot strips them from the bubble and opens a modal.',
+  '',
+  '- **`[SHOW_QR]`** — same line: payload is either a `data:image/...;base64,...` URL,',
+  '  an `https://` image URL, or raw text/URL to encode as a QR.',
+  '- **`[REQUEST_PASSWORD]<purpose>`** — optional purpose after the closing `]` on the',
+  '  same line (e.g. `[REQUEST_PASSWORD]OpenAI API key`). Ronbot collects the secret',
+  '  and inserts it into the user’s chat draft; prefer `credential_request` intents',
+  '  when you need structured multi-field input.',
+  '- **`[SHOW_BRAID_GRAPH]`** — optional Mermaid body: put the marker on its own line,',
+  '  then a fenced code block whose language is `mermaid` (open fence, `mermaid`,',
+  '  newline, diagram, close fence).',
+  '',
+  '  Example:',
+  '',
+  '      [SHOW_BRAID_GRAPH]',
+  '      ```mermaid',
+  '      flowchart LR',
+  '        A --> B',
+  '      ```',
   '',
   '## Ronbot desktop routes (HashRouter)',
   '',

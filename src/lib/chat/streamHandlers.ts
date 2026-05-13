@@ -1,5 +1,5 @@
 import { detectToolCalls } from "@/lib/toolUseDetection";
-import { extractDelegationGoal } from "@/lib/chat/streamGoals";
+import { extractDelegationGoal, extractDelegateMetadata } from "@/lib/chat/streamGoals";
 import { liveSubAgents } from "@/lib/liveSubAgents";
 
 /** Regexes for permission-relevant tool names in streamed Hermes output. */
@@ -96,6 +96,8 @@ export class ChatStreamTurnState {
         const goal = batchGoals[i] || extractDelegationGoal(this.streamBuf);
         const id = liveSubAgents.spawn(goal);
         this.turnLiveIds.push(id);
+        const meta = extractDelegateMetadata(this.streamBuf);
+        if (meta.displayName || meta.model) liveSubAgents.updateMeta(id, meta);
       }
       this.liveCount += spawnMatches.length;
       setLiveSubAgentCount(this.liveCount);
@@ -109,6 +111,12 @@ export class ChatStreamTurnState {
           if (current && current.goal === "(no goal captured)") {
             liveSubAgents.updateGoal(id, lateGoal);
           }
+        }
+      }
+      const meta = extractDelegateMetadata(this.streamBuf);
+      if (meta.displayName || meta.model) {
+        for (const id of this.turnLiveIds) {
+          liveSubAgents.updateMeta(id, meta);
         }
       }
     }

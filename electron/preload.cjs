@@ -1,3 +1,4 @@
+/* Hermes v0.13.0 sync — May 2026 (Ronbot) */
 const path = require('path');
 const { contextBridge, ipcRenderer } = require('electron');
 

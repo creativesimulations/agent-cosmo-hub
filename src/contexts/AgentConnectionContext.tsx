@@ -1,3 +1,4 @@
+// Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { systemAPI } from "@/lib/systemAPI";
 import { useSettings } from "./SettingsContext";
@@ -55,7 +56,8 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
       return null;
     }
   });
-  const inFlight = useRef(false);
+  /** Coalesce concurrent refresh() calls (mount + user "Connect") into one probe. */
+  const refreshPromiseRef = useRef<Promise<boolean> | null>(null);
   const autoStartedRef = useRef(false);
   const startupBootstrapRef = useRef(false);
 
@@ -96,31 +98,38 @@ export const AgentConnectionProvider = ({ children }: { children: ReactNode }) =
   }, []);
 
   const refresh = useCallback(async () => {
-    if (inFlight.current) return connected;
-    inFlight.current = true;
-    setStatus("checking");
-    setError(null);
-    try {
-      const configured = await systemAPI.isConfigured();
-      if (configured) {
-        setConnected(true);
-        setStatus("connected");
-        setLocation("~/.hermes");
-        return true;
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
+
+    const run = (async (): Promise<boolean> => {
+      setStatus("checking");
+      setError(null);
+      try {
+        const configured = await systemAPI.isConfigured();
+        if (configured) {
+          setConnected(true);
+          setStatus("connected");
+          setLocation("~/.hermes");
+          return true;
+        }
+        setConnected(false);
+        setStatus("disconnected");
+        setLocation(null);
+        return false;
+      } catch (e) {
+        setConnected(false);
+        setStatus("disconnected");
+        setError(e instanceof Error ? e.message : String(e));
+        return false;
       }
-      setConnected(false);
-      setStatus("disconnected");
-      setLocation(null);
-      return false;
-    } catch (e) {
-      setConnected(false);
-      setStatus("disconnected");
-      setError(e instanceof Error ? e.message : String(e));
-      return false;
+    })();
+
+    refreshPromiseRef.current = run;
+    try {
+      return await run;
     } finally {
-      inFlight.current = false;
+      if (refreshPromiseRef.current === run) refreshPromiseRef.current = null;
     }
-  }, [connected]);
+  }, []);
 
   const markConnected = useCallback((loc?: string) => {
     setConnected(true);

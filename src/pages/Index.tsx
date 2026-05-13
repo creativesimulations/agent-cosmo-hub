@@ -18,7 +18,6 @@ import {
   Cpu,
   Terminal,
   Stethoscope,
-  Settings2,
   XCircle,
   FolderOpen,
   HardDrive,
@@ -47,7 +46,7 @@ import { IndexGuardPanel } from "@/components/install/IndexGuardPanel";
 import { StreamingLogPanel } from "@/components/install/StreamingLogPanel";
 import InstallPreflight from "@/components/install/InstallPreflight";
 import { systemAPI } from "@/lib/systemAPI";
-import { useInstall, OPTIONAL_FEATURES, InstallStep } from "@/contexts/InstallContext";
+import { useInstall, InstallStep } from "@/contexts/InstallContext";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import ronbotLogo from "@/assets/ronbot-logo.png";
 import { LLM_PROVIDERS, MODEL_OPTIONS } from "@/lib/llmCatalog";
@@ -66,7 +65,6 @@ const Index = () => {
     localAgentPath, setLocalAgentPath,
     replaceWithRonbotPersonalityTemplates,
     setReplaceWithRonbotPersonalityTemplates,
-    selectedFeatures, toggleFeature,
     installing, installComplete, installProgress, installOutput,
     handleInstallAgent, cancelInstall,
     agentName, setAgentName,
@@ -105,6 +103,26 @@ const Index = () => {
     if (ok) {
       markConnected("~/.hermes");
       navigate("/dashboard");
+    } else {
+      toast.error("No agent detected", {
+        description:
+          "Ronbot needs a Hermes CLI on PATH and a ~/.hermes directory. If Hermes works in your terminal but not here, ensure the same PATH (e.g. Homebrew) is available to GUI apps.",
+      });
+    }
+  };
+
+  /** Wizard prereq screen: Hermes CLI detected — same verification as Home → Connect. */
+  const handleWizardConnectExisting = async () => {
+    const ok = await refreshConnection();
+    if (ok) {
+      markConnected("~/.hermes");
+      navigate("/dashboard");
+      toast.success("Connected to your agent");
+    } else {
+      toast.error("Could not verify ~/.hermes", {
+        description:
+          "Ronbot needs the Hermes CLI plus a ~/.hermes directory. If you use a custom layout, run the official installer once or use Detect & Connect from the home screen after fixing PATH.",
+      });
     }
   };
 
@@ -114,6 +132,15 @@ const Index = () => {
   const beginInstallFlow = async (source: "bundled" | "local", localPath = "") => {
     setPendingSource(source);
     setPendingLocalPath(localPath);
+    // User already chose a source directory — do not send them to the
+    // "~/.hermes exists" guard (that applies to bundled overwrite risk).
+    if (source === "local" && localPath) {
+      setInstallSource("local");
+      setLocalAgentPath(localPath);
+      setMode("install");
+      setInstallStep(0);
+      return;
+    }
     try {
       const installed = await systemAPI.isConfigured();
       if (installed) {
@@ -131,9 +158,19 @@ const Index = () => {
   };
 
   const handlePickLocalAgent = async () => {
-    const res = await systemAPI.selectFolder({ title: "Select your agent folder" });
-    if (!res.success || res.canceled || !res.path) return;
-    await beginInstallFlow("local", res.path);
+    try {
+      const res = await systemAPI.selectFolder({ title: "Select your agent folder" });
+      if (!res.success) {
+        toast.error("Could not open folder picker", { description: res.error ?? "Unknown error" });
+        return;
+      }
+      if (res.canceled || !res.path) return;
+      await beginInstallFlow("local", res.path);
+    } catch (e) {
+      toast.error("Could not open folder picker", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
   };
 
   const handleStartBundledInstall = () => {
@@ -221,7 +258,7 @@ const Index = () => {
     }
     setWizardError("");
     await refreshConnection();
-    setInstallStep(6);
+    setInstallStep(5);
   };
 
   const handleConfirmCancel = () => {
@@ -457,64 +494,23 @@ const Index = () => {
               <div className="glass-subtle rounded-lg p-4 space-y-3">
                 {/* Step 0: Prerequisites */}
                 {installStep === 0 && (
-                  <PrerequisiteCheck onComplete={() => setInstallStep(1)} />
+                  <PrerequisiteCheck
+                    onComplete={() => setInstallStep(1)}
+                    onConnectExisting={handleWizardConnectExisting}
+                  />
                 )}
 
-                {/* Step 1: Optional Features */}
+                {/* Step 1: Install Agent */}
                 {installStep === 1 && (
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Settings2 className="w-4 h-4 text-primary" />
-                      <span className="text-sm font-medium text-foreground">Optional Features</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Select optional add-ons you may want later. Ron can install and chat without these.
-                    </p>
-
-                    <div className="space-y-2">
-                      {OPTIONAL_FEATURES.map((feature) => (
-                        <button
-                          key={feature.id}
-                          onClick={() => toggleFeature(feature.id)}
-                          className={cn(
-                            "w-full text-left glass-subtle rounded-lg p-3 transition-all flex items-start gap-3",
-                            selectedFeatures.includes(feature.id)
-                              ? "border border-primary/20 bg-primary/5"
-                              : "border border-transparent"
-                          )}
-                        >
-                          <Checkbox
-                            checked={selectedFeatures.includes(feature.id)}
-                            onCheckedChange={() => toggleFeature(feature.id)}
-                            className="mt-0.5"
-                          />
-                          <div>
-                            <p className="text-sm font-medium text-foreground">{feature.label}</p>
-                            <p className="text-xs text-muted-foreground">{feature.description}</p>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-
-                    <Button
-                      onClick={() => setInstallStep(2)}
-                      className="w-full gradient-primary text-primary-foreground"
-                    >
-                      Continue <ArrowRight className="w-4 h-4 ml-1" />
-                    </Button>
-                  </div>
-                )}
-
-                {/* Step 2: Install Agent */}
-                {installStep === 2 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Download className="w-4 h-4 text-primary" />
                       <span className="text-sm font-medium text-foreground">Install Agent</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      This will {installSource === "local" ? "install your local agent folder" : "download and install the Ronbot agent framework"}
-                      {selectedFeatures.length > 0 && ` with ${selectedFeatures.map(f => OPTIONAL_FEATURES.find(o => o.id === f)?.label).filter(Boolean).join(", ")}`}.
+                      {installSource === "local"
+                        ? "This will pip-install your local agent folder with extras (voice, messaging, cron, web)."
+                        : "This will run the official Hermes installer from GitHub (curl … | bash), matching Hermes v0.13+."}
                     </p>
 
                     <div className="glass-subtle rounded-lg p-3 flex items-start gap-2 border border-white/5">
@@ -620,8 +616,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 3: Name Your Agent */}
-                {installStep === 3 && (
+                {/* Step 2: Name Your Agent */}
+                {installStep === 2 && (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2">
                       <User className="w-4 h-4 text-primary" />
@@ -649,7 +645,7 @@ const Index = () => {
                           toast.error("Could not save agent name", { description: "Check ~/.hermes permissions and try again." });
                           return;
                         }
-                        setInstallStep(4);
+                        setInstallStep(3);
                       }}
                       className="w-full gradient-primary text-primary-foreground"
                     >
@@ -658,8 +654,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 4: API Keys */}
-                {installStep === 4 && (
+                {/* Step 3: API Keys */}
+                {installStep === 3 && (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2">
                       <KeyRound className="w-4 h-4 text-primary" />
@@ -741,7 +737,7 @@ const Index = () => {
                       )}
                       {keySaved && (
                         <Button
-                          onClick={() => setInstallStep(5)}
+                          onClick={() => setInstallStep(4)}
                           className="flex-1 gradient-primary text-primary-foreground"
                         >
                           Continue <ArrowRight className="w-4 h-4 ml-1" />
@@ -751,8 +747,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 5: Choose Model */}
-                {installStep === 5 && (
+                {/* Step 4: Choose Model */}
+                {installStep === 4 && (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2">
                       <Cpu className="w-4 h-4 text-primary" />
@@ -788,8 +784,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 6: Verify */}
-                {installStep === 6 && (
+                {/* Step 5: Verify */}
+                {installStep === 5 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Stethoscope className="w-4 h-4 text-primary" />
@@ -831,7 +827,7 @@ const Index = () => {
                           </p>
                         </div>
                         <Button
-                          onClick={() => setInstallStep(7)}
+                          onClick={() => setInstallStep(6)}
                           className="w-full gradient-primary text-primary-foreground"
                         >
                           Continue to Launch <ArrowRight className="w-4 h-4 ml-1" />
@@ -841,8 +837,8 @@ const Index = () => {
                   </div>
                 )}
 
-                {/* Step 7: Launch */}
-                {installStep === 7 && (
+                {/* Step 6: Launch */}
+                {installStep === 6 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Terminal className="w-4 h-4 text-primary" />
@@ -869,7 +865,7 @@ const Index = () => {
               {/* Nav buttons */}
               {installStep > 0 && (
                 <div className="flex justify-between">
-                  {!installing && !doctorRunning && installStep !== 3 && installStep !== 6 && installStep !== 7 ? (
+                  {!installing && !doctorRunning && installStep !== 2 && installStep !== 5 && installStep !== 6 ? (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -881,7 +877,7 @@ const Index = () => {
                   ) : (
                     <span />
                   )}
-                  {installStep === 7 && launchOutput.some((l) => l.includes("All systems operational")) && (
+                  {installStep === 6 && launchOutput.some((l) => l.includes("All systems operational")) && (
                     <Button
                       size="sm"
                       onClick={() => navigate("/")}

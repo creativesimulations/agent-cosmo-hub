@@ -1,5 +1,6 @@
 import { coreAPI } from './core';
 import type { CommandResult } from './types';
+import { runHermesShell, HERMES_PATH_EXPORT } from './hermes/shell';
 
 /** Prerequisite detection and installation */
 export const prereqAPI = {
@@ -158,7 +159,13 @@ export const prereqAPI = {
 
   /** Check if Hermes Agent is already installed */
   async checkHermes(): Promise<{ installed: boolean; version?: string }> {
-    const result = await coreAPI.runCommand('hermes --version');
+    // Use the same PATH Ronbot uses for probes/installs (venv, ~/.local,
+    // Homebrew, snap) — bare `hermes --version` can miss the CLI and disagree
+    // with `systemAPI.isConfigured()`.
+    const result = await runHermesShell(
+      [HERMES_PATH_EXPORT, 'hermes --version 2>&1'].join('\n'),
+      { timeout: 15000 },
+    );
     if (result.success) {
       const version = result.stdout.match(/(\d+\.\d+[.\d]*)/);
       return { installed: true, version: version?.[1] };

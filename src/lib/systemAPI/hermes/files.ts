@@ -1,3 +1,4 @@
+// Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { coreAPI } from "../core";
 import { encodeScript, runHermesShell } from "./shell";
 

@@ -1,4 +1,5 @@
 'use strict';
+/* Hermes v0.13.0 sync — May 2026 (Ronbot) */
 
 const os = require('os');
 const fs = require('fs');
@@ -94,9 +95,15 @@ function registerFsHandlers(ipcMain, BrowserWindow, dialog, IPC) {
     });
   });
 
-  ipcMain.handle(IPC.SELECT_FOLDER, async (_event, options = {}) => {
+  ipcMain.handle(IPC.SELECT_FOLDER, async (event, options = {}) => {
     try {
-      const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+      // Prefer the window that invoked IPC — getFocusedWindow() is often null
+      // right after a click (or on some Linux/Wayland setups), which breaks
+      // modal attachment and can prevent the native picker from appearing.
+      const win =
+        BrowserWindow.fromWebContents(event.sender) ||
+        BrowserWindow.getFocusedWindow() ||
+        BrowserWindow.getAllWindows()[0];
       const defaultPath = options.defaultPath || os.homedir();
       const result = win
         ? await dialog.showOpenDialog(win, {

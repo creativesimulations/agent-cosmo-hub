@@ -1,3 +1,4 @@
+// Hermes v0.13.0 sync — May 2026 (Ronbot)
 /** Paths and install URLs used across Hermes system API modules. */
 
 export const HERMES_DIR = '$HOME/.hermes';
@@ -5,10 +6,17 @@ export const HERMES_ENV = '$HOME/.hermes/.env';
 export const HERMES_CONFIG = '$HOME/.hermes/config.yaml';
 export const INSTALL_SCRIPT =
   'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh';
-export const INSTALLER_ENTRYPOINT =
-  'setsid bash /tmp/hermes-install.sh --skip-setup </dev/null 2>&1';
 
-export const buildInstallerRunScript = (): string => INSTALLER_ENTRYPOINT;
+/** Official Hermes one-liner (v0.13+). Run inside bash after prereqs; streamed via runHermesShell. */
+export const buildOfficialHermesInstallScript = (): string =>
+  [
+    'set -e',
+    'export DEBIAN_FRONTEND=noninteractive',
+    `curl -fsSL "${INSTALL_SCRIPT}" | bash`,
+  ].join('\n');
+
+/** @deprecated use buildOfficialHermesInstallScript — kept for grep/tests migration */
+export const buildInstallerRunScript = (): string => buildOfficialHermesInstallScript();
 
 /** Inline script size limit before staging to disk (argv / ENAMETOOLONG safety). */
 export const INLINE_SCRIPT_LIMIT = 4096;
