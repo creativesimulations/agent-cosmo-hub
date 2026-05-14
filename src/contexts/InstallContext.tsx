@@ -188,19 +188,25 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const handleInstallAgent = useCallback(async () => {
+    // Only offer "re-run official installer" when a *usable* layout exists
+    // (~/.hermes venv CLI, or Hermes on PATH + config.yaml). A stray `hermes`
+    // binary on PATH without that layout must not block the full wizard.
     if (installSource === "bundled" && !bundledForceReinstallRef.current) {
       try {
-        const probe = await systemAPI.getHermesCliVersionSummary();
-        if (probe.looksLikeV013 && probe.text.length > 0) {
-          setInstallOutput((prev) => [
-            ...prev,
-            "Checking installed Hermes version…",
-            `Detected: ${probe.text.split("\n")[0] ?? probe.text}`,
-            "Hermes v0.13.x is already installed. The official script is safe to re-run.",
-            "Use “Reinstall latest” in the dialog to continue, or cancel and use Connect if you only need the dashboard.",
-          ]);
-          setBundledReinstallDialogOpen(true);
-          return;
+        const usable = await systemAPI.isConfigured();
+        if (usable) {
+          const probe = await systemAPI.getHermesCliVersionSummary();
+          if (probe.looksLikeV013 && probe.text.length > 0) {
+            setInstallOutput((prev) => [
+              ...prev,
+              "Checking installed Hermes version…",
+              `Detected: ${probe.text.split("\n")[0] ?? probe.text}`,
+              "Hermes v0.13.x is already installed. The official script is safe to re-run.",
+              "Use “Reinstall latest” in the dialog to continue, or cancel and use Connect if you only need the dashboard.",
+            ]);
+            setBundledReinstallDialogOpen(true);
+            return;
+          }
         }
       } catch {
         /* continue with install */
