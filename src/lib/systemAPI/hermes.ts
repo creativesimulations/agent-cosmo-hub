@@ -81,6 +81,12 @@ import {
   stripAnsi,
 } from './hermes/chatOutput';
 import { parseSubAgentLog } from './hermes/subAgentLog';
+import {
+  parseKeyValueProbeLines,
+  probeRecordToState,
+  hasUsableHermesInstall,
+  type HermesInstallProbe,
+} from './hermes/installProbe';
 
 export { buildOfficialHermesInstallScript, buildInstallerRunScript, BROWSER_EXECUTABLE_FIX_SCRIPT } from './hermes/constants';
 export { parseCronListOutput, parseProfileListOutput, parsePluginsListOutput, parseInsightsOutput };
@@ -145,24 +151,6 @@ const repairLegacyWindowsInstall = async (): Promise<void> => {
   );
 };
 
-type HermesInstallState = {
-  hasDir: boolean;
-  hasEnv: boolean;
-  hasConfig: boolean;
-  hasVenvCli: boolean;
-  hasPathCli: boolean;
-};
-
-const parseProbeOutput = (stdout: string): Record<string, string> => {
-  return stdout.split('\n').reduce<Record<string, string>>((acc, line) => {
-    const trimmed = line.trim();
-    const eqIndex = trimmed.indexOf('=');
-    if (eqIndex <= 0) return acc;
-    acc[trimmed.slice(0, eqIndex)] = trimmed.slice(eqIndex + 1);
-    return acc;
-  }, {});
-};
-
 /** Bash fragment: in-place repair for configs left broken by older builds.
  *  Must not `exit` the shell — it is composed ahead of the install probe so
  *  both run in one `runHermesShell` (critical on Windows where each shell is
@@ -184,7 +172,7 @@ const repairBrokenYamlBashFragment = [
   'fi',
 ].join('\n');
 
-const inspectHermesInstall = async (): Promise<HermesInstallState> => {
+const inspectHermesInstall = async (): Promise<HermesInstallProbe> => {
   await repairLegacyWindowsInstall();
   // Match PATH expansion used by `runHermesCli` / chat so Homebrew, snap,
   // and ~/.local installs are visible — a bare venv+.local PATH misses
@@ -198,6 +186,20 @@ const inspectHermesInstall = async (): Promise<HermesInstallState> => {
     `if [ -f "${HERMES_CONFIG}" ]; then echo "HAS_CONFIG=1"; else echo "HAS_CONFIG=0"; fi`,
     'if [ -x "$HOME/.hermes/venv/bin/hermes" ]; then echo "HAS_VENV_CLI=1"; else echo "HAS_VENV_CLI=0"; fi',
     'if command -v hermes >/dev/null 2>&1; then echo "HAS_PATH_CLI=1"; else echo "HAS_PATH_CLI=0"; fi',
+    'HAS_MODEL=0',
+    'if [ -f "$HOME/.hermes/config.yaml" ] && grep -qE \'^[[:space:]]*model:\' "$HOME/.hermes/config.yaml" 2>/dev/null; then HAS_MODEL=1; fi',
+    'echo "HAS_MODEL=$HAS_MODEL"',
+    'HAS_CLI_RUNS=0',
+    'if [ -x "$HOME/.hermes/venv/bin/hermes" ]; then',
+    '  if VER="$("$HOME/.hermes/venv/bin/hermes" --version 2>/dev/null)" && [ -n "$VER" ]; then',
+    '    HAS_CLI_RUNS=1',
+    '  fi',
+    'elif command -v hermes >/dev/null 2>&1 && [ -f "$HOME/.hermes/config.yaml" ]; then',
+    '  if VER="$(hermes --version 2>/dev/null)" && [ -n "$VER" ]; then',
+    '    HAS_CLI_RUNS=1',
+    '  fi',
+    'fi',
+    'echo "HAS_CLI_RUNS=$HAS_CLI_RUNS"',
   ].join('\n');
 
   const result = await runHermesShell(mergedScript, { timeout: 15000 }).catch(() => ({
@@ -207,25 +209,7 @@ const inspectHermesInstall = async (): Promise<HermesInstallState> => {
     code: 1,
   }));
 
-  const parsed = parseProbeOutput(result.stdout);
-
-  return {
-    hasDir: parsed.HAS_DIR === '1',
-    hasEnv: parsed.HAS_ENV === '1',
-    hasConfig: parsed.HAS_CONFIG === '1',
-    hasVenvCli: parsed.HAS_VENV_CLI === '1',
-    hasPathCli: parsed.HAS_PATH_CLI === '1',
-  };
-};
-
-const hasUsableHermesInstall = (state: HermesInstallState) => {
-  // Require a real layout: venv CLI (canonical install) OR Hermes on PATH
-  // together with config.yaml under ~/.hermes. A bare empty ~/.hermes plus a
-  // global `hermes` binary (e.g. after legacy Windows repair used to mkdir -p
-  // unconditionally) must not count as "configured" — that blocked reinstall.
-  if (!state.hasDir) return false;
-  if (state.hasVenvCli) return true;
-  return state.hasPathCli && state.hasConfig;
+  return probeRecordToState(parseKeyValueProbeLines(result.stdout));
 };
 
 const finalizeInstallVerification = async (result: CommandResult, onOutput?: CommandOutputHandler): Promise<CommandResult> => {
@@ -236,6 +220,8 @@ const finalizeInstallVerification = async (result: CommandResult, onOutput?: Com
     `[verify] .env: ${state.hasEnv ? 'found' : 'missing'}`,
     `[verify] venv hermes CLI: ${state.hasVenvCli ? 'found' : 'missing'}`,
     `[verify] hermes on PATH: ${state.hasPathCli ? 'found' : 'missing'}`,
+    `[verify] hermes CLI runs (version): ${state.hasCliRuns ? 'ok' : 'missing'}`,
+    `[verify] config model key: ${state.hasModelLine ? 'found' : 'missing'}`,
   ];
 
   onOutput?.({ type: 'stdout', data: `${verificationLines.join('\n')}\n` });
@@ -250,7 +236,7 @@ const finalizeInstallVerification = async (result: CommandResult, onOutput?: Com
 
   const failure = [
     '[verify] Install finished, but no usable Hermes install was found under ~/.hermes.',
-    '[verify] Expected ~/.hermes/venv/bin/hermes, or config.yaml plus a hermes binary on PATH.',
+    '[verify] Expected ~/.hermes/venv/bin/hermes that runs `hermes --version`, or config.yaml with model: plus a working hermes on PATH.',
   ].join('\n');
 
   onOutput?.({ type: 'stderr', data: `${failure}\n` });

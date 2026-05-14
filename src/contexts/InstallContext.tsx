@@ -250,21 +250,37 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
       aptPackages.push(pythonVenvPackage);
     }
 
-    // ─── Step 2: install via sudo if needed ─────────────────────
+    // ─── Step 2: install via sudo if needed (hard gate: do not run Hermes if unsatisfied) ─
+    let requiredAptOk = aptPackages.length === 0;
     if (aptPackages.length > 0) {
       setInstallOutput((prev) => [...prev, `Need to install system packages: ${aptPackages.join(", ")}`]);
       const probe = await sudoAPI.probe();
       if (installIdRef.current !== myInstallId) return;
 
-      let password: string | null = "";
+      let aptInstalled = false;
+
       if (probe.kind === "passwordless") {
         setInstallOutput((prev) => [...prev, "✓ Passwordless sudo detected — installing automatically"]);
+        setInstallOutput((prev) => [...prev, `Installing ${aptPackages.join(", ")} via apt...`]);
+        const aptResult = await sudoAPI.aptInstall(aptPackages, "");
+        if (installIdRef.current !== myInstallId) return;
+        aptInstalled = aptResult.success;
+        if (aptResult.success) {
+          setInstallOutput((prev) => [...prev, `✓ Installed: ${aptPackages.join(", ")}`]);
+        } else {
+          const tail = (aptResult.stderr || aptResult.stdout || "unknown error")
+            .trim()
+            .split("\n")
+            .slice(-5)
+            .join("\n");
+          setInstallOutput((prev) => [...prev, `⚠ apt install failed: ${tail}`]);
+        }
       } else if (probe.kind === "no-sudo") {
         setInstallOutput((prev) => [
           ...prev,
           "⚠ sudo is not available — cannot install system packages.",
         ]);
-        password = null;
+        aptInstalled = false;
       } else {
         setInstallOutput((prev) => [...prev, "Requesting administrator password..."]);
         const needsPythonVenv = aptPackages.some((pkg) => pkg.endsWith("-venv"));
@@ -272,13 +288,11 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
           aptPackages.includes("ffmpeg") && needsPythonVenv
             ? `install ffmpeg and ${pythonVenvPackage} (needed to set up the agent)`
             : aptPackages.includes("ffmpeg")
-            ? "install ffmpeg (needed for Voice / TTS)"
-            : `install ${pythonVenvPackage} (needed to set up the agent)`;
+              ? "install ffmpeg (needed for Voice / TTS)"
+              : `install ${pythonVenvPackage} (needed to set up the agent)`;
 
-        // macOS: try the native osascript GUI prompt first — feels native and
-        // keeps the password out of any renderer field. Fall back to the in-app
-        // dialog if the user dismisses it or osascript is missing.
         const platform = await systemAPI.getPlatform();
+        let password: string | null = "";
         if (platform.isMac) {
           const macPw = await promptForPasswordMac(`Ronbot needs to ${reason}.`);
           if (installIdRef.current !== myInstallId) return;
@@ -297,20 +311,47 @@ export const InstallProvider = ({ children }: { children: ReactNode }) => {
           setInstalling(false);
           return;
         }
-      }
 
-      if (password !== null) {
         setInstallOutput((prev) => [...prev, `Installing ${aptPackages.join(", ")} via apt...`]);
         const aptResult = await sudoAPI.aptInstall(aptPackages, password);
         if (installIdRef.current !== myInstallId) return;
+        aptInstalled = aptResult.success;
         if (aptResult.success) {
           setInstallOutput((prev) => [...prev, `✓ Installed: ${aptPackages.join(", ")}`]);
         } else {
           const tail = (aptResult.stderr || aptResult.stdout || "unknown error")
-            .trim().split("\n").slice(-5).join("\n");
+            .trim()
+            .split("\n")
+            .slice(-5)
+            .join("\n");
           setInstallOutput((prev) => [...prev, `⚠ apt install failed: ${tail}`]);
         }
       }
+
+      requiredAptOk = aptInstalled;
+    }
+
+    if (!requiredAptOk) {
+      const platform = await systemAPI.getPlatform();
+      const wslHint =
+        platform.isWindows || platform.isWSL
+          ? " On WSL, run this inside your Linux distro (Ubuntu), not PowerShell."
+          : "";
+      const pkgs = aptPackages.join(" ");
+      setInstallOutput((prev) => [
+        ...prev,
+        "✗ Install stopped — required system packages are missing and could not be installed automatically.",
+        "Install them in a terminal, then run setup again:",
+        `  sudo apt-get update && sudo apt-get install -y ${pkgs}`,
+        `Hermes needs these before Ronbot can create a venv or complete verification.${wslHint}`,
+        "See https://hermes-agent.nousresearch.com/docs/ for official prerequisites.",
+      ]);
+      toast.error("Missing system packages", {
+        description: `Install with: sudo apt-get install -y ${pkgs}`,
+        duration: 12000,
+      });
+      setInstalling(false);
+      return;
     }
 
     // ─── Step 3: run the Hermes installer ───────────────────────

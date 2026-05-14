@@ -52,11 +52,13 @@ export function IndexGuardPanel({
         <div className="space-y-2">
           <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
             <CheckCircle2 className="w-5 h-5 text-success" />
-            You already have an agent
+            Working Hermes install found
           </h2>
           <p className="text-sm text-muted-foreground">
-            An agent named <span className="text-primary font-semibold">{existingAgentName}</span> is already installed at{" "}
-            <code className="text-foreground text-xs">~/.hermes</code>. Ronbot is built for a single agent — pick how you want to continue.
+            Ronbot detected a runnable Hermes agent under{" "}
+            <code className="text-foreground text-xs">~/.hermes</code> (named{" "}
+            <span className="text-primary font-semibold">{existingAgentName}</span>). This is not the same as
+            pressing Connect on the home screen — pick how you want to continue.
           </p>
         </div>
 

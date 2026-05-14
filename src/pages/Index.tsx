@@ -81,8 +81,13 @@ const Index = () => {
   const [connecting, setConnecting] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [preflightReady, setPreflightReady] = useState(false);
-  /** True while probing ~/.hermes before opening bundled install or guard (IPC + shell). */
+  /** True while bundled entry probe runs (choose-mode: disables all cards; install-mode: brief overlap). */
   const [bundledInstallBusy, setBundledInstallBusy] = useState(false);
+  /** After clicking bundled install: wizard shows step 0 while we confirm no overwrite until probe finishes. */
+  const [installEntryProbePending, setInstallEntryProbePending] = useState(false);
+  const isConfiguredPrefetchRef = useRef<{ value: boolean; at: number } | null>(null);
+  /** Increment when user leaves install during probe so in-flight results are ignored. */
+  const installProbeGenerationRef = useRef(0);
 
   // Guard-screen state (shown when ~/.hermes already exists)
   const [existingAgentName, setExistingAgentName] = useState<string | null>(null);
@@ -97,6 +102,18 @@ const Index = () => {
 
   const navigate = useNavigate();
   const { refresh: refreshConnection, markConnected } = useAgentConnection();
+
+  useEffect(() => {
+    if (mode !== "choose") return;
+    let cancelled = false;
+    void systemAPI.isConfigured().then((v) => {
+      if (cancelled) return;
+      isConfiguredPrefetchRef.current = { value: v, at: Date.now() };
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
 
   const handleConnect = async () => {
     setConnecting(true);
@@ -143,20 +160,38 @@ const Index = () => {
       setInstallStep(0);
       return;
     }
-    try {
-      const installed = await systemAPI.isConfigured();
-      if (installed) {
-        const name = (await systemAPI.getAgentName()) || "your agent";
-        setExistingAgentName(name);
-        setRenameValue(name);
-        setMode("guard");
-        return;
-      }
-    } catch { /* fall through to normal install */ }
-    setInstallSource(source);
+    // Bundled: optimistic wizard — show install step 0 immediately, then probe.
+    const gen = ++installProbeGenerationRef.current;
+    setInstallSource("bundled");
     setLocalAgentPath(localPath);
     setMode("install");
     setInstallStep(0);
+    setInstallEntryProbePending(true);
+    try {
+      const now = Date.now();
+      const cache = isConfiguredPrefetchRef.current;
+      let installed = false;
+      if (cache && now - cache.at < 5000) {
+        installed = cache.value;
+      } else {
+        installed = await systemAPI.isConfigured();
+        isConfiguredPrefetchRef.current = { value: installed, at: Date.now() };
+      }
+      if (installProbeGenerationRef.current !== gen) return;
+      if (installed) {
+        const name = (await systemAPI.getAgentName()) || "your agent";
+        if (installProbeGenerationRef.current !== gen) return;
+        setExistingAgentName(name);
+        setRenameValue(name);
+        setMode("guard");
+      }
+    } catch {
+      /* stay on install wizard */
+    } finally {
+      if (installProbeGenerationRef.current === gen) {
+        setInstallEntryProbePending(false);
+      }
+    }
   };
 
   const handlePickLocalAgent = async () => {
@@ -198,11 +233,18 @@ const Index = () => {
   };
 
   const handleStartBundledInstall = () => {
+    if (bundledInstallBusy) return;
     setBundledInstallBusy(true);
+    const toastId = "ronbot-bundled-install-probe";
+    toast.loading("Checking for an existing install…", {
+      id: toastId,
+      description: "Opening the setup wizard.",
+    });
     void (async () => {
       try {
         await beginInstallFlow("bundled");
       } finally {
+        toast.dismiss(toastId);
         setBundledInstallBusy(false);
       }
     })();
@@ -361,8 +403,14 @@ const Index = () => {
 
             <div className="grid sm:grid-cols-3 grid-cols-1 gap-4">
               <GlassCard
-                className="cursor-pointer hover:border-primary/30 transition-all group"
-                onClick={() => setMode("connect")}
+                className={cn(
+                  "cursor-pointer hover:border-primary/30 transition-all group",
+                  bundledInstallBusy && "pointer-events-none cursor-wait opacity-60",
+                )}
+                onClick={() => {
+                  if (bundledInstallBusy) return;
+                  setMode("connect");
+                }}
               >
                 <div className="space-y-3">
                   <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
@@ -400,8 +448,14 @@ const Index = () => {
               </GlassCard>
 
               <GlassCard
-                className="cursor-pointer hover:border-primary/30 transition-all group"
-                onClick={handlePickLocalAgent}
+                className={cn(
+                  "cursor-pointer hover:border-primary/30 transition-all group",
+                  bundledInstallBusy && "pointer-events-none cursor-wait opacity-60",
+                )}
+                onClick={() => {
+                  if (bundledInstallBusy) return;
+                  void handlePickLocalAgent();
+                }}
               >
                 <div className="space-y-3">
                   <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
@@ -460,13 +514,17 @@ const Index = () => {
 
         {mode === "guard" && (
           <IndexGuardPanel
-            existingAgentName={existingAgentName}
+            existingAgentName={existingAgentName ?? "your agent"}
             renameValue={renameValue}
             onRenameValueChange={setRenameValue}
             renaming={renaming}
             resetting={resetting}
             resetOutput={resetOutput}
-            onBack={() => setMode("choose")}
+            onBack={() => {
+              installProbeGenerationRef.current += 1;
+              setInstallEntryProbePending(false);
+              setMode("choose");
+            }}
             onConnect={handleGuardConnect}
             onRename={handleGuardRename}
             onRequestReset={() => setShowResetConfirm(true)}
@@ -498,8 +556,14 @@ const Index = () => {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => { setMode("choose"); setInstallStep(0); }}
+                onClick={() => {
+                  installProbeGenerationRef.current += 1;
+                  setInstallEntryProbePending(false);
+                  setMode("choose");
+                  setInstallStep(0);
+                }}
                 className="text-muted-foreground hover:text-foreground"
+                disabled={installEntryProbePending}
               >
                 <ArrowLeft className="w-4 h-4 mr-1" /> Back
               </Button>
@@ -534,10 +598,24 @@ const Index = () => {
               <div className="glass-subtle rounded-lg p-4 space-y-3">
                 {/* Step 0: Prerequisites */}
                 {installStep === 0 && (
-                  <PrerequisiteCheck
-                    onComplete={() => setInstallStep(1)}
-                    onConnectExisting={handleWizardConnectExisting}
-                  />
+                  <>
+                    {installEntryProbePending && installSource === "bundled" && (
+                      <div className="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-foreground">
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" aria-hidden />
+                        <span>Checking for an existing Hermes install under ~/.hermes…</span>
+                      </div>
+                    )}
+                    <div
+                      className={cn(
+                        installEntryProbePending && installSource === "bundled" && "pointer-events-none opacity-60",
+                      )}
+                    >
+                      <PrerequisiteCheck
+                        onComplete={() => setInstallStep(1)}
+                        onConnectExisting={handleWizardConnectExisting}
+                      />
+                    </div>
+                  </>
                 )}
 
                 {/* Step 1: Install Agent */}
@@ -958,7 +1036,7 @@ const Index = () => {
       <AlertDialog open={showResetConfirm} onOpenChange={(open) => !resetting && setShowResetConfirm(open)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Reset {existingAgentName} and install fresh?</AlertDialogTitle>
+            <AlertDialogTitle>Reset {existingAgentName ?? "your agent"} and install fresh?</AlertDialogTitle>
             <AlertDialogDescription>
               This will permanently delete <code>~/.hermes</code> — including the agent persona, configuration, secrets, skills, sub-agent state, and chat history. This cannot be undone. After the reset, the install wizard will run from scratch.
             </AlertDialogDescription>

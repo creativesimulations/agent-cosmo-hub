@@ -161,7 +161,7 @@ let cache: { at: number; result: DiscoveryResult } | null = null;
 const CACHE_TTL_MS = 60_000;
 
 export const discoverCapabilities = async (
-  options?: { force?: boolean },
+  options?: { force?: boolean; skipHermesCli?: boolean },
 ): Promise<DiscoveryResult> => {
   if (!options?.force && cache && Date.now() - cache.at < CACHE_TTL_MS) {
     return cache.result;
@@ -173,44 +173,47 @@ export const discoverCapabilities = async (
   // 1) Seed.
   for (const c of SEED_CAPABILITIES) capabilities[c.id] = { ...c };
 
-  // 2) Hermes CLI.
+  // 2) Hermes CLI (skip until the app considers the agent connected — avoids
+  //    bootstrapping ~/.hermes from `hermes capabilities` on cold start).
   let fromHermes = false;
-  try {
-    const r = await systemAPI.discoverCapabilities();
-    if (r.ok && r.raw) {
-      fromHermes = true;
-      const buckets: Array<[unknown, DiscoveredKind]> = [
-        [r.raw.channels, "channel"],
-        [r.raw.tools, "tool"],
-        [r.raw.connectors, "connector"],
-        [r.raw.media, "media"],
-      ];
-      for (const [list, kind] of buckets) {
-        if (!Array.isArray(list)) continue;
-        for (const raw of list) {
-          if (!raw || typeof raw !== "object") continue;
-          const cap = fromHermesEntry(raw as Record<string, unknown>, kind);
-          if (!cap) continue;
-          // Hermes wins over seed; merge by id.
-          const prev = capabilities[cap.id];
-          capabilities[cap.id] = prev
-            ? {
-                ...prev,
-                ...cap,
-                // Preserve seed examplePrompts if Hermes didn't provide any.
-                examplePrompts: cap.examplePrompts ?? prev.examplePrompts,
-                requiredSecrets: cap.requiredSecrets.length ? cap.requiredSecrets : prev.requiredSecrets,
-                docsUrl: cap.docsUrl ?? prev.docsUrl,
-                source: "hermes",
-              }
-            : cap;
+  if (!options?.skipHermesCli) {
+    try {
+      const r = await systemAPI.discoverCapabilities();
+      if (r.ok && r.raw) {
+        fromHermes = true;
+        const buckets: Array<[unknown, DiscoveredKind]> = [
+          [r.raw.channels, "channel"],
+          [r.raw.tools, "tool"],
+          [r.raw.connectors, "connector"],
+          [r.raw.media, "media"],
+        ];
+        for (const [list, kind] of buckets) {
+          if (!Array.isArray(list)) continue;
+          for (const raw of list) {
+            if (!raw || typeof raw !== "object") continue;
+            const cap = fromHermesEntry(raw as Record<string, unknown>, kind);
+            if (!cap) continue;
+            // Hermes wins over seed; merge by id.
+            const prev = capabilities[cap.id];
+            capabilities[cap.id] = prev
+              ? {
+                  ...prev,
+                  ...cap,
+                  // Preserve seed examplePrompts if Hermes didn't provide any.
+                  examplePrompts: cap.examplePrompts ?? prev.examplePrompts,
+                  requiredSecrets: cap.requiredSecrets.length ? cap.requiredSecrets : prev.requiredSecrets,
+                  docsUrl: cap.docsUrl ?? prev.docsUrl,
+                  source: "hermes",
+                }
+              : cap;
+          }
         }
+      } else if (r.error && r.error !== "browser-mode") {
+        errors.push(r.error);
       }
-    } else if (r.error && r.error !== "browser-mode") {
-      errors.push(r.error);
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
     }
-  } catch (e) {
-    errors.push(e instanceof Error ? e.message : String(e));
   }
 
   // 3) Installed skills.

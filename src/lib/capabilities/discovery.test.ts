@@ -5,6 +5,7 @@ import {
   filterByKind,
   groupByCategory,
 } from "./discovery";
+import { systemAPI } from "@/lib/systemAPI";
 
 vi.mock("@/lib/systemAPI", () => {
   const state = {
@@ -70,6 +71,23 @@ describe("capability discovery", () => {
     expect(skill).toBeDefined();
     expect(skill.kind).toBe("skill");
     expect(skill.icon).toBe("Youtube");
+  });
+
+  it("skips Hermes CLI when skipHermesCli is true", async () => {
+    setMockState({
+      hermesResult: {
+        ok: true,
+        raw: {
+          channels: [{ id: "viber", name: "Viber", description: "Only from CLI" }],
+        },
+      },
+    });
+    const spy = vi.mocked(systemAPI.discoverCapabilities);
+    spy.mockClear();
+    const r = await discoverCapabilities({ force: true, skipHermesCli: true });
+    expect(spy).not.toHaveBeenCalled();
+    expect(r.fromHermes).toBe(false);
+    expect(r.capabilities.viber).toBeUndefined();
   });
 
   it("filterByKind narrows the registry", async () => {

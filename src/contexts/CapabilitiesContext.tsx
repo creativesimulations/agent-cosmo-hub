@@ -179,7 +179,7 @@ export const CapabilitiesProvider = ({ children }: { children: ReactNode }) => {
     // Refresh agent-discovered capability registry (channels, tools, …).
     try {
       invalidateDiscoveryCache();
-      const result = await discoverCapabilities({ force: true });
+      const result = await discoverCapabilities({ force: true, skipHermesCli: !agentConnected });
       setDiscovered(result.capabilities);
       setDiscoveryFromHermes(result.fromHermes);
     } catch { /* best effort — seed stays */ }
