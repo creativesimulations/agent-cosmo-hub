@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { systemAPI, secretsStore, type BackendInfo } from "@/lib/systemAPI";
 import { toast } from "@/hooks/use-toast";
 import { useSudoPrompt } from "@/contexts/SudoPromptContext";
+import { logDiagnosticAction } from "@/hooks/useDiagnosticsLogs";
 
 export interface EnvSummary {
   loaded: boolean;
@@ -63,7 +64,6 @@ export const useDoctorReport = () => {
   const [selfTestBusy, setSelfTestBusy] = useState(false);
   const [syncingPerms, setSyncingPerms] = useState(false);
   const [fixingStartup, setFixingStartup] = useState(false);
-  const [lastResult, setLastResult] = useState<string>("");
 
   const refreshSummaries = async () => {
     try {
@@ -125,22 +125,29 @@ export const useDoctorReport = () => {
 
   const handleSyncSecrets = async () => {
     setSyncing(true);
-    setLastResult("");
     try {
       const r = await systemAPI.materializeEnv();
       if (r.success) {
         toast({ title: "Secrets synced", description: `Wrote ${r.count ?? 0} key(s) to ~/.hermes/.env` });
-        setLastResult(`✅ OK — wrote ${r.count ?? 0} keys to ~/.hermes/.env`);
+        logDiagnosticAction(
+          "Secrets synced",
+          `Wrote ${r.count ?? 0} key(s) to ~/.hermes/.env`,
+          "info",
+        );
       } else {
         toast({ title: "Sync failed", description: r.error || "Unknown error", variant: "destructive" });
         const missing = r.missing && r.missing.length > 0 ? `\nMissing: ${r.missing.join(", ")}` : "";
-        setLastResult(`❌ FAILED — ${r.error || "unknown error"}${missing}`);
+        logDiagnosticAction(
+          "Secrets sync failed",
+          `${r.error || "unknown error"}${missing}`,
+          "error",
+        );
       }
       await refreshSummaries();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ title: "Sync failed", description: msg, variant: "destructive" });
-      setLastResult(`❌ FAILED — ${msg}`);
+      logDiagnosticAction("Secrets sync failed", msg, "error");
     } finally {
       setSyncing(false);
     }
@@ -150,8 +157,13 @@ export const useDoctorReport = () => {
     setRunning("doctor");
     try {
       const r = await systemAPI.hermesDoctor();
-      setLastResult(`hermes doctor (exit=${r.code}):\n${r.stdout || r.stderr || "(no output)"}`);
-      const parsed = await systemAPI.analyzeDoctorIssues([r.stdout, r.stderr].filter(Boolean).join("\n"));
+      const output = [r.stdout, r.stderr].filter(Boolean).join("\n") || "(no output)";
+      logDiagnosticAction(
+        `hermes doctor (exit ${r.code ?? "?"})`,
+        output,
+        r.success ? "info" : "error",
+      );
+      const parsed = await systemAPI.analyzeDoctorIssues(output);
       setStartupIssues(parsed.issues || []);
     } finally {
       setRunning(null);
@@ -162,8 +174,17 @@ export const useDoctorReport = () => {
     setRunning("ping");
     try {
       const r = await systemAPI.chatAgent("ping");
-      const head = r.success ? "✅ chat ok" : "❌ chat failed";
-      setLastResult(`${head}\n\nReply:\n${r.reply || "(empty)"}\n\nDiagnostics:\n${r.diagnostics || "(none)"}\n\nstderr:\n${r.stderr || "(none)"}`);
+      logDiagnosticAction(
+        r.success ? "Chat ping succeeded" : "Chat ping failed",
+        [
+          `Reply: ${r.reply || "(empty)"}`,
+          `Diagnostics: ${r.diagnostics || "(none)"}`,
+          r.stderr ? `stderr: ${r.stderr}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        r.success ? "info" : "error",
+      );
     } finally {
       setRunning(null);
     }
@@ -179,10 +200,14 @@ export const useDoctorReport = () => {
           title: "Config repaired",
           description: "Rewrote toolsets to hermes-cli, stripped legacy keys, fixed binary permissions, and re-ran doctor.",
         });
-        setLastResult(`✅ Repair OK\n\nhermes doctor:\n${r.doctorOutput}`);
+        logDiagnosticAction("Browser config repaired", r.doctorOutput, "info");
       } else {
-        toast({ title: "Repair failed", description: r.error || "See output below", variant: "destructive" });
-        setLastResult(`❌ Repair failed: ${r.error || "unknown"}\n\n${r.doctorOutput}`);
+        toast({ title: "Repair failed", description: r.error || "See activity log", variant: "destructive" });
+        logDiagnosticAction(
+          "Browser repair failed",
+          `${r.error || "unknown"}\n\n${r.doctorOutput}`,
+          "error",
+        );
       }
     } catch (e) {
       toast({ title: "Repair failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
@@ -231,7 +256,7 @@ export const useDoctorReport = () => {
       }
       const result = await systemAPI.runStartupAutoFix({ sudoPassword: pw });
       const detail = result.actions.length > 0 ? result.actions.join("\n") : "No automatic actions were needed.";
-      setLastResult(`Startup auto-fix:\n${detail}`);
+      logDiagnosticAction("Startup auto-fix", detail, result.success ? "info" : "warn");
       setStartupIssues(result.issues || []);
       if (result.success) {
         toast({ title: "Startup issues fixed", description: "Core startup checks now look healthy." });
@@ -283,7 +308,6 @@ export const useDoctorReport = () => {
     selfTestBusy,
     syncingPerms,
     fixingStartup,
-    lastResult,
     // actions
     refreshSummaries,
     handleSyncSecrets,

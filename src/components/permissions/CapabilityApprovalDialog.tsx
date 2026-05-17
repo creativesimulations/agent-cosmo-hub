@@ -126,7 +126,7 @@ const CapabilityApprovalDialog = () => {
                 variant="ghost"
                 onClick={() => {
                   closePendingDecision();
-                  window.location.hash = "#/logs";
+                  window.location.hash = "#/diagnostics";
                 }}
               >
                 <ExternalLink className="w-3.5 h-3.5 mr-1.5" />

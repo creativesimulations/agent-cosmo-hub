@@ -1,0 +1,77 @@
+// Hermes v0.13.0 sync — May 2026 (Ronbot)
+import { systemAPI } from "@/lib/systemAPI";
+import { DEFAULT_AGENT_NAME } from "./constants";
+import type { AgentProbe, InstallLogSink, InstallSource } from "./types";
+
+export async function probeAgent(): Promise<AgentProbe> {
+  try {
+    const ready = await systemAPI.isConfigured();
+    if (!ready) return { ready: false, reason: "no_cli" };
+
+    const [agentName, version] = await Promise.all([
+      systemAPI.getAgentName().catch(() => undefined),
+      systemAPI.getHermesCliVersionSummary().catch(() => undefined),
+    ]);
+
+    return {
+      ready: true,
+      agentName: agentName ?? undefined,
+      versionSummary: version?.text,
+    };
+  } catch {
+    return { ready: false, reason: "probe_error" };
+  }
+}
+
+export type FinalizeOptions = {
+  seedPersona: boolean;
+  agentName?: string;
+  source: InstallSource;
+  log: InstallLogSink;
+};
+
+export async function finalizeAfterInstall(
+  options: FinalizeOptions,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { seedPersona, agentName = DEFAULT_AGENT_NAME, source, log } = options;
+  const append = (line: string) => log([line]);
+
+  if (seedPersona) {
+    append("Saving Ronbot personality files…");
+    try {
+      const seed = await systemAPI.seedRonbotPersonalityAfterInstall(agentName.trim() || DEFAULT_AGENT_NAME);
+      if (seed.success) {
+        const n = seed.filesMoved ?? 0;
+        append(
+          n > 0
+            ? `✓ Updated ${n} persona file(s); backups under ~/.hermes/.ronbot-personality-backup/`
+            : "✓ Persona files refreshed (defaults or already customized).",
+        );
+      } else {
+        append(`⚠ Personality seed incomplete: ${seed.error ?? "unknown"}`);
+      }
+    } catch (e) {
+      append(`⚠ Personality seed failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  } else if (source === "local") {
+    append("ℹ Left existing persona files unchanged.");
+  }
+
+  append("Stopping Hermes runtime so the next launch picks up disk state…");
+  try {
+    await systemAPI.stopHermesAgentRuntime();
+    append("✓ Runtime stopped.");
+  } catch (e) {
+    append(`⚠ Could not stop runtime: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  const probe = await probeAgent();
+  if (!probe.ready) {
+    return {
+      ok: false,
+      message: "Install finished but Ronbot could not verify ~/.hermes and the Hermes CLI.",
+    };
+  }
+
+  return { ok: true };
+}

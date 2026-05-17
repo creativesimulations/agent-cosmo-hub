@@ -58,6 +58,7 @@ export const systemAPI = {
 
   // Hermes Agent
   getHermesCliVersionSummary: hermesAPI.getHermesCliVersionSummary.bind(hermesAPI),
+  installHermes: hermesAPI.install.bind(hermesAPI),
   installHermesFromLocalFolder: hermesAPI.installFromLocalFolder.bind(hermesAPI),
   hermesDoctor: hermesAPI.doctor.bind(hermesAPI),
   analyzeDoctorIssues: hermesAPI.analyzeDoctorIssues.bind(hermesAPI),
@@ -82,6 +83,7 @@ export const systemAPI = {
   getSkillsConfig: hermesAPI.getSkillsConfig.bind(hermesAPI),
   setSkillEnabled: hermesAPI.setSkillEnabled.bind(hermesAPI),
   listSubAgents: hermesAPI.listSubAgents.bind(hermesAPI),
+  tailAgentLog: hermesAPI.tailAgentLog.bind(hermesAPI),
   materializeEnv: hermesAPI.materializeEnv.bind(hermesAPI),
   syncPermissions: hermesAPI.syncPermissions.bind(hermesAPI),
   enableHermesFileLogging: hermesAPI.enableFileLogging.bind(hermesAPI),

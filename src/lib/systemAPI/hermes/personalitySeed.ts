@@ -7,6 +7,13 @@ import {
   DEFAULT_PERSONALITY_MARKDOWN,
   DEFAULT_USER_MARKDOWN,
 } from "./defaultPersonalityMarkdown";
+import { RONBOT_MEMORY_UI_POINTER } from "./ronbotRules";
+
+export function buildDefaultMemoryMarkdown(): string {
+  const base = DEFAULT_MEMORY_MARKDOWN.trimEnd();
+  if (base.includes("~/.ronbot/APP_GUIDE.md")) return base;
+  return `${base}\n\n${RONBOT_MEMORY_UI_POINTER}`;
+}
 
 const HERMES_ROOT = "$HOME/.hermes";
 const MEMORIES_DIR = "$HOME/.hermes/memories";
@@ -83,7 +90,7 @@ export async function seedCustomPersonalityFiles(agentName: string): Promise<{
 
   const soulBody = appendPersonaMarker(buildDefaultSoulMarkdown(agentName));
   const personalityBody = appendPersonaMarker(DEFAULT_PERSONALITY_MARKDOWN);
-  const memoryBody = appendPersonaMarker(DEFAULT_MEMORY_MARKDOWN);
+  const memoryBody = appendPersonaMarker(buildDefaultMemoryMarkdown());
   const userBody = appendPersonaMarker(DEFAULT_USER_MARKDOWN);
 
   const files: SeedFile[] = [
@@ -104,7 +111,7 @@ export async function seedCustomPersonalityFiles(agentName: string): Promise<{
       path: `${MEMORIES_DIR}/MEMORY.md`,
       next: memoryBody,
       shouldWrite: (cur) =>
-        isRonbotManagedOrEmpty(cur) || matchesBundledDefault(cur ?? "", DEFAULT_MEMORY_MARKDOWN),
+        isRonbotManagedOrEmpty(cur) || matchesBundledDefault(cur ?? "", buildDefaultMemoryMarkdown()),
     },
     {
       path: `${MEMORIES_DIR}/USER.md`,

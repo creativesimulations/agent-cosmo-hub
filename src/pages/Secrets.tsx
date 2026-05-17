@@ -139,7 +139,7 @@ const Secrets = () => {
     } else {
       setActionError(`Could not save ${envVar}. Check the credential store backend and logs.`);
       toast.error(`Could not save ${envVar}`, {
-        description: "Check the Logs tab — the credential store rejected the write.",
+        description: "Check App Diagnostics — the credential store rejected the write.",
       });
     }
     setShowAddForm(false);

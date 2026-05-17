@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import SudoPasswordDialog from "@/components/install/SudoPasswordDialog";
+import SudoPasswordDialog from "@/components/setup/SudoPasswordDialog";
 import { promptForPasswordMac } from "@/lib/systemAPI/sudo";
 import { systemAPI } from "@/lib/systemAPI";
 

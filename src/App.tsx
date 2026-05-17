@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { HashRouter, Route, Routes } from "react-router-dom";
+import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import AppLayout from "./components/layout/AppLayout";
-import { InstallProvider } from "./contexts/InstallContext";
+import { SetupProvider } from "./contexts/SetupContext";
 import { AgentConnectionProvider } from "./contexts/AgentConnectionContext";
 import { ChatProvider } from "./contexts/ChatContext";
 import MarkerModalHost from "./components/chat/MarkerModalHost";
@@ -14,7 +14,7 @@ import { CapabilitiesProvider } from "./contexts/CapabilitiesContext";
 import ApprovalDialog from "./components/permissions/ApprovalDialog";
 import { AppRuntimeBridges } from "./components/AppRuntimeBridges";
 import WelcomeDialog from "./components/companion/WelcomeDialog";
-import Index from "./pages/Index";
+import SetupInstallPage from "./pages/SetupInstallPage";
 import RootRoute from "./pages/RootRoute";
 import SubAgents from "./pages/SubAgents";
 import LLMConfig from "./pages/LLMConfig";
@@ -45,14 +45,15 @@ const App = () => (
             <AgentConnectionProvider>
               <AppRuntimeBridges />
               <CapabilitiesProvider>
-                <InstallProvider>
+                <SetupProvider>
                   <ChatProvider>
                     <MarkerModalHost />
                     <WelcomeDialog />
                     <Routes>
                       <Route element={<AppLayout />}>
                         <Route path="/" element={<RootRoute />} />
-                        <Route path="/install" element={<Index />} />
+                        <Route path="/install" element={<SetupInstallPage />} />
+                        <Route path="/dashboard" element={<Navigate to="/" replace />} />
                         <Route path="/agents" element={<SubAgents />} />
                         <Route path="/models" element={<LLMConfig />} />
                         <Route path="/secrets" element={<Secrets />} />
@@ -72,7 +73,7 @@ const App = () => (
                       <Route path="*" element={<NotFound />} />
                     </Routes>
                   </ChatProvider>
-                </InstallProvider>
+                </SetupProvider>
               </CapabilitiesProvider>
             </AgentConnectionProvider>
           </PermissionsProvider>

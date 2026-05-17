@@ -81,6 +81,7 @@ import {
   stripAnsi,
 } from './hermes/chatOutput';
 import { parseSubAgentLog } from './hermes/subAgentLog';
+import { tailAgentLog as runTailAgentLog } from './hermes/tailAgentLog';
 import {
   parseKeyValueProbeLines,
   probeRecordToState,
@@ -1353,6 +1354,10 @@ model: ${options.model || 'openrouter/auto'}
    * Returns `{ success: false }` only if the log file genuinely can't be read;
    * an empty install with no log yet returns `success: true` with empty arrays.
    */
+  async tailAgentLog(options?: { lines?: number }) {
+    return runTailAgentLog(options);
+  },
+
   async listSubAgents(): Promise<{
     success: boolean;
     error?: string;
