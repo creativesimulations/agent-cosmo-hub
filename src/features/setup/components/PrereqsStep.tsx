@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { CheckCircle2, ChevronRight, Download, Loader2, Link2, RotateCcw, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronRight, Download, Info, Link2, Loader2, RotateCcw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -9,31 +9,47 @@ import {
   runPrereqScan,
   type PrereqItem,
 } from "@/features/setup/prereqScan";
+import type { AgentProbe } from "@/features/setup/types";
+import { HermesProbeSummary } from "@/features/setup/components/HermesProbeSummary";
 
 type Props = {
+  entryProbePending: boolean;
+  cachedProbe: AgentProbe | null;
   onContinue: () => void;
   onConnectExisting: () => Promise<void>;
 };
 
-export function PrereqsStep({ onContinue, onConnectExisting }: Props) {
+export function PrereqsStep({ entryProbePending, cachedProbe, onContinue, onConnectExisting }: Props) {
   const [items, setItems] = useState<PrereqItem[]>([]);
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanning] = useState(true);
   const [agentReady, setAgentReady] = useState(false);
+  const [cliOnly, setCliOnly] = useState(false);
   const [agentVersion, setAgentVersion] = useState<string>();
+  const [probe, setProbe] = useState<AgentProbe | null>(cachedProbe);
   const [connectBusy, setConnectBusy] = useState(false);
 
   const scan = async () => {
     setScanning(true);
-    const result = await runPrereqScan();
+    const result = await runPrereqScan({
+      cachedProbe: entryProbePending ? null : cachedProbe,
+    });
     setAgentReady(result.agentReady);
+    setCliOnly(result.cliOnly);
     setAgentVersion(result.agentVersion);
     setItems(result.items);
+    if (result.probe) setProbe(result.probe);
     setScanning(false);
   };
 
   useEffect(() => {
+    if (entryProbePending) return;
     void scan();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entryProbePending, cachedProbe]);
+
+  useEffect(() => {
+    if (!entryProbePending && cachedProbe) setProbe(cachedProbe);
+  }, [entryProbePending, cachedProbe]);
 
   const installOne = async (id: string) => {
     setItems((prev) => prev.map((p) => (p.id === id ? { ...p, status: "installing" } : p)));
@@ -41,16 +57,30 @@ export function PrereqsStep({ onContinue, onConnectExisting }: Props) {
     setItems((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   };
 
+  if (entryProbePending) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Checking for an existing Hermes install under ~/.hermes…
+      </div>
+    );
+  }
+
   if (agentReady) {
     return (
       <div className="space-y-4">
-        <div className="glass-subtle rounded-lg p-4 border border-success/20 flex gap-3">
+        <motion.div className="glass-subtle rounded-lg p-4 border border-success/20 flex gap-3">
           <CheckCircle2 className="w-5 h-5 text-success shrink-0" />
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            <p className="text-sm font-medium">Hermes is already installed{agentVersion ? ` (${agentVersion})` : ""}</p>
-            <p className="text-xs text-muted-foreground mt-1">Connect to open the dashboard, or continue to reinstall.</p>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-2 min-w-0">
+            <p className="text-sm font-medium">
+              Hermes is already installed{agentVersion ? ` (${agentVersion})` : ""}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Connect to open the dashboard, or continue to reinstall.
+            </p>
+            {probe?.installState && <HermesProbeSummary state={probe.installState} />}
           </motion.div>
-        </div>
+        </motion.div>
         <Button
           className="w-full gradient-primary text-primary-foreground"
           disabled={connectBusy}
@@ -77,17 +107,46 @@ export function PrereqsStep({ onContinue, onConnectExisting }: Props) {
 
   return (
     <div className="space-y-4">
+      {cliOnly && probe?.installState && (
+        <div className="glass-subtle rounded-lg p-4 border border-warning/20 flex gap-3">
+          <AlertCircle className="w-5 h-5 text-warning shrink-0" />
+          <div className="space-y-2 min-w-0">
+            <p className="text-sm font-medium">Hermes CLI on PATH, no Ronbot workspace</p>
+            <p className="text-xs text-muted-foreground">
+              A <code className="text-foreground">hermes</code> command exists, but Ronbot needs a workspace at{" "}
+              <code className="text-foreground">~/.hermes</code>. Continue below to install.
+            </p>
+            <HermesProbeSummary state={probe.installState} />
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-between items-center">
         <p className="text-sm text-muted-foreground">Required dependencies for Hermes</p>
         <Button variant="ghost" size="sm" onClick={() => void scan()} disabled={scanning}>
           <RotateCcw className={cn("w-4 h-4", scanning && "animate-spin")} />
         </Button>
       </div>
-      <ul className="space-y-2">
-        {items.map((p) => (
-          <PrereqRow key={p.id} item={p} onInstall={() => void installOne(p.id)} />
-        ))}
-      </ul>
+
+      {scanning && items.length === 0 ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-4 justify-center">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Scanning dependencies…
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {items.map((p) => (
+            <PrereqRow key={p.id} item={p} onInstall={() => void installOne(p.id)} />
+          ))}
+        </ul>
+      )}
+
+      {!scanning && items.length === 0 && !cliOnly && (
+        <p className="text-xs text-muted-foreground flex items-center gap-1">
+          <Info className="w-3 h-3" /> No dependency issues detected.
+        </p>
+      )}
+
       <Button className="w-full" disabled={!canContinue} onClick={onContinue}>
         Continue <ChevronRight className="w-4 h-4 ml-1" />
       </Button>

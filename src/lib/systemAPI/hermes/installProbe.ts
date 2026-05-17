@@ -45,3 +45,34 @@ export function hasUsableHermesInstall(state: HermesInstallProbe): boolean {
   if (state.hasVenvCli) return true;
   return state.hasPathCli && state.hasConfig && state.hasModelLine;
 }
+
+export type HermesInstallProbeReason =
+  | "ready"
+  | "no_dir"
+  | "cli_only"
+  | "no_cli"
+  | "no_model"
+  | "partial";
+
+/** Classify probe for setup UI — only `ready` means connectable Ronbot agent. */
+export function classifyHermesInstallProbe(state: HermesInstallProbe): HermesInstallProbeReason {
+  if (hasUsableHermesInstall(state)) return "ready";
+  if (!state.hasDir) {
+    if (state.hasPathCli || state.hasCliRuns) return "cli_only";
+    return "no_dir";
+  }
+  if (!state.hasCliRuns) return "no_cli";
+  if (state.hasPathCli && state.hasConfig && !state.hasModelLine) return "no_model";
+  return "partial";
+}
+
+export function formatHermesInstallProbe(state: HermesInstallProbe): string[] {
+  return [
+    `~/.hermes: ${state.hasDir ? "found" : "missing"}`,
+    `CLI runs: ${state.hasCliRuns ? "ok" : "missing"}`,
+    `venv CLI: ${state.hasVenvCli ? "yes" : "no"}`,
+    `PATH CLI: ${state.hasPathCli ? "yes" : "no"}`,
+    `config.yaml: ${state.hasConfig ? "yes" : "no"}`,
+    `model: key: ${state.hasModelLine ? "yes" : "no"}`,
+  ];
+}

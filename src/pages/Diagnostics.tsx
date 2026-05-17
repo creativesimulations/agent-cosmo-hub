@@ -10,6 +10,7 @@ import { IssuesAndActionsCard } from '@/components/diagnostics/IssuesAndActionsC
 import { DiagnosticsLogsPanel } from '@/components/diagnostics/logs/DiagnosticsLogsPanel';
 import BrowserChainCard from '@/components/diagnostics/BrowserChainCard';
 import DebugTogglesCard from '@/components/diagnostics/DebugTogglesCard';
+import { HermesInstallProbeCard } from '@/components/diagnostics/HermesInstallProbeCard';
 import {
   Collapsible,
   CollapsibleContent,
@@ -94,6 +95,7 @@ const Diagnostics = () => {
           Advanced tools
         </CollapsibleTrigger>
         <CollapsibleContent className="mt-4 space-y-4">
+          <HermesInstallProbeCard />
           <BrowserChainCard report={report} />
           <DebugTogglesCard />
         </CollapsibleContent>

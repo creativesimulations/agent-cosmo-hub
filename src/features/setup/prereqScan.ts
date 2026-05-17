@@ -1,6 +1,7 @@
 // Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { systemAPI } from "@/lib/systemAPI";
 import { probeAgent } from "./setupService";
+import type { AgentProbe } from "./types";
 
 export type PrereqTier = "required" | "recommended" | "auto";
 export type PrereqStatus =
@@ -34,39 +35,62 @@ const BASE: PrereqItem[] = [
 
 export type PrereqScanResult = {
   items: PrereqItem[];
+  /** Full connectable install at ~/.hermes */
   agentReady: boolean;
+  /** Hermes CLI on PATH but no Ronbot workspace */
+  cliOnly: boolean;
   agentVersion?: string;
+  probe?: AgentProbe;
 };
 
-export async function runPrereqScan(): Promise<PrereqScanResult> {
-  const probe = await probeAgent();
-  if (probe.ready) {
+export type PrereqScanOptions = {
+  /** Reuse probe from setup context to avoid duplicate shell round-trips */
+  cachedProbe?: AgentProbe | null;
+};
+
+export async function runPrereqScan(options?: PrereqScanOptions): Promise<PrereqScanResult> {
+  const probe = options?.cachedProbe ?? (await probeAgent());
+
+  if (probe.reason === "ready" && probe.ready) {
     return {
       items: [],
       agentReady: true,
+      cliOnly: false,
       agentVersion: probe.versionSummary?.split("\n")[0],
+      probe,
     };
   }
 
-  const items: PrereqItem[] = [...BASE];
+  if (probe.reason === "cli_only") {
+    const items = await scanDependencyItems();
+    return { items, agentReady: false, cliOnly: true, probe };
+  }
+
+  const items = await scanDependencyItems();
+  return { items, agentReady: false, cliOnly: false, probe };
+}
+
+async function scanDependencyItems(): Promise<PrereqItem[]> {
+  const items: PrereqItem[] = BASE.map((p) => ({ ...p }));
+
   const patch = (id: string, partial: Partial<PrereqItem>) => {
     const i = items.findIndex((p) => p.id === id);
     if (i >= 0) items[i] = { ...items[i], ...partial };
   };
 
-  patch("os", { status: "checking" });
-  try {
-    const os = await systemAPI.detectOS();
-    patch("os", { status: "found", version: os.name, description: os.name });
-  } catch {
-    patch("os", { status: "error", description: "Could not detect OS" });
-  }
-
   const platform = await systemAPI.getPlatform();
-  if (!platform.isWindows) {
-    const idx = items.findIndex((p) => p.id === "wsl2");
-    if (idx >= 0) items.splice(idx, 1);
-  } else {
+
+  const osPromise = systemAPI
+    .detectOS()
+    .then((os) => patch("os", { status: "found", version: os.name, description: os.name }))
+    .catch(() => patch("os", { status: "error", description: "Could not detect OS" }));
+
+  const wslPromise = (async () => {
+    if (!platform.isWindows) {
+      const idx = items.findIndex((p) => p.id === "wsl2");
+      if (idx >= 0) items.splice(idx, 1);
+      return;
+    }
     patch("wsl2", { status: "checking" });
     const wsl = await systemAPI.checkWSL();
     patch(
@@ -75,45 +99,51 @@ export async function runPrereqScan(): Promise<PrereqScanResult> {
         ? { status: "found", version: wsl.version, description: wsl.distro ?? wsl.version }
         : { status: "missing", description: "WSL2 required on Windows" },
     );
-  }
+  })();
 
+  const depPromise = Promise.all([
+    systemAPI.checkPython().then((py) =>
+      patch(
+        "python",
+        py.installed
+          ? { status: "found", version: py.version, description: `Python ${py.version}` }
+          : { status: "missing", description: "Python 3.11+ not found" },
+      ),
+    ),
+    systemAPI.checkGit().then((git) =>
+      patch(
+        "git",
+        git.installed
+          ? { status: "found", version: git.version, description: `Git ${git.version}` }
+          : { status: "missing", description: "Git not found" },
+      ),
+    ),
+    systemAPI.checkRipgrep().then((rg) =>
+      patch(
+        "ripgrep",
+        rg.installed
+          ? { status: "found", version: rg.version }
+          : { status: "missing", description: "Optional — install later from Skills" },
+      ),
+    ),
+    systemAPI.checkCurl().then((curl) =>
+      patch(
+        "curl",
+        curl.installed
+          ? { status: "found", version: curl.version }
+          : { status: "missing", description: "Optional — used for updates" },
+      ),
+    ),
+  ]);
+
+  patch("os", { status: "checking" });
   patch("python", { status: "checking" });
-  const py = await systemAPI.checkPython();
-  patch(
-    "python",
-    py.installed
-      ? { status: "found", version: py.version, description: `Python ${py.version}` }
-      : { status: "missing", description: "Python 3.11+ not found" },
-  );
-
   patch("git", { status: "checking" });
-  const git = await systemAPI.checkGit();
-  patch(
-    "git",
-    git.installed
-      ? { status: "found", version: git.version, description: `Git ${git.version}` }
-      : { status: "missing", description: "Git not found" },
-  );
-
   patch("ripgrep", { status: "checking" });
-  const rg = await systemAPI.checkRipgrep();
-  patch(
-    "ripgrep",
-    rg.installed
-      ? { status: "found", version: rg.version }
-      : { status: "missing", description: "Optional — install later from Skills" },
-  );
-
   patch("curl", { status: "checking" });
-  const curl = await systemAPI.checkCurl();
-  patch(
-    "curl",
-    curl.installed
-      ? { status: "found", version: curl.version }
-      : { status: "missing", description: "Optional — used for updates" },
-  );
 
-  return { items, agentReady: false };
+  await Promise.all([osPromise, wslPromise, depPromise]);
+  return items;
 }
 
 export function requiredPrereqsMet(items: PrereqItem[]): boolean {

@@ -1,25 +1,59 @@
 // Hermes v0.13.0 sync — May 2026 (Ronbot)
+import { classifyHermesInstallProbe } from "@/lib/systemAPI/hermes/installProbe";
 import { systemAPI } from "@/lib/systemAPI";
 import { DEFAULT_AGENT_NAME } from "./constants";
 import type { AgentProbe, InstallLogSink, InstallSource } from "./types";
 
-export async function probeAgent(): Promise<AgentProbe> {
+const HERMES_PROBE_PATH = "~/.hermes";
+const PROBE_CACHE_MS = 5000;
+
+let probeCache: { probe: AgentProbe; at: number } | null = null;
+
+export function invalidateAgentProbeCache(): void {
+  probeCache = null;
+}
+
+export async function probeAgent(options?: { useCache?: boolean }): Promise<AgentProbe> {
+  const now = Date.now();
+  if (options?.useCache && probeCache && now - probeCache.at < PROBE_CACHE_MS) {
+    return probeCache.probe;
+  }
+
   try {
-    const ready = await systemAPI.isConfigured();
-    if (!ready) return { ready: false, reason: "no_cli" };
+    const installState = await systemAPI.inspectHermesInstall();
+    const reason = classifyHermesInstallProbe(installState);
+    const ready = reason === "ready";
+
+    if (!ready) {
+      const probe: AgentProbe = {
+        ready: false,
+        reason,
+        installState,
+        probePath: HERMES_PROBE_PATH,
+      };
+      probeCache = { probe, at: now };
+      return probe;
+    }
 
     const [agentName, version] = await Promise.all([
       systemAPI.getAgentName().catch(() => undefined),
       systemAPI.getHermesCliVersionSummary().catch(() => undefined),
     ]);
 
-    return {
+    const probe: AgentProbe = {
       ready: true,
+      reason: "ready",
+      installState,
+      probePath: HERMES_PROBE_PATH,
       agentName: agentName ?? undefined,
       versionSummary: version?.text,
     };
+    probeCache = { probe, at: now };
+    return probe;
   } catch {
-    return { ready: false, reason: "probe_error" };
+    const probe: AgentProbe = { ready: false, reason: "probe_error", probePath: HERMES_PROBE_PATH };
+    probeCache = { probe, at: now };
+    return probe;
   }
 }
 

@@ -205,12 +205,27 @@ export const BUILTIN_CAPABILITIES: CapabilityDefinition[] = [
     group: "data",
   },
   {
+    id: "google-workspace",
+    label: "Google Workspace",
+    description: "Gmail, Calendar, Drive, Docs, and Sheets via the google-workspace skill.",
+    risk: "medium",
+    icon: "Sparkles",
+    candidateSecrets: [
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "GOOGLE_OAUTH_REFRESH_TOKEN",
+    ],
+    candidateSkills: ["google-workspace", "google_workspace"],
+    source: "builtin",
+    group: "data",
+  },
+  {
     id: "calendar",
     label: "Calendar",
-    description: "Read or create calendar events (Google Calendar, etc.).",
+    description: "Read or create calendar events (legacy calendar skill; prefer google-workspace).",
     risk: "medium",
     icon: "Calendar",
-    candidateSecrets: ["GOOGLE_CALENDAR_CREDENTIALS", "GOOGLE_API_KEY"],
+    candidateSecrets: ["GOOGLE_OAUTH_REFRESH_TOKEN", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
     candidateSkills: ["calendar", "google_calendar"],
     source: "builtin",
     group: "data",
@@ -248,6 +263,7 @@ export const DEFAULT_CAPABILITY_POLICY: Record<string, CapabilityChoice> = {
   email: "ask",
   messaging: "ask",
   memory: "ask",
+  "google-workspace": "ask",
   calendar: "ask",
 };
 

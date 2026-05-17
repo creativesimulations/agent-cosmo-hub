@@ -1,49 +1,51 @@
+// Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Puzzle, AlertCircle, Loader2, RefreshCw, Search, Package, Wrench,
-  KeyRound, Globe, Plus, Sparkles, Box,
+  KeyRound, Globe, Plus, Box,
 } from "lucide-react";
 import { useChat } from "@/contexts/ChatContext";
+import { useCapabilities } from "@/contexts/CapabilitiesContext";
 import GlassCard from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { systemAPI, secretsStore } from "@/lib/systemAPI";
-import { toast } from "sonner";
 import BrowserBackendBadge from "@/components/skills/BrowserBackendBadge";
 import ActionableError from "@/components/ui/ActionableError";
-
 import CapabilityGallery from "@/components/dashboard/CapabilityGallery";
+import { SkillsByCategory } from "@/components/skills/SkillsByCategory";
+import { InstallSkillDialog } from "@/components/skills/InstallSkillDialog";
 import { PageShell } from "@/components/layout/PageShell";
 import { NotConnectedCard } from "@/components/layout/NotConnectedCard";
 import { StatGrid } from "@/components/layout/StatGrid";
 import { cn } from "@/lib/utils";
+import {
+  invalidateSkillCaches,
+  skillRowKey,
+  skillSetupPrompt,
+  type ListedSkill,
+} from "@/features/skills/skillModel";
 
-type Skill = {
-  name: string;
-  category: string;
-  source: "user" | "bundled";
-  description?: string;
-  requiredSecrets?: string[];
-};
-
-
-
+/** Browser automation is the only skill-adjacent UI with a non-manifest backend picker. */
 const Skills = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { setDraft } = useChat();
+  const { rediscover } = useCapabilities();
   const { connected: agentConnected } = useAgentConnection();
   const [loading, setLoading] = useState(true);
-  const [skills, setSkills] = useState<Skill[]>([]);
+  const [skills, setSkills] = useState<ListedSkill[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [disabledSet, setDisabledSet] = useState<Set<string>>(new Set());
   const [secretKeys, setSecretKeys] = useState<Set<string>>(new Set());
   const [focusCap, setFocusCap] = useState<string | null>(null);
+  const [installOpen, setInstallOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const browserRefreshKey = 0;
   const [actionError, setActionError] = useState<string>("");
   const [plugins, setPlugins] = useState<Array<{ name: string; enabled?: boolean; description?: string; source?: string }>>([]);
@@ -53,20 +55,6 @@ const Skills = () => {
     setDraft(prompt);
     navigate("/");
   }, [setDraft, navigate]);
-
-  // Read ?focus=<capId> from the URL — drives a scroll + highlight of any
-  // skill rows whose names match the capability's candidate skill list.
-  useEffect(() => {
-    const params = new URLSearchParams(location.search || (location.hash.split("?")[1] || ""));
-    const f = params.get("focus");
-    if (f) {
-      setFocusCap(f);
-      // Pre-fill search to surface matching rows immediately.
-      setQuery(f.replace(/^skill:/, ""));
-      const t = window.setTimeout(() => setFocusCap(null), 4000);
-      return () => window.clearTimeout(t);
-    }
-  }, [location.search, location.hash]);
 
   const load = useCallback(async () => {
     if (!agentConnected) {
@@ -94,6 +82,23 @@ const Skills = () => {
     setLoading(false);
   }, [agentConnected]);
 
+  const refreshAll = useCallback(async () => {
+    invalidateSkillCaches();
+    await rediscover();
+    await load();
+  }, [rediscover, load]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || (location.hash.split("?")[1] || ""));
+    const f = params.get("focus");
+    if (f) {
+      setFocusCap(f);
+      setQuery(f.replace(/^skill:/, "").replace(/-/g, " "));
+      const t = window.setTimeout(() => setFocusCap(null), 4000);
+      return () => window.clearTimeout(t);
+    }
+  }, [location.search, location.hash]);
+
   useEffect(() => { void load(); }, [load]);
 
   const filtered = useMemo(() => {
@@ -108,7 +113,7 @@ const Skills = () => {
   }, [skills, query]);
 
   const grouped = useMemo(() => {
-    const map = new Map<string, Skill[]>();
+    const map = new Map<string, ListedSkill[]>();
     for (const s of filtered) {
       const arr = map.get(s.category) ?? [];
       arr.push(s);
@@ -136,43 +141,33 @@ const Skills = () => {
     });
   };
 
-  const handleToggle = (skill: Skill, nextEnabled: boolean) => {
-    delegateToAgent(
-      `Please ${nextEnabled ? "enable" : "disable"} the "${skill.name}" skill ` +
-        `and let me know once it's done. ` +
-        `If anything is missing (secrets, dependencies), ask me for it.`,
-    );
+  const handleSetup = (skill: ListedSkill) => {
+    delegateToAgent(skillSetupPrompt(skill));
   };
 
-  const bulkAction = (action: "enableAll" | "disableAll" | { enableOnly: string }) => {
-    if (action === "enableAll") {
-      delegateToAgent("Please enable every available skill. Ask me for any missing secrets along the way.");
-    } else if (action === "disableAll") {
-      delegateToAgent("Please disable every skill until I ask for specific ones to be re-enabled.");
-    } else {
-      delegateToAgent(
-        `Please enable only the skills in the "${action.enableOnly}" category and disable everything else.`,
-      );
+  const handleToggled = () => {
+    void refreshAll();
+  };
+
+  const bulkSetEnabled = async (enabled: boolean, onlyCategory?: string) => {
+    if (skills.length === 0) return;
+    setBulkBusy(true);
+    setActionError("");
+    try {
+      for (const skill of skills) {
+        const shouldEnable = onlyCategory ? skill.category === onlyCategory : enabled;
+        const r = await systemAPI.setSkillEnabled(skill.name, shouldEnable);
+        if (!r.success) {
+          setActionError(r.error ?? `Failed to update ${skill.name}`);
+          return;
+        }
+      }
+      invalidateSkillCaches();
+      await rediscover();
+      await load();
+    } finally {
+      setBulkBusy(false);
     }
-  };
-
-  const statusFor = (skill: Skill): { label: string; tone: "ready" | "needs" | "disabled" } => {
-    if (disabledSet.has(skill.name)) return { label: "Disabled", tone: "disabled" };
-    const missing = (skill.requiredSecrets ?? []).filter((k) => !secretKeys.has(k));
-    if (missing.length > 0) return { label: "Needs setup", tone: "needs" };
-    return { label: "Ready", tone: "ready" };
-  };
-
-  const googleWorkspaceSkill = skills.find((s) => s.name.toLowerCase() === "google-workspace");
-  const googleWorkspaceNeedsSecrets = (googleWorkspaceSkill?.requiredSecrets ?? []).filter(
-    (k) => !secretKeys.has(k),
-  );
-
-  const handleGoogleWorkspaceSetup = () => {
-    delegateToAgent(
-      "Please set up Google Workspace for me (Gmail, Calendar, Drive, Docs, Sheets). " +
-        "Walk me through any login or permission steps and ask for anything you need.",
-    );
   };
 
   if (!agentConnected) {
@@ -199,11 +194,7 @@ const Skills = () => {
         <>
           <Button
             size="sm"
-            onClick={() =>
-              delegateToAgent(
-                "Please install a new skill for me. Ask me for the path or git URL, then handle the install and any required secrets.",
-              )
-            }
+            onClick={() => setInstallOpen(true)}
             className="gradient-primary text-primary-foreground"
           >
             <Plus className="w-4 h-4 mr-1" /> Install skill
@@ -211,8 +202,8 @@ const Skills = () => {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => void load()}
-            disabled={loading}
+            onClick={() => void refreshAll()}
+            disabled={loading || bulkBusy}
             className="text-muted-foreground hover:text-foreground"
           >
             {loading ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
@@ -221,6 +212,18 @@ const Skills = () => {
         </>
       }
     >
+      <InstallSkillDialog
+        open={installOpen}
+        onOpenChange={setInstallOpen}
+        onInstalled={() => void refreshAll()}
+        onSetupInChat={delegateToAgent}
+        onAskAgentInstall={() =>
+          delegateToAgent(
+            "Please install a new skill for me. Ask me for the path or git URL, then handle the install and any required secrets.",
+          )
+        }
+      />
+
       {actionError && (
         <ActionableError
           title="Skill update failed"
@@ -229,6 +232,12 @@ const Skills = () => {
           onFix={() => setActionError("")}
           fixLabel="Dismiss"
         />
+      )}
+
+      {error && (
+        <GlassCard className="border-destructive/30 bg-destructive/5 p-4">
+          <p className="text-sm text-destructive">{error}</p>
+        </GlassCard>
       )}
 
       {needsSetup.length > 0 && (
@@ -242,7 +251,6 @@ const Skills = () => {
               </p>
               <p className="text-xs text-muted-foreground">
                 These skills are enabled but the secrets they require haven't been added yet.
-                The agent will fail or skip the skill until the missing keys are filled in.
               </p>
               <div className="flex flex-wrap gap-1.5 pt-1">
                 {needsSetup.slice(0, 8).map((s) => (
@@ -250,7 +258,7 @@ const Skills = () => {
                     key={s.name}
                     type="button"
                     onClick={() => {
-                      setExpanded((prev) => new Set(prev).add(`${s.category}/${s.name}`));
+                      setExpanded((prev) => new Set(prev).add(skillRowKey(s)));
                       setQuery(s.name);
                     }}
                     className="text-[11px] font-mono px-2 py-0.5 rounded border border-warning/30 bg-warning/10 text-warning hover:bg-warning/20 transition-colors"
@@ -295,6 +303,59 @@ const Skills = () => {
         />
       </div>
 
+      {skills.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={bulkBusy}
+            onClick={() => void bulkSetEnabled(true)}
+          >
+            Enable all
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={bulkBusy}
+            onClick={() => void bulkSetEnabled(false)}
+          >
+            Disable all
+          </Button>
+          {categoryNames.map((cat) => (
+            <Button
+              key={cat}
+              size="sm"
+              variant="ghost"
+              className="text-xs"
+              disabled={bulkBusy}
+              onClick={() => void bulkSetEnabled(true, cat)}
+            >
+              Only {cat}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      <GlassCard className="p-4">
+        {loading ? (
+          <div className="flex items-center justify-center py-12 text-muted-foreground">
+            <Loader2 className="w-5 h-5 animate-spin mr-2" />
+            Loading skills…
+          </div>
+        ) : (
+          <SkillsByCategory
+            categories={grouped}
+            disabledSet={disabledSet}
+            secretKeys={secretKeys}
+            expanded={expanded}
+            highlightName={focusCap}
+            onToggleExpand={toggleExpand}
+            onSetup={handleSetup}
+            onToggled={handleToggled}
+          />
+        )}
+      </GlassCard>
+
       {pluginsCliAvailable && plugins.length > 0 && (
         <GlassCard className="p-4 space-y-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -305,8 +366,7 @@ const Skills = () => {
               <div>
                 <h3 className="text-sm font-semibold text-foreground">Plugins</h3>
                 <p className="text-xs text-muted-foreground">
-                  Extensions registered with the agent. Install or remove via chat —
-                  e.g. "install the foo plugin".
+                  Extensions registered with the agent. Install or remove via chat.
                 </p>
               </div>
             </div>
@@ -347,36 +407,6 @@ const Skills = () => {
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-md bg-primary/15 text-primary flex items-center justify-center shrink-0">
-              <Sparkles className="w-4.5 h-4.5" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-sm font-semibold text-foreground">Google Workspace</h3>
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Gmail, Calendar, Drive, Docs, and Sheets. Your agent will guide you through login in chat.
-              </p>
-              {googleWorkspaceSkill && googleWorkspaceNeedsSecrets.length > 0 && (
-                <p className="text-[11px] text-warning mt-1">
-                  Missing secrets: {googleWorkspaceNeedsSecrets.join(", ")}
-                </p>
-              )}
-            </div>
-          </div>
-          <Button
-            size="sm"
-            onClick={handleGoogleWorkspaceSetup}
-            className="gradient-primary text-primary-foreground shrink-0"
-          >
-            Set up
-          </Button>
-        </div>
-      </GlassCard>
-
-      <GlassCard className="p-4 space-y-3">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-md bg-primary/15 text-primary flex items-center justify-center shrink-0">
               <Globe className="w-4.5 h-4.5" />
             </div>
             <div className="min-w-0">
@@ -385,13 +415,9 @@ const Skills = () => {
                 <Badge variant="outline" className="border-white/10 text-muted-foreground text-[10px]">
                   Capability
                 </Badge>
-                <Badge variant="outline" className="border-success/30 text-success text-[10px]">
-                  Web search included
-                </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Basic web information retrieval uses <code>web_search</code>/<code>web_extract</code> and does not require browser automation.
-                Configure this only if you want interactive browser actions (click, type, navigate).
+                Basic web search does not require browser automation. Configure this only for interactive browser actions.
               </p>
             </div>
           </div>

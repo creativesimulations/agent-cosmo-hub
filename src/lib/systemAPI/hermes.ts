@@ -86,8 +86,14 @@ import {
   parseKeyValueProbeLines,
   probeRecordToState,
   hasUsableHermesInstall,
+  classifyHermesInstallProbe,
+  formatHermesInstallProbe,
   type HermesInstallProbe,
+  type HermesInstallProbeReason,
 } from './hermes/installProbe';
+
+export type { HermesInstallProbe, HermesInstallProbeReason } from './hermes/installProbe';
+export { classifyHermesInstallProbe, formatHermesInstallProbe, hasUsableHermesInstall } from './hermes/installProbe';
 
 export { buildOfficialHermesInstallScript, buildInstallerRunScript, BROWSER_EXECUTABLE_FIX_SCRIPT } from './hermes/constants';
 export { parseCronListOutput, parseProfileListOutput, parsePluginsListOutput, parseInsightsOutput };
@@ -1215,6 +1221,11 @@ model: ${options.model || 'openrouter/auto'}
     }
 
     return configResult;
+  },
+
+  /** Structured install probe (setup + diagnostics). */
+  async inspectHermesInstall(): Promise<HermesInstallProbe> {
+    return inspectHermesInstall();
   },
 
   /** Check if hermes config directory exists */

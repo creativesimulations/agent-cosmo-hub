@@ -262,7 +262,7 @@ export const RONBOT_APP_GUIDE = [
   '1. `hermes auth google-workspace`.',
   '2. `credential_request` for client ID/secret if needed.',
   '3. `oauth_open` with consent URL; `progress` during token exchange.',
-  '4. `done` with `capabilityId: "google_workspace"`.',
+  '4. `done` with `capabilityId: "google-workspace"`.',
   '',
   '### Telegram',
   '1. `credential_request` for `TELEGRAM_API_ID` + `TELEGRAM_API_HASH`.',

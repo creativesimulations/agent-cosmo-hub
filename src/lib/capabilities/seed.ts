@@ -90,21 +90,29 @@ export const SEED_CAPABILITIES: DiscoveredCapability[] = [
 
   // ── Productivity / connectors ──
   {
-    ...tool("gmail", "Gmail", "Mail", "Read, send, and triage your email.",
-            "Connect my Gmail so you can read and send email for me.",
-            "productivity", true, ["GOOGLE_OAUTH_REFRESH_TOKEN"]),
-    examplePrompts: ["Summarize my unread email from today"],
+    id: "google-workspace",
+    kind: "skill",
+    name: "Google Workspace",
+    oneLiner: "Gmail, Calendar, Drive, Docs, and Sheets.",
+    icon: "Sparkles",
+    category: "productivity",
+    requiresSetup: true,
+    requiredSecrets: [
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "GOOGLE_OAUTH_REFRESH_TOKEN",
+    ],
+    optionalSecrets: [],
+    setupPrompt:
+      "Please set up Google Workspace for me (Gmail, Calendar, Drive, Docs, Sheets). " +
+      "Walk me through login and permissions.",
+    examplePrompts: [
+      "Summarize my unread email from today",
+      "What's on my calendar tomorrow?",
+    ],
+    source: "seed",
+    skillName: "google-workspace",
   },
-  {
-    ...tool("google-calendar", "Google Calendar", "Calendar", "Schedule, reschedule, and reason about your day.",
-            "Connect my Google Calendar so you can manage my schedule.",
-            "productivity", true, ["GOOGLE_OAUTH_REFRESH_TOKEN"]),
-    examplePrompts: ["What's on my calendar tomorrow?"],
-  },
-  tool("google-drive", "Google Drive / Docs / Sheets", "FolderOpen",
-       "Read and edit your Drive, Docs, and Sheets.",
-       "Connect my Google Drive so you can work with my Docs and Sheets.",
-       "productivity", true, ["GOOGLE_OAUTH_REFRESH_TOKEN"]),
 
   // ── Knowledge ──
   {

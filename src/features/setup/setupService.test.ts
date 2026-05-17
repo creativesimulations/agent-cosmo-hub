@@ -1,10 +1,10 @@
 // Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { probeAgent, finalizeAfterInstall } from "./setupService";
+import { finalizeAfterInstall, invalidateAgentProbeCache, probeAgent } from "./setupService";
 
 vi.mock("@/lib/systemAPI", () => ({
   systemAPI: {
-    isConfigured: vi.fn(),
+    inspectHermesInstall: vi.fn(),
     getAgentName: vi.fn(),
     getHermesCliVersionSummary: vi.fn(),
     seedRonbotPersonalityAfterInstall: vi.fn(),
@@ -14,33 +14,84 @@ vi.mock("@/lib/systemAPI", () => ({
 
 import { systemAPI } from "@/lib/systemAPI";
 
-describe("probeAgent", () => {
-  beforeEach(() => vi.clearAllMocks());
+const readyState = {
+  hasDir: true,
+  hasEnv: true,
+  hasConfig: true,
+  hasVenvCli: true,
+  hasPathCli: false,
+  hasCliRuns: true,
+  hasModelLine: false,
+};
 
-  it("returns not ready when isConfigured is false", async () => {
-    vi.mocked(systemAPI.isConfigured).mockResolvedValue(false);
-    const result = await probeAgent();
-    expect(result.ready).toBe(false);
-    expect(result.reason).toBe("no_cli");
+describe("probeAgent", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invalidateAgentProbeCache();
   });
 
-  it("returns ready with name when configured", async () => {
-    vi.mocked(systemAPI.isConfigured).mockResolvedValue(true);
+  it("returns not ready when workspace missing", async () => {
+    vi.mocked(systemAPI.inspectHermesInstall).mockResolvedValue({
+      hasDir: false,
+      hasEnv: false,
+      hasConfig: false,
+      hasVenvCli: false,
+      hasPathCli: false,
+      hasCliRuns: false,
+      hasModelLine: false,
+    });
+    const result = await probeAgent();
+    expect(result.ready).toBe(false);
+    expect(result.reason).toBe("no_dir");
+  });
+
+  it("returns cli_only when PATH CLI without ~/.hermes", async () => {
+    vi.mocked(systemAPI.inspectHermesInstall).mockResolvedValue({
+      hasDir: false,
+      hasEnv: false,
+      hasConfig: false,
+      hasVenvCli: false,
+      hasPathCli: true,
+      hasCliRuns: true,
+      hasModelLine: false,
+    });
+    const result = await probeAgent();
+    expect(result.ready).toBe(false);
+    expect(result.reason).toBe("cli_only");
+  });
+
+  it("returns ready with name when fully configured", async () => {
+    vi.mocked(systemAPI.inspectHermesInstall).mockResolvedValue(readyState);
     vi.mocked(systemAPI.getAgentName).mockResolvedValue("TestBot");
-    vi.mocked(systemAPI.getHermesCliVersionSummary).mockResolvedValue({ text: "0.13.0", looksLikeV013: true });
+    vi.mocked(systemAPI.getHermesCliVersionSummary).mockResolvedValue({
+      text: "0.13.0",
+      looksLikeV013: true,
+    });
     const result = await probeAgent();
     expect(result.ready).toBe(true);
+    expect(result.reason).toBe("ready");
     expect(result.agentName).toBe("TestBot");
   });
 });
 
 describe("finalizeAfterInstall", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invalidateAgentProbeCache();
+  });
 
   it("fails when probe after install is not ready", async () => {
     vi.mocked(systemAPI.seedRonbotPersonalityAfterInstall).mockResolvedValue({ success: true });
     vi.mocked(systemAPI.stopHermesAgentRuntime).mockResolvedValue(undefined);
-    vi.mocked(systemAPI.isConfigured).mockResolvedValue(false);
+    vi.mocked(systemAPI.inspectHermesInstall).mockResolvedValue({
+      hasDir: false,
+      hasEnv: false,
+      hasConfig: false,
+      hasVenvCli: false,
+      hasPathCli: false,
+      hasCliRuns: false,
+      hasModelLine: false,
+    });
 
     const lines: string[][] = [];
     const result = await finalizeAfterInstall({

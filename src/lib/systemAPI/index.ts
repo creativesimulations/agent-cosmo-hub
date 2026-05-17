@@ -79,6 +79,7 @@ export const systemAPI = {
   setAgentName: hermesAPI.setAgentName.bind(hermesAPI),
   getAgentName: hermesAPI.getAgentName.bind(hermesAPI),
   isConfigured: hermesAPI.isConfigured.bind(hermesAPI),
+  inspectHermesInstall: hermesAPI.inspectHermesInstall.bind(hermesAPI),
   listSkills: hermesAPI.listSkills.bind(hermesAPI),
   getSkillsConfig: hermesAPI.getSkillsConfig.bind(hermesAPI),
   setSkillEnabled: hermesAPI.setSkillEnabled.bind(hermesAPI),

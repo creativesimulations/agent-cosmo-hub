@@ -10,11 +10,18 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { useAgentConnection } from "./AgentConnectionContext";
-import { probeAgent } from "@/features/setup/setupService";
+import { invalidateAgentProbeCache, probeAgent } from "@/features/setup/setupService";
 import { runAgentInstall } from "@/features/setup/runAgentInstall";
 import { DEFAULT_AGENT_NAME } from "@/features/setup/constants";
-import type { InstallSource, SetupPhase, WizardStep } from "@/features/setup/types";
-import { systemAPI } from "@/lib/systemAPI";
+import { SetupPathPickerDialog } from "@/components/setup/SetupPathPickerDialog";
+import type {
+  AgentProbe,
+  InstallSource,
+  SetupBlockingState,
+  SetupPhase,
+  WizardStep,
+} from "@/features/setup/types";
+import { isElectron, systemAPI } from "@/lib/systemAPI";
 
 type SetupContextValue = {
   phase: SetupPhase;
@@ -23,23 +30,26 @@ type SetupContextValue = {
   localPath: string;
   replacePersona: boolean;
   setReplacePersona: (v: boolean) => void;
-  busy: boolean;
   installing: boolean;
   installSucceeded: boolean;
   installProgress: number;
   logLines: string[];
   guardAgentName: string | null;
   existingProbe: { agentName?: string } | null;
+  entryProbePending: boolean;
+  lastAgentProbe: AgentProbe | null;
+  blocking: SetupBlockingState;
 
   goHub: () => void;
   goConnect: () => void;
-  startBundledInstall: () => Promise<void>;
-  pickLocalFolder: () => Promise<void>;
+  startBundledInstall: () => void;
+  pickLocalFolder: () => void;
   goWizardPrereqs: (source: InstallSource, localPath?: string) => void;
   setWizardStep: (step: WizardStep) => void;
   runInstall: () => Promise<void>;
   cancelInstall: () => void;
   finishConnect: () => Promise<boolean>;
+  setConnecting: (v: boolean) => void;
   guardConnect: () => Promise<boolean>;
   guardRename: (name: string) => Promise<boolean>;
   guardResetAndReinstall: (onLog: (lines: string[]) => void) => Promise<boolean>;
@@ -60,13 +70,17 @@ export function SetupProvider({ children }: { children: ReactNode }) {
   const [installSource, setInstallSource] = useState<InstallSource>("bundled");
   const [localPath, setLocalPath] = useState("");
   const [replacePersona, setReplacePersona] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [installSucceeded, setInstallSucceeded] = useState(false);
   const [installProgress, setInstallProgress] = useState(0);
   const [logLines, setLogLines] = useState<string[]>([]);
   const [guardAgentName, setGuardAgentName] = useState<string | null>(null);
   const [existingProbe, setExistingProbe] = useState<{ agentName?: string } | null>(null);
+  const [entryProbePending, setEntryProbePending] = useState(false);
+  const [lastAgentProbe, setLastAgentProbe] = useState<AgentProbe | null>(null);
+  const [pickingFolder, setPickingFolder] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [pathPickerOpen, setPathPickerOpen] = useState(false);
 
   const installGenRef = useRef(0);
   const probeGenRef = useRef(0);
@@ -91,6 +105,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
   const goHub = useCallback(() => {
     probeGenRef.current += 1;
     installGenRef.current += 1;
+    setEntryProbePending(false);
     setPhase("hub");
     setGuardAgentName(null);
     setExistingProbe(null);
@@ -108,55 +123,87 @@ export function SetupProvider({ children }: { children: ReactNode }) {
     return ok;
   }, [refreshConnection]);
 
-  const probeForExisting = useCallback(async () => {
-    const gen = ++probeGenRef.current;
-    const probe = await probeAgent();
-    if (probeGenRef.current !== gen) return null;
-    if (probe.ready) {
-      setGuardAgentName(probe.agentName ?? "your agent");
-      setExistingProbe({ agentName: probe.agentName });
-      setPhase("guard");
-      return probe;
-    }
-    return null;
+  const runProbe = useCallback(async (useCache: boolean): Promise<AgentProbe> => {
+    const probe = await probeAgent({ useCache });
+    setLastAgentProbe(probe);
+    return probe;
   }, []);
 
-  const startBundledInstall = useCallback(async () => {
-    setBusy(true);
+  const probeForExisting = useCallback(
+    async (gen: number) => {
+      const probe = await runProbe(true);
+      if (probeGenRef.current !== gen) return null;
+      if (probe.ready && probe.reason === "ready") {
+        setGuardAgentName(probe.agentName ?? "your agent");
+        setExistingProbe({ agentName: probe.agentName });
+        setPhase("guard");
+        return probe;
+      }
+      return null;
+    },
+    [runProbe],
+  );
+
+  const startBundledInstall = useCallback(() => {
+    const gen = ++probeGenRef.current;
     resetWizard("bundled");
-    try {
-      const existing = await probeForExisting();
-      if (!existing) setWizardStep("prereqs");
-    } finally {
-      setBusy(false);
-    }
+    setEntryProbePending(true);
+    void (async () => {
+      try {
+        await probeForExisting(gen);
+      } finally {
+        if (probeGenRef.current === gen) setEntryProbePending(false);
+      }
+    })();
   }, [probeForExisting, resetWizard]);
 
-  const pickLocalFolder = useCallback(async () => {
+  const applyLocalPath = useCallback(
+    (path: string) => {
+      if (!path) return;
+      resetWizard("local", path);
+    },
+    [resetWizard],
+  );
+
+  const pickLocalFolder = useCallback(() => {
+    if (!isElectron()) {
+      setPathPickerOpen(true);
+      return;
+    }
+
+    setPickingFolder(true);
     const toastId = "setup-pick-folder";
     toast.loading("Opening folder picker…", {
       id: toastId,
-      description: "On Linux/WSL the dialog may appear behind Ronbot.",
+      description: "If the dialog is hidden, check behind this window.",
     });
-    try {
-      const res = await systemAPI.selectFolder({ title: "Select your agent folder" });
-      if (!res.success) {
-        toast.error("Could not open folder picker", { id: toastId, description: res.error });
-        return;
+
+    void (async () => {
+      try {
+        const res = await systemAPI.selectFolder({ title: "Select your agent folder" });
+        if (!res.success) {
+          toast.error("Could not open folder picker", {
+            id: toastId,
+            description: res.error ?? "Folder picker requires the Ronbot desktop app.",
+          });
+          return;
+        }
+        if (res.canceled || !res.path) {
+          toast.info("No folder selected", { id: toastId });
+          return;
+        }
+        toast.success("Folder selected", { id: toastId, description: res.path, duration: 6000 });
+        applyLocalPath(res.path);
+      } catch (e) {
+        toast.error("Folder picker failed", {
+          id: toastId,
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setPickingFolder(false);
       }
-      if (res.canceled || !res.path) {
-        toast.info("No folder selected", { id: toastId });
-        return;
-      }
-      toast.success("Folder selected", { id: toastId, description: res.path, duration: 6000 });
-      resetWizard("local", res.path);
-    } catch (e) {
-      toast.error("Folder picker failed", {
-        id: toastId,
-        description: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }, [resetWizard]);
+    })();
+  }, [applyLocalPath]);
 
   const goWizardPrereqs = useCallback(
     (source: InstallSource, path = "") => resetWizard(source, path),
@@ -219,6 +266,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
     setInstalling(false);
     if (result.ok) {
       setInstallProgress(100);
+      invalidateAgentProbeCache();
       const connected = await refreshConnection();
       if (connected) {
         setInstallSucceeded(true);
@@ -267,12 +315,21 @@ export function SetupProvider({ children }: { children: ReactNode }) {
         onLog([`✗ Uninstall failed: ${result.stderr || result.stdout || "unknown"}`]);
         return false;
       }
+      invalidateAgentProbeCache();
       onLog(["✓ Uninstalled. Starting fresh install wizard."]);
       goWizardPrereqs("bundled");
       return true;
     },
     [goWizardPrereqs],
   );
+
+  const blocking = useMemo<SetupBlockingState>(() => {
+    if (installing) return { active: true, message: "Installing agent…" };
+    if (pickingFolder) return { active: true, message: "Choose a folder…" };
+    if (connecting) return { active: true, message: "Connecting to agent…" };
+    if (entryProbePending) return { active: true, message: "Checking for existing install…" };
+    return { active: false, message: "" };
+  }, [installing, pickingFolder, connecting, entryProbePending]);
 
   const value = useMemo<SetupContextValue>(
     () => ({
@@ -282,13 +339,15 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       localPath,
       replacePersona,
       setReplacePersona,
-      busy,
       installing,
       installSucceeded,
       installProgress,
       logLines,
       guardAgentName,
       existingProbe,
+      entryProbePending,
+      lastAgentProbe,
+      blocking,
       goHub,
       goConnect,
       startBundledInstall,
@@ -298,6 +357,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       runInstall,
       cancelInstall,
       finishConnect,
+      setConnecting,
       guardConnect,
       guardRename,
       guardResetAndReinstall,
@@ -312,13 +372,15 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       installSource,
       localPath,
       replacePersona,
-      busy,
       installing,
       installSucceeded,
       installProgress,
       logLines,
       guardAgentName,
       existingProbe,
+      entryProbePending,
+      lastAgentProbe,
+      blocking,
       goHub,
       goConnect,
       startBundledInstall,
@@ -337,7 +399,20 @@ export function SetupProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return <SetupContext.Provider value={value}>{children}</SetupContext.Provider>;
+  return (
+    <SetupContext.Provider value={value}>
+      {children}
+      <SetupPathPickerDialog
+        open={pathPickerOpen}
+        title="Select your agent folder"
+        onCancel={() => setPathPickerOpen(false)}
+        onSubmit={(path) => {
+          setPathPickerOpen(false);
+          applyLocalPath(path);
+        }}
+      />
+    </SetupContext.Provider>
+  );
 }
 
 export function useSetup() {
@@ -345,3 +420,5 @@ export function useSetup() {
   if (!ctx) throw new Error("useSetup must be used within SetupProvider");
   return ctx;
 }
+
+/** Prefetch isConfigured on hub mount — warms probe cache for bundled install. */

@@ -15,16 +15,26 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { StreamingLogPanel } from "@/components/setup/StreamingLogPanel";
+import type { HermesInstallProbe } from "@/lib/systemAPI/hermes/installProbe";
+import { HermesProbeSummary } from "@/features/setup/components/HermesProbeSummary";
 
 type Props = {
   agentName: string;
+  installState?: HermesInstallProbe;
   onBack: () => void;
   onConnect: () => Promise<boolean>;
   onRename: (name: string) => Promise<boolean>;
   onReset: (log: (lines: string[]) => void) => Promise<boolean>;
 };
 
-export function ExistingInstallGuard({ agentName, onBack, onConnect, onRename, onReset }: Props) {
+export function ExistingInstallGuard({
+  agentName,
+  installState,
+  onBack,
+  onConnect,
+  onRename,
+  onReset,
+}: Props) {
   const [rename, setRename] = useState(agentName);
   const [busy, setBusy] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
@@ -49,6 +59,7 @@ export function ExistingInstallGuard({ agentName, onBack, onConnect, onRename, o
         <p className="text-sm text-muted-foreground">
           <strong>{agentName}</strong> is already at ~/.hermes. Connect, rename, or reset before reinstalling.
         </p>
+        {installState && <HermesProbeSummary state={installState} className="text-xs font-mono text-muted-foreground" />}
         <Button className="w-full" disabled={busy} onClick={() => run(onConnect)}>
           {busy ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Link2 className="w-4 h-4 mr-2" />}
           Connect

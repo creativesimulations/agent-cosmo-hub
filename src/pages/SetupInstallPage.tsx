@@ -14,14 +14,16 @@ import { DoneStep } from "@/features/setup/components/DoneStep";
 export default function SetupInstallPage() {
   const navigate = useNavigate();
   const setup = useSetup();
-  const [connecting, setConnecting] = useState(false);
   const [preflightReady, setPreflightReady] = useState(false);
 
   const goHomeOnConnect = async (connect: () => Promise<boolean>) => {
-    setConnecting(true);
-    const ok = await connect();
-    setConnecting(false);
-    if (ok) navigate("/");
+    setup.setConnecting(true);
+    try {
+      const ok = await connect();
+      if (ok) navigate("/");
+    } finally {
+      setup.setConnecting(false);
+    }
   };
 
   const wizardBack = () => {
@@ -35,15 +37,14 @@ export default function SetupInstallPage() {
   };
 
   return (
-    <div className="flex-1 flex items-center justify-center min-h-screen p-8">
+    <motion.div className="flex-1 flex items-center justify-center min-h-screen p-8">
       <AnimatePresence mode="wait">
         {setup.phase === "hub" && (
           <motion.div key="hub" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <SetupHub
-              busy={setup.busy}
               onConnect={setup.goConnect}
-              onInstall={() => void setup.startBundledInstall()}
-              onLocalFolder={() => void setup.pickLocalFolder()}
+              onInstall={setup.startBundledInstall}
+              onLocalFolder={setup.pickLocalFolder}
             />
           </motion.div>
         )}
@@ -51,7 +52,7 @@ export default function SetupInstallPage() {
         {setup.phase === "connect" && (
           <motion.div key="connect" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
             <ConnectPanel
-              connecting={connecting}
+              connecting={setup.blocking.active && setup.blocking.message.includes("Connecting")}
               onBack={setup.goHub}
               onConnect={() => goHomeOnConnect(setup.finishConnect)}
             />
@@ -62,6 +63,7 @@ export default function SetupInstallPage() {
           <motion.div key="guard" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
             <ExistingInstallGuard
               agentName={setup.guardAgentName}
+              installState={setup.lastAgentProbe?.installState}
               onBack={setup.goHub}
               onConnect={() => goHomeOnConnect(setup.guardConnect)}
               onRename={async (name) => {
@@ -78,11 +80,13 @@ export default function SetupInstallPage() {
           <motion.div key="wizard" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
             <WizardChrome
               step={setup.wizardStep}
-              canGoBack={!setup.installing}
+              canGoBack={!setup.installing && !setup.entryProbePending}
               onBack={wizardBack}
             >
               {setup.wizardStep === "prereqs" && (
                 <PrereqsStep
+                  entryProbePending={setup.entryProbePending}
+                  cachedProbe={setup.lastAgentProbe}
                   onContinue={() => setup.setWizardStep("install")}
                   onConnectExisting={async () => {
                     const ok = await setup.finishConnect();
@@ -110,7 +114,6 @@ export default function SetupInstallPage() {
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </motion.div>
   );
 }
-

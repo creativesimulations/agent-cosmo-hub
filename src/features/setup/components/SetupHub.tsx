@@ -1,17 +1,22 @@
+import { useEffect } from "react";
 import { motion } from "framer-motion";
-import { Link2, FolderOpen, Loader2, Package } from "lucide-react";
+import { Link2, FolderOpen, Package } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { cn } from "@/lib/utils";
 import ronbotLogo from "@/assets/ronbot-logo.png";
+import { probeAgent } from "@/features/setup/setupService";
 
 type Props = {
-  busy: boolean;
   onConnect: () => void;
   onInstall: () => void;
   onLocalFolder: () => void;
 };
 
-export function SetupHub({ busy, onConnect, onInstall, onLocalFolder }: Props) {
+export function SetupHub({ onConnect, onInstall, onLocalFolder }: Props) {
+  useEffect(() => {
+    void probeAgent({ useCache: false }).catch(() => undefined);
+  }, []);
+
   return (
     <motion.div className="max-w-2xl w-full space-y-8">
       <header className="text-center space-y-4">
@@ -25,20 +30,12 @@ export function SetupHub({ busy, onConnect, onInstall, onLocalFolder }: Props) {
           icon={<Link2 className="w-6 h-6 text-primary" />}
           title="Connect"
           description="Detect an agent at ~/.hermes"
-          disabled={busy}
           onClick={onConnect}
         />
         <HubCard
-          icon={
-            busy ? (
-              <Loader2 className="w-6 h-6 text-accent animate-spin" />
-            ) : (
-              <Package className="w-6 h-6 text-accent" />
-            )
-          }
+          icon={<Package className="w-6 h-6 text-accent" />}
           title="Install Ronbot Agent"
-          description={busy ? "Checking for existing install…" : "Official Hermes installer"}
-          disabled={busy}
+          description="Official Hermes installer"
           onClick={onInstall}
           accent
         />
@@ -46,7 +43,6 @@ export function SetupHub({ busy, onConnect, onInstall, onLocalFolder }: Props) {
           icon={<FolderOpen className="w-6 h-6 text-primary" />}
           title="Use My Own Agent"
           description="Install from a local source folder"
-          disabled={busy}
           onClick={onLocalFolder}
         />
       </motion.div>
@@ -58,14 +54,12 @@ function HubCard({
   icon,
   title,
   description,
-  disabled,
   onClick,
   accent,
 }: {
   icon: React.ReactNode;
   title: string;
   description: string;
-  disabled?: boolean;
   onClick: () => void;
   accent?: boolean;
 }) {
@@ -74,9 +68,8 @@ function HubCard({
       className={cn(
         "cursor-pointer transition-all group",
         accent ? "hover:border-accent/30" : "hover:border-primary/30",
-        disabled && "pointer-events-none opacity-60",
       )}
-      onClick={disabled ? undefined : onClick}
+      onClick={onClick}
     >
       <motion.div className="space-y-3">
         <div

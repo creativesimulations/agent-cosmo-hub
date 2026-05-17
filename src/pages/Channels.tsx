@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Radio, Sparkles } from "lucide-react";
+import { Radio } from "lucide-react";
 import ChannelCard, { ChannelStatus } from "@/components/channels/ChannelCard";
-import GlassCard from "@/components/ui/GlassCard";
-import { Button } from "@/components/ui/button";
 import { systemAPI } from "@/lib/systemAPI";
 import { useNavigate } from "react-router-dom";
 import { useChat } from "@/contexts/ChatContext";
@@ -19,10 +17,6 @@ import type { DiscoveredCapability } from "@/lib/capabilities/types";
  * runtime repair via the intent protocol. The renderer never shells
  * out to Hermes for any setup-style action.
  */
-
-const GOOGLE_WORKSPACE_PROMPT =
-  "Please set up Google Workspace for me (Gmail, Calendar, Drive, Docs, Sheets). " +
-  "Walk me through any login or permission steps and ask for anything you need.";
 
 const ChannelsPage = () => {
   const navigate = useNavigate();
@@ -119,31 +113,6 @@ const ChannelsPage = () => {
               onSetUp={() => handleSetUp(c)}
             />
           ))}
-          <GlassCard className="p-5 flex flex-col gap-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="w-10 h-10 rounded-lg bg-primary/15 text-primary flex items-center justify-center shrink-0">
-                <Sparkles className="w-5 h-5" />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <h3 className="text-base font-semibold text-foreground">Google Workspace</h3>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Gmail, Calendar, Drive, Docs, and Sheets integration.
-              </p>
-              <p className="text-[11px] text-muted-foreground/70">
-                Your agent will guide you through login in chat.
-              </p>
-            </div>
-            <div className="flex flex-col gap-2 mt-auto">
-              <Button
-                size="sm"
-                onClick={() => delegateToAgent(GOOGLE_WORKSPACE_PROMPT)}
-                className="gradient-primary text-primary-foreground w-full"
-              >
-                Set up
-              </Button>
-            </div>
-          </GlassCard>
         </div>
       </section>
     </div>

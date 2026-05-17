@@ -105,6 +105,11 @@ function registerFsHandlers(ipcMain, BrowserWindow, dialog, IPC) {
         BrowserWindow.getFocusedWindow() ||
         BrowserWindow.getAllWindows()[0];
       const defaultPath = options.defaultPath || os.homedir();
+      if (win && !win.isDestroyed()) {
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+      }
       const result = win
         ? await dialog.showOpenDialog(win, {
           title: options.title || 'Select a folder',

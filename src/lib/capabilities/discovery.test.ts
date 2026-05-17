@@ -73,6 +73,17 @@ describe("capability discovery", () => {
     expect(skill.icon).toBe("Youtube");
   });
 
+  it("dedupes split Google seed entries when google-workspace skill is installed", async () => {
+    setMockState({
+      skills: [{ name: "google-workspace", description: "Gmail, Calendar, Drive" }],
+    });
+    const r = await discoverCapabilities({ force: true });
+    expect(r.capabilities["google-workspace"]).toBeDefined();
+    expect(r.capabilities.gmail).toBeUndefined();
+    expect(r.capabilities["google-calendar"]).toBeUndefined();
+    expect(r.capabilities["google-drive"]).toBeUndefined();
+  });
+
   it("skips Hermes CLI when skipHermesCli is true", async () => {
     setMockState({
       hermesResult: {

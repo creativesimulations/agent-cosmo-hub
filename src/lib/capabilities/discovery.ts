@@ -134,6 +134,23 @@ const fromHermesEntry = (
   };
 };
 
+const GOOGLE_SPLIT_CAPABILITY_IDS = ["gmail", "google-calendar", "google-drive"] as const;
+
+/** When the unified Hermes skill is present, drop legacy split seed/CLI entries. */
+const dedupeGoogleWorkspaceCapabilities = (
+  capabilities: Record<string, DiscoveredCapability>,
+  installedSkillNames: ReadonlySet<string>,
+): void => {
+  const hasWorkspace =
+    installedSkillNames.has("google-workspace") ||
+    !!capabilities["google-workspace"] ||
+    !!capabilities["skill:google-workspace"];
+  if (!hasWorkspace) return;
+  for (const id of GOOGLE_SPLIT_CAPABILITY_IDS) {
+    delete capabilities[id];
+  }
+};
+
 /** Coerce a discovered skill into a DiscoveredCapability. */
 const fromSkill = (skill: { name: string; category?: string; description?: string; requiredSecrets?: string[] }): DiscoveredCapability => {
   const name = titleCase(skill.name);
@@ -217,10 +234,12 @@ export const discoverCapabilities = async (
   }
 
   // 3) Installed skills.
+  const installedSkillNames = new Set<string>();
   try {
     const r = await systemAPI.listSkills?.();
     if (r && r.success && Array.isArray(r.skills)) {
       for (const skill of r.skills) {
+        installedSkillNames.add(skill.name.toLowerCase());
         const cap = fromSkill(skill);
         // Don't shadow a richer Hermes/seed entry that already covers this skill.
         if (capabilities[cap.id]) continue;
@@ -236,6 +255,8 @@ export const discoverCapabilities = async (
   } catch (e) {
     errors.push(e instanceof Error ? e.message : String(e));
   }
+
+  dedupeGoogleWorkspaceCapabilities(capabilities, installedSkillNames);
 
   const result: DiscoveryResult = {
     capabilities,
