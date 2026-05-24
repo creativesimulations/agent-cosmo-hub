@@ -90,6 +90,23 @@ async function runAptWithPassword(
   return runScript(script, timeout);
 }
 
+/** Run apt-get directly when already privileged (e.g. root shell). */
+async function runAptDirect(
+  aptArgs: string[],
+  timeout = 600000,
+): Promise<CommandResult> {
+  const argsQuoted = aptArgs.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(' ');
+  const script = [
+    'set -o pipefail',
+    'export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_MODE=a',
+    `apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" ${argsQuoted} 2>&1`,
+    'rc=$?',
+    'echo "[apt] exit code: $rc"',
+    'exit $rc',
+  ].join('\n');
+  return runScript(script, timeout);
+}
+
 export type SudoState =
   | { kind: 'no-sudo' }              // sudo command not available at all
   | { kind: 'passwordless' }         // sudo -n true succeeds — no password needed
@@ -99,6 +116,10 @@ export type SudoState =
 export const sudoAPI = {
   /** Probe what kind of sudo access is available. */
   async probe(): Promise<SudoState> {
+    // 0. If already root, no password prompt is required.
+    const rootCheck = await runScript('[ "$(id -u)" = "0" ] && echo ROOT || echo USER', 10000);
+    if (rootCheck.stdout.includes('ROOT')) return { kind: 'passwordless' };
+
     // 1. sudo present?
     const which = await runScript('command -v sudo >/dev/null 2>&1 && echo OK || echo NO', 10000);
     if (!which.stdout.includes('OK')) return { kind: 'no-sudo' };
@@ -138,7 +159,43 @@ export const sudoAPI = {
   async aptInstall(packages: string[], password: string): Promise<CommandResult> {
     if (packages.length === 0) return { success: true, stdout: '', stderr: '', code: 0 };
     const safe = packages.map((p) => p.replace(/[^a-zA-Z0-9._+-]/g, ''));
-    // apt-get update first (best-effort — failures are okay if cache is recent).
+    if (!password) {
+      // Passwordless path: support either root shells (no sudo installed) or
+      // sudoers with NOPASSWD.
+      const rootCheck = await runScript('[ "$(id -u)" = "0" ] && echo ROOT || echo USER', 10000);
+      if (rootCheck.stdout.includes('ROOT')) {
+        await runAptDirect(['update'], 180000);
+        return runAptDirect(['install', ...safe], 600000);
+      }
+      const nopass = await runScript('sudo -n true 2>/dev/null && echo OK || echo NO', 10000);
+      if (nopass.stdout.includes('OK')) {
+        await runScript(
+          [
+            'set -o pipefail',
+            'export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_MODE=a',
+            'sudo -n apt-get -y update 2>&1',
+          ].join('\n'),
+          180000,
+        );
+        return runScript(
+          [
+            'set -o pipefail',
+            'export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_MODE=a',
+            `sudo -n apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install ${safe
+              .map((p) => `'${p.replace(/'/g, "'\\''")}'`)
+              .join(' ')} 2>&1`,
+          ].join('\n'),
+          600000,
+        );
+      }
+      return {
+        success: false,
+        stdout: '',
+        stderr: 'No privileged apt path available (not root and sudo passwordless unavailable).',
+        code: 1,
+      };
+    }
+    // Password-protected sudo path.
     await runAptWithPassword(['update'], password, 180000);
     return runAptWithPassword(['install', ...safe], password, 600000);
   },

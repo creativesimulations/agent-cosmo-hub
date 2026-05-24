@@ -111,7 +111,8 @@ function SudoPasswordDialogImpl({ open, reason, onCancel, onPassword, onPassword
             Administrator access needed
           </DialogTitle>
           <DialogDescription>
-            We need to {reason}. Your password stays on this machine and is never logged or sent anywhere.
+            We need to {reason}. Your password is used only for this install step, stays on this machine,
+            is never logged, and is never sent anywhere.
           </DialogDescription>
         </DialogHeader>
 
@@ -126,8 +127,8 @@ function SudoPasswordDialogImpl({ open, reason, onCancel, onPassword, onPassword
           <Alert variant="destructive">
             <AlertTriangle className="w-4 h-4" />
             <AlertDescription>
-              <code>sudo</code> isn't available in your environment. Please install it manually
-              and retry.
+              <code>sudo</code> isn't available in this Linux environment, and package installation
+              requires administrator tooling.
             </AlertDescription>
           </Alert>
         )}
