@@ -12,6 +12,11 @@ export const buildOfficialHermesInstallScript = (): string =>
   [
     'set -euo pipefail',
     'export DEBIAN_FRONTEND=noninteractive',
+    // Pin install/data path to the location Ronbot verifies and manages.
+    'export HERMES_HOME="$HOME/.hermes"',
+    // Guard against accidental env leakage that would switch installer modes.
+    'unset ENSURE_DEPS POSTINSTALL_MODE',
+    'echo "[install] target HERMES_HOME=$HERMES_HOME"',
     'TMP_INSTALL_SCRIPT="$(mktemp 2>/dev/null || echo /tmp/hermes-install.$$.$RANDOM.sh)"',
     'trap \'rm -f "$TMP_INSTALL_SCRIPT" 2>/dev/null || true\' EXIT',
     `curl -fLsS --retry 3 --connect-timeout 10 --max-time 180 "${INSTALL_SCRIPT}" -o "$TMP_INSTALL_SCRIPT"`,
