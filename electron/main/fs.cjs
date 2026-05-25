@@ -21,7 +21,9 @@ function registerFsHandlers(ipcMain, BrowserWindow, dialog, IPC) {
       isWSL,
       isWindows: platform === 'win32',
       isMac: platform === 'darwin',
-      isLinux: platform === 'linux' && !isWSL,
+      // Treat WSL as Linux for feature gating; keep isWSL for callers that
+      // need to branch specifically on Windows-hosted Linux behavior.
+      isLinux: platform === 'linux',
       homeDir: os.homedir(),
       totalMemory: os.totalmem(),
       freeMemory: os.freemem(),

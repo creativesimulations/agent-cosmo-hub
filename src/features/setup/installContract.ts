@@ -92,6 +92,99 @@ export async function evaluateInstallContract(): Promise<InstallContractReport> 
     detail: bridge.ok ? "Electron IPC bridge is healthy." : bridge.reason,
   });
 
+  if (!bridge.ok) {
+    checks.push(
+      {
+        id: "os",
+        label: "Operating system",
+        status: "blocked_unsupported",
+        severity: "hard",
+        domain: "host",
+        detail: "Cannot verify host OS until the desktop bridge is available.",
+      },
+      {
+        id: "arch",
+        label: "CPU architecture",
+        status: "blocked_unsupported",
+        severity: "hard",
+        domain: "host",
+        detail: "Cannot verify CPU architecture until the desktop bridge is available.",
+      },
+      {
+        id: "disk",
+        label: "Disk space",
+        status: "fixable_manual",
+        severity: "soft",
+        domain: "host",
+        detail: "Disk check unavailable until the desktop bridge is available.",
+      },
+      {
+        id: "git",
+        label: "Git (install shell)",
+        status: "blocked_unsupported",
+        severity: "hard",
+        domain: "guest",
+        detail: "Cannot verify install shell dependencies until the desktop bridge is available.",
+      },
+      {
+        id: "fetcher",
+        label: "curl/wget (install shell)",
+        status: "blocked_unsupported",
+        severity: "hard",
+        domain: "guest",
+        detail: "Cannot verify install shell dependencies until the desktop bridge is available.",
+      },
+      {
+        id: "python-discoverability",
+        label: "Python discoverability",
+        status: "fixable_manual",
+        severity: "soft",
+        domain: "guest",
+        detail: "Python preflight check unavailable until the desktop bridge is available.",
+      },
+      {
+        id: "network",
+        label: "Installer connectivity",
+        status: "blocked_unsupported",
+        severity: "hard",
+        domain: "guest",
+        detail: "Connectivity preflight requires the desktop bridge.",
+      },
+      {
+        id: "sudo",
+        label: "Sudo capability",
+        status: "fixable_manual",
+        severity: "soft",
+        domain: "guest",
+        detail: "Sudo probe unavailable until the desktop bridge is available.",
+      },
+    );
+    if (platform.isWindows) {
+      checks.push(
+        {
+          id: "wsl2",
+          label: "WSL2",
+          status: "blocked_unsupported",
+          severity: "hard",
+          domain: "host",
+          detail: "Cannot verify WSL until the desktop bridge is available.",
+        },
+        {
+          id: "wsl-distro",
+          label: "WSL distro",
+          status: "blocked_unsupported",
+          severity: "hard",
+          domain: "host",
+          detail: "Cannot verify WSL distro until the desktop bridge is available.",
+        },
+      );
+    }
+    return {
+      checks,
+      hasHardBlockers: true,
+    };
+  }
+
   // OS support
   let osStatus: ContractStatus = "ok";
   let osDetail = "Supported platform";

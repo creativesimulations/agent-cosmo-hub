@@ -91,7 +91,28 @@ async function scanDependencyItems(): Promise<PrereqItem[]> {
   };
 
   const platform = await systemAPI.getPlatform();
-  const optionalPromise = Promise.all([
+
+  for (const id of ["desktop-bridge", "os", "arch", "wsl2", "wsl-distro", "git", "fetcher", "network", "disk", "python-discoverability", "sudo", "ripgrep", "curl"]) {
+    patch(id, { status: "checking" });
+  }
+
+  const contract = await evaluateInstallContract();
+  applyContract(items, contract.checks, patch, platform.isWindows);
+
+  const bridgeOk = contract.checks.find((check) => check.id === "desktop-bridge")?.status === "ok";
+  if (!bridgeOk) {
+    patch("ripgrep", {
+      status: "pending",
+      description: "Optional — verification requires desktop bridge.",
+    });
+    patch("curl", {
+      status: "pending",
+      description: "Optional — verification requires desktop bridge.",
+    });
+    return items;
+  }
+
+  await Promise.all([
     systemAPI.checkRipgrep().then((rg) =>
       patch(
         "ripgrep",
@@ -109,14 +130,6 @@ async function scanDependencyItems(): Promise<PrereqItem[]> {
       ),
     ),
   ]);
-
-  for (const id of ["desktop-bridge", "os", "arch", "wsl2", "wsl-distro", "git", "fetcher", "network", "disk", "python-discoverability", "sudo", "ripgrep", "curl"]) {
-    patch(id, { status: "checking" });
-  }
-
-  const contract = await evaluateInstallContract();
-  applyContract(items, contract.checks, patch, platform.isWindows);
-  await optionalPromise;
   return items;
 }
 

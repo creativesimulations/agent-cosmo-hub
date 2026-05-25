@@ -131,4 +131,31 @@ describe("runPrereqScan", () => {
     expect(result.probe).toBe(cached);
     expect(result.agentReady).toBe(false);
   });
+
+  it("does not flag optional tools as missing when desktop bridge is unavailable", async () => {
+    vi.mocked(probeAgent).mockResolvedValue(emptyProbe({ reason: "no_dir" }));
+    vi.mocked(evaluateInstallContract).mockResolvedValue({
+      checks: [
+        ...baseChecks().map((check) =>
+          check.id === "desktop-bridge"
+            ? {
+                ...check,
+                status: "blocked_unsupported",
+                detail: "Electron preload bridge is missing (window.electronAPI unavailable).",
+              }
+            : check,
+        ),
+      ],
+      hasHardBlockers: true,
+    });
+
+    const result = await runPrereqScan();
+    const rg = result.items.find((item) => item.id === "ripgrep");
+    const curl = result.items.find((item) => item.id === "curl");
+
+    expect(rg?.status).toBe("pending");
+    expect(curl?.status).toBe("pending");
+    expect(systemAPI.checkRipgrep).not.toHaveBeenCalled();
+    expect(systemAPI.checkCurl).not.toHaveBeenCalled();
+  });
 });
