@@ -23,6 +23,7 @@ export const systemAPI = {
 
   // Core platform
   getPlatform: coreAPI.getPlatform.bind(coreAPI),
+  checkDesktopBridge: coreAPI.checkDesktopBridge.bind(coreAPI),
   runCommand: coreAPI.runCommand.bind(coreAPI),
   fileExists: coreAPI.fileExists.bind(coreAPI),
   readFile: coreAPI.readFile.bind(coreAPI),

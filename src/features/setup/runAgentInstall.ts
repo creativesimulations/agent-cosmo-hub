@@ -150,6 +150,20 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
     if (!isAborted()) log([line]);
   };
 
+  append("Checking desktop bridge health…");
+  const bridge = await systemAPI.checkDesktopBridge();
+  if (!bridge.ok) {
+    const message = `Desktop bridge unavailable: ${bridge.reason}`;
+    const detailLines = bridge.details.length ? [`[bridge] ${bridge.details.join(" | ")}`] : [];
+    log([`✗ ${message}`, ...detailLines]);
+    return {
+      ok: false,
+      message,
+      failure: classifyInstallFailure(message),
+      events,
+    };
+  }
+
   append("Running install preflight contract…");
   emit({
     ts: new Date().toISOString(),

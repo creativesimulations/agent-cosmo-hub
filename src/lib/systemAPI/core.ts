@@ -19,6 +19,12 @@ type CommandOutputEvent = {
   code?: number;
 };
 
+export type DesktopBridgeHealth = {
+  ok: boolean;
+  reason: string;
+  details: string[];
+};
+
 const reconcileStreamOutput = (collected: string, reported?: string): string => {
   if (!reported) return collected;
   if (!collected) return reported;
@@ -26,27 +32,72 @@ const reconcileStreamOutput = (collected: string, reported?: string): string => 
   return collected;
 };
 
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-const simulatedPlatform: PlatformInfo = {
-  platform: 'win32',
-  arch: 'x64',
-  release: '10.0.22631',
-  isWSL: false,
-  isWindows: true,
-  isMac: false,
-  isLinux: false,
-  homeDir: 'C:\\Users\\User',
-  totalMemory: 17179869184,
-  freeMemory: 8589934592,
-};
+const NON_ELECTRON_ERROR = 'Desktop bridge unavailable (non-Electron runtime).';
 
 /** Core platform & command execution */
 export const coreAPI = {
   async getPlatform(): Promise<PlatformInfo> {
     if (isElectron()) return window.electronAPI!.getPlatform();
-    await delay(300);
-    return simulatedPlatform;
+    return {
+      platform: 'browser',
+      arch: 'unknown',
+      release: '',
+      isWSL: false,
+      isWindows: false,
+      isMac: false,
+      isLinux: false,
+      homeDir: '',
+      totalMemory: 0,
+      freeMemory: 0,
+    };
+  },
+
+  async checkDesktopBridge(): Promise<DesktopBridgeHealth> {
+    const api = window.electronAPI;
+    if (!api) {
+      return {
+        ok: false,
+        reason: 'Electron preload bridge is missing (window.electronAPI unavailable).',
+        details: [],
+      };
+    }
+
+    const required = ['runCommand', 'runCommandStream', 'getPlatform', 'readFile', 'writeFile', 'mkdir'] as const;
+    const missing = required.filter((name) => typeof api[name] !== 'function');
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        reason: `Electron bridge is incomplete (missing: ${missing.join(', ')}).`,
+        details: ['A stale preload/main bundle may be running.'],
+      };
+    }
+
+    try {
+      const probe = await api.runCommand('echo RONBOT_BRIDGE_OK', { timeout: 5000 });
+      if (!probe.success || !(probe.stdout || '').includes('RONBOT_BRIDGE_OK')) {
+        return {
+          ok: false,
+          reason: 'Electron command bridge failed round-trip.',
+          details: [
+            `stdout=${(probe.stdout || '').trim()}`,
+            `stderr=${(probe.stderr || '').trim()}`,
+            `code=${probe.code ?? 'n/a'}`,
+          ],
+        };
+      }
+      const platform = await api.getPlatform();
+      return {
+        ok: true,
+        reason: 'Desktop bridge healthy',
+        details: [`platform=${platform.platform}`, `arch=${platform.arch}`],
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: 'Electron bridge health check threw an exception.',
+        details: [error instanceof Error ? error.message : String(error)],
+      };
+    }
   },
 
   async runCommand(cmd: string, options?: Record<string, unknown>): Promise<CommandResult> {
@@ -55,7 +106,7 @@ export const coreAPI = {
     const displayCommand = typeof options?.displayCommand === 'string' ? options.displayCommand : cmd;
     const result = isElectron()
       ? await window.electronAPI!.runCommand(cmd, options)
-      : await simulateCommand(cmd);
+      : { success: false, stdout: '', stderr: NON_ELECTRON_ERROR, code: 2 };
     diagnostics.push({
       label: labelForCommand(cmd),
       command: truncateForLog(redactLogText(displayCommand), 2000),
@@ -148,9 +199,8 @@ export const coreAPI = {
       });
     }
 
-    const result = await simulateCommand(cmd);
-    if (result.stdout) onOutput?.({ type: 'stdout', data: result.stdout, code: result.code });
-    if (result.stderr) onOutput?.({ type: 'stderr', data: result.stderr, code: result.code });
+    const result: CommandResult = { success: false, stdout: '', stderr: NON_ELECTRON_ERROR, code: 2 };
+    onOutput?.({ type: 'stderr', data: result.stderr, code: result.code });
     onOutput?.({ type: 'exit', code: result.code });
     return finalize(result);
   },
@@ -174,14 +224,14 @@ export const coreAPI = {
       const r = await window.electronAPI.setRunInBackground(enabled);
       return { success: r.success };
     }
-    return { success: true };
+    return { success: false };
   },
 
   async setAgentRunningState(running: boolean): Promise<{ success: boolean }> {
     if (isElectron() && window.electronAPI?.setAgentRunningState) {
       return window.electronAPI.setAgentRunningState(running);
     }
-    return { success: true };
+    return { success: false };
   },
 
   async quitApp(): Promise<void> {
@@ -201,12 +251,7 @@ export const coreAPI = {
       }
       return window.electronAPI.selectFolder(options);
     }
-    // Browser dev fallback — prompt for a path so the panel still functions.
-    const entered = typeof window !== 'undefined' && typeof window.prompt === 'function'
-      ? window.prompt(options?.title || 'Enter a folder path')
-      : null;
-    if (!entered) return { success: true, canceled: true };
-    return { success: true, canceled: false, path: entered.trim() };
+    return { success: false, error: NON_ELECTRON_ERROR };
   },
 
   async fileExists(path: string): Promise<boolean> {
@@ -221,74 +266,16 @@ export const coreAPI = {
 
   async writeFile(path: string, content: string): Promise<{ success: boolean; error?: string }> {
     if (isElectron()) return window.electronAPI!.writeFile(path, content);
-    return { success: true };
+    return { success: false, error: NON_ELECTRON_ERROR };
   },
 
   async mkdir(path: string): Promise<{ success: boolean; error?: string }> {
     if (isElectron()) return window.electronAPI!.mkdir(path);
-    return { success: true };
+    return { success: false, error: NON_ELECTRON_ERROR };
   },
 
   async getDiskSpace(): Promise<DiskSpaceInfo> {
     if (isElectron()) return window.electronAPI!.getDiskSpace();
-    // Simulated: 25 GB free of 250 GB on C:
-    await delay(200);
-    return { success: true, drive: 'C:', freeBytes: 25 * 1024 ** 3, totalBytes: 250 * 1024 ** 3 };
+    return { success: false, error: NON_ELECTRON_ERROR };
   },
 };
-
-// ─── Simulation for browser development ─────────────────────
-
-async function simulateCommand(cmd: string): Promise<CommandResult> {
-  await delay(400 + Math.random() * 600);
-
-  if (cmd === 'ver' || cmd.includes('sw_vers')) {
-    return { success: true, stdout: 'Microsoft Windows [Version 10.0.22631.4460]', stderr: '', code: 0 };
-  }
-  if (cmd.includes('wsl --status')) {
-    return { success: true, stdout: 'Default Version: 2\nWSL version: 2.0.14', stderr: '', code: 0 };
-  }
-  if (cmd.includes('wsl -l')) {
-    return { success: true, stdout: '* Ubuntu-22.04    Running    2', stderr: '', code: 0 };
-  }
-  if (cmd.includes('python') && cmd.includes('--version')) {
-    return { success: true, stdout: 'Python 3.11.5', stderr: '', code: 0 };
-  }
-  if (cmd.includes('which python') || cmd.includes('where python')) {
-    return { success: true, stdout: '/usr/bin/python3', stderr: '', code: 0 };
-  }
-  if (cmd.includes('pip') && cmd.includes('--version')) {
-    return { success: true, stdout: 'pip 23.3.1 from /usr/lib/python3/dist-packages/pip (python 3.11)', stderr: '', code: 0 };
-  }
-  if (cmd.includes('git --version')) {
-    return { success: true, stdout: 'git version 2.43.0', stderr: '', code: 0 };
-  }
-  if (cmd.includes('curl --version') || cmd.includes('which curl')) {
-    return { success: true, stdout: 'curl 8.4.0', stderr: '', code: 0 };
-  }
-  if (cmd.includes('hermes --version') || cmd.includes('which hermes')) {
-    return { success: true, stdout: 'hermes-agent 0.9.0', stderr: '', code: 0 };
-  }
-  if (cmd.includes('hermes doctor')) {
-    return { success: true, stdout: '✓ Python 3.11.5\n✓ hermes-agent 0.9.0\n✓ Config found\n✓ API key configured\n✓ All checks passed', stderr: '', code: 0 };
-  }
-  if (cmd.includes('hermes status')) {
-    return { success: true, stdout: 'Agent: Ron\nStatus: running\nModel: openrouter/nous/hermes-3-llama-3.1-70b\nUptime: 2h 34m', stderr: '', code: 0 };
-  }
-  // Install script
-  if (cmd.includes('scripts/install.sh') || cmd.includes('pip install hermes-agent')) {
-    await delay(3000);
-    return { success: true, stdout: 'Installing hermes-agent...\nCreating virtualenv...\nInstalling dependencies...\n✓ hermes-agent 0.9.0 installed successfully\nRun `source ~/.bashrc` then `hermes` to get started!', stderr: '', code: 0 };
-  }
-  // winget/brew/apt installs
-  if (cmd.includes('winget install') || cmd.includes('brew install') || cmd.includes('apt-get install') || cmd.includes('curl -fsSL')) {
-    await delay(3000);
-    return { success: true, stdout: 'Successfully installed', stderr: '', code: 0 };
-  }
-  // hermes setup / launch
-  if (cmd.includes('hermes')) {
-    return { success: true, stdout: 'OK', stderr: '', code: 0 };
-  }
-
-  return { success: true, stdout: '', stderr: '', code: 0 };
-}

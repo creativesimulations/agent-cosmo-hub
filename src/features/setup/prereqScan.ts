@@ -30,6 +30,7 @@ export type PrereqItem = {
 };
 
 const BASE: PrereqItem[] = [
+  { id: "desktop-bridge", name: "Desktop bridge", description: "Checking Electron IPC bridge…", tier: "required", status: "pending", blocker: true },
   { id: "os", name: "Operating System", description: "Detecting…", tier: "required", status: "pending", blocker: true },
   { id: "arch", name: "CPU Architecture", description: "Detecting…", tier: "required", status: "pending", blocker: true },
   { id: "wsl2", name: "WSL2", description: "Windows only", tier: "required", status: "pending", windowsOnly: true, blocker: true },
@@ -109,7 +110,7 @@ async function scanDependencyItems(): Promise<PrereqItem[]> {
     ),
   ]);
 
-  for (const id of ["os", "arch", "wsl2", "wsl-distro", "git", "fetcher", "network", "disk", "python-discoverability", "sudo", "ripgrep", "curl"]) {
+  for (const id of ["desktop-bridge", "os", "arch", "wsl2", "wsl-distro", "git", "fetcher", "network", "disk", "python-discoverability", "sudo", "ripgrep", "curl"]) {
     patch(id, { status: "checking" });
   }
 

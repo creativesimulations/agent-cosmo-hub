@@ -35,6 +35,7 @@ import { probeAgent } from "./setupService";
 import { evaluateInstallContract } from "./installContract";
 
 const baseChecks = (): InstallContractCheck[] => [
+  { id: "desktop-bridge", label: "Desktop bridge", status: "ok", severity: "hard", domain: "host", detail: "ok" },
   { id: "os", label: "Operating system", status: "ok", severity: "hard", domain: "host", detail: "Linux" },
   { id: "arch", label: "CPU architecture", status: "ok", severity: "hard", domain: "host", detail: "x64" },
   { id: "git", label: "Git", status: "ok", severity: "hard", domain: "guest", detail: "git" },

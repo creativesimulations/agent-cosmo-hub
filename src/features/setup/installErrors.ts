@@ -1,5 +1,6 @@
 // Hermes v0.13.0 sync — May 2026 (Ronbot)
 export type InstallErrorCode =
+  | "desktop_bridge"
   | "privilege"
   | "network"
   | "package_repo"
@@ -21,6 +22,14 @@ export type InstallFailure = {
 
 export function classifyInstallFailure(message: string, manualCommand?: string): InstallFailure {
   const lower = message.toLowerCase();
+  if (lower.includes("desktop bridge")) {
+    return {
+      code: "desktop_bridge",
+      title: "Desktop bridge unavailable",
+      message,
+      hint: "Run the packaged Ronbot desktop app build so Electron IPC is available.",
+    };
+  }
   if (lower.includes("wsl2")) {
     return {
       code: "wsl_missing",

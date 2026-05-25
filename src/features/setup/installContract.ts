@@ -81,6 +81,16 @@ async function checkNetworkReachability(): Promise<{ ok: boolean; detail: string
 export async function evaluateInstallContract(): Promise<InstallContractReport> {
   const checks: InstallContractCheck[] = [];
   const platform = await systemAPI.getPlatform();
+  const bridge = await systemAPI.checkDesktopBridge();
+
+  checks.push({
+    id: "desktop-bridge",
+    label: "Desktop bridge",
+    status: bridge.ok ? "ok" : "blocked_unsupported",
+    severity: "hard",
+    domain: "host",
+    detail: bridge.ok ? "Electron IPC bridge is healthy." : bridge.reason,
+  });
 
   // OS support
   let osStatus: ContractStatus = "ok";
