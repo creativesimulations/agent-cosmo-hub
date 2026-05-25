@@ -81,7 +81,13 @@ export function InstallStep({
               Copy manual command
             </Button>
           )}
-          <Button size="sm" variant="ghost" onClick={() => window.location.assign("/#/diagnostics")}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              if (typeof window !== "undefined") window.location.hash = "#/diagnostics";
+            }}
+          >
             Open diagnostics
           </Button>
         </div>
