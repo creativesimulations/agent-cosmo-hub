@@ -1,10 +1,12 @@
-import { Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, Copy, Download, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
 import InstallPreflight from "@/components/setup/InstallPreflight";
 import { StreamingLogPanel } from "@/components/setup/StreamingLogPanel";
 import type { InstallSource } from "@/features/setup/types";
+import type { InstallFailure } from "@/features/setup/installErrors";
+import { downloadTextFile, timestampedFilename } from "@/lib/diagnosticsExport";
 
 type Props = {
   source: InstallSource;
@@ -14,6 +16,7 @@ type Props = {
   installing: boolean;
   progress: number;
   logLines: string[];
+  failure: InstallFailure | null;
   preflightReady: boolean;
   onPreflightReady: (ready: boolean) => void;
   onInstall: () => void;
@@ -28,6 +31,7 @@ export function InstallStep({
   installing,
   progress,
   logLines,
+  failure,
   preflightReady,
   onPreflightReady,
   onInstall,
@@ -59,13 +63,69 @@ export function InstallStep({
         </label>
       )}
       <InstallPreflight onReadyChange={onPreflightReady} />
+      {failure && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 space-y-2 text-sm">
+          <div className="flex items-center gap-2 text-destructive">
+            <AlertTriangle className="w-4 h-4" />
+            <p className="font-medium">{failure.title}</p>
+          </div>
+          <p className="text-muted-foreground">{failure.message}</p>
+          {failure.hint && <p className="text-xs text-muted-foreground">{failure.hint}</p>}
+          {failure.manualCommand && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void navigator.clipboard.writeText(failure.manualCommand ?? "")}
+            >
+              <Copy className="w-3 h-3 mr-1" />
+              Copy manual command
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => window.location.assign("/#/diagnostics")}>
+            Open diagnostics
+          </Button>
+        </div>
+      )}
       {logLines.length > 0 && <StreamingLogPanel lines={logLines} variant="install" />}
+      {logLines.length > 0 && (
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => downloadTextFile(logLines.join("\n"), timestampedFilename("ronbot-install-log"))}
+          >
+            <Download className="w-4 h-4 mr-1" />
+            Export install log
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              downloadTextFile(
+                JSON.stringify(
+                  {
+                    generatedAt: new Date().toISOString(),
+                    failure,
+                    recentLog: logLines.slice(-200),
+                  },
+                  null,
+                  2,
+                ),
+                timestampedFilename("ronbot-setup-support-bundle"),
+              )
+            }
+          >
+            <Download className="w-4 h-4 mr-1" />
+            Export support bundle
+          </Button>
+        </div>
+      )}
       <Button
         className="w-full gradient-primary text-primary-foreground"
         disabled={!preflightReady}
         onClick={onInstall}
       >
-        Install agent
+        {failure ? "Retry install" : "Install agent"}
       </Button>
     </div>
   );

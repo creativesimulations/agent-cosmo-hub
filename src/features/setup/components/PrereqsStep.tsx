@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, CheckCircle2, ChevronRight, Download, Info, Link2, Loader2, RotateCcw, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronRight, Copy, Download, Info, Link2, Loader2, RotateCcw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -156,6 +156,7 @@ export function PrereqsStep({ entryProbePending, cachedProbe, onContinue, onConn
 
 function PrereqRow({ item, onInstall }: { item: PrereqItem; onInstall: () => void }) {
   const missing = item.status === "missing" || item.status === "error";
+  const canAutoInstall = !!item.autoInstallId;
   const Icon =
     item.status === "found" || item.status === "installed"
       ? CheckCircle2
@@ -164,7 +165,8 @@ function PrereqRow({ item, onInstall }: { item: PrereqItem; onInstall: () => voi
         : XCircle;
 
   return (
-    <li className="glass-subtle rounded-lg px-3 py-2 flex items-center justify-between gap-2 text-sm">
+    <li className="glass-subtle rounded-lg px-3 py-2 text-sm space-y-2">
+      <div className="flex items-center justify-between gap-2">
       <div className="flex items-center gap-2 min-w-0">
         <Icon
           className={cn(
@@ -179,9 +181,22 @@ function PrereqRow({ item, onInstall }: { item: PrereqItem; onInstall: () => voi
         <span className="truncate">{item.name}</span>
         {item.version && <span className="text-xs text-muted-foreground">{item.version}</span>}
       </div>
-      {missing && item.tier === "required" && (
-        <Button size="sm" variant="outline" onClick={onInstall}>
-          <Download className="w-3 h-3 mr-1" /> Install
+      {missing && item.blocker && canAutoInstall && (
+        <Button size="sm" variant="outline" onClick={onInstall} disabled={item.status === "installing"}>
+          <Download className="w-3 h-3 mr-1" /> Auto-fix
+        </Button>
+      )}
+      </div>
+      <p className="text-xs text-muted-foreground">{item.description}</p>
+      {missing && item.manualCommand && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-xs"
+          onClick={() => void navigator.clipboard.writeText(item.manualCommand ?? "")}
+        >
+          <Copy className="w-3 h-3 mr-1" />
+          Copy manual command
         </Button>
       )}
     </li>

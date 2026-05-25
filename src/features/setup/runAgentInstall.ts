@@ -6,6 +6,9 @@ import { LOCAL_INSTALL_PIP_EXTRAS } from "./constants";
 import { createStreamLineParser } from "./streamOutput";
 import { finalizeAfterInstall } from "./setupService";
 import type { InstallLogSink, InstallSource, StreamEvent } from "./types";
+import { evaluateInstallContract } from "./installContract";
+import { classifyInstallFailure, type InstallFailure } from "./installErrors";
+import { pushInstallEvent, type InstallEvent } from "./installTelemetry";
 
 export type SudoRequester = (reason: string) => Promise<string | null>;
 
@@ -20,8 +23,8 @@ export type RunInstallParams = {
 };
 
 export type RunInstallResult =
-  | { ok: true }
-  | { ok: false; message: string; cancelled?: boolean };
+  | { ok: true; events: InstallEvent[] }
+  | { ok: false; message: string; cancelled?: boolean; failure?: InstallFailure; manualCommand?: string; events?: InstallEvent[] };
 
 async function collectAptPackages(source: InstallSource, log: InstallLogSink): Promise<string[]> {
   const append = (line: string) => log([line]);
@@ -38,7 +41,7 @@ async function collectAptPackages(source: InstallSource, log: InstallLogSink): P
   const venv = await systemAPI.checkPythonVenv();
   const venvPkg = venv.packageName ?? "python3-venv";
   if (venv.installed) append(`✓ ${venvPkg} ready`);
-  else packages.push(venvPkg);
+  else append(`ℹ ${venvPkg} missing pre-install; Hermes installer can self-provision Python/venv via uv.`);
 
   return packages;
 }
@@ -84,7 +87,7 @@ async function installAptPackages(
     password = await requestSudo(reason);
   }
 
-  if (isAborted()) return false;
+  if (isAborted()) return { ok: false, cancelled: true };
   if (password === null) {
     append("✗ Cancelled — system packages not installed.");
     return { ok: false, cancelled: true };
@@ -120,9 +123,49 @@ function runHermesInstaller(
 
 export async function runAgentInstall(params: RunInstallParams): Promise<RunInstallResult> {
   const { source, localPath, seedPersona, agentName, log, requestSudo, isAborted } = params;
+  const events: InstallEvent[] = [];
+  const emit = (event: InstallEvent) => {
+    events.push(event);
+    pushInstallEvent(event);
+  };
   const append = (line: string) => {
     if (!isAborted()) log([line]);
   };
+
+  append("Running install preflight contract…");
+  emit({
+    ts: new Date().toISOString(),
+    phase: "preflight",
+    step: "contract",
+    status: "info",
+    message: "Started install contract checks",
+  });
+  const contract = await evaluateInstallContract();
+  const hardFail = contract.checks.find((check) => check.severity === "hard" && check.status !== "ok");
+  if (hardFail) {
+    const message = `${hardFail.label}: ${hardFail.detail}`;
+    emit({
+      ts: new Date().toISOString(),
+      phase: "preflight",
+      step: hardFail.id,
+      status: "error",
+      message,
+    });
+    return {
+      ok: false,
+      message,
+      failure: classifyInstallFailure(message, hardFail.manualCommand),
+      manualCommand: hardFail.manualCommand,
+      events,
+    };
+  }
+  emit({
+    ts: new Date().toISOString(),
+    phase: "preflight",
+    step: "contract",
+    status: "ok",
+    message: "Preflight hard checks passed",
+  });
 
   append(
     source === "bundled"
@@ -131,6 +174,13 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
   );
 
   const aptPackages = await collectAptPackages(source, log);
+  emit({
+    ts: new Date().toISOString(),
+    phase: "dependencies",
+    step: "collect",
+    status: "info",
+    message: aptPackages.length > 0 ? `Need packages: ${aptPackages.join(", ")}` : "No required apt packages",
+  });
   if (isAborted()) return { ok: false, message: "Cancelled", cancelled: true };
 
   const aptOutcome = await installAptPackages(aptPackages, log, requestSudo, isAborted);
@@ -138,15 +188,41 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
   if (!aptOutcome.ok) {
     if (aptOutcome.cancelled) return { ok: false, message: "Cancelled", cancelled: true };
     const pkgs = aptPackages.join(" ");
+    const message = pkgs
+      ? `Missing packages. Run: sudo apt-get install -y ${pkgs}`
+      : "Required system packages could not be installed.";
+    emit({
+      ts: new Date().toISOString(),
+      phase: "dependencies",
+      step: "apt-install",
+      status: "error",
+      message,
+      errorCode: "privilege",
+    });
     return {
       ok: false,
-      message: pkgs
-        ? `Missing packages. Run: sudo apt-get install -y ${pkgs}`
-        : "Required system packages could not be installed.",
+      message,
+      failure: classifyInstallFailure(message, pkgs ? `sudo apt-get install -y ${pkgs}` : undefined),
+      manualCommand: pkgs ? `sudo apt-get install -y ${pkgs}` : undefined,
+      events,
     };
   }
+  emit({
+    ts: new Date().toISOString(),
+    phase: "dependencies",
+    step: "apt-install",
+    status: "ok",
+    message: aptPackages.length ? "System dependency setup finished" : "No system dependency setup needed",
+  });
 
   const { parse, flush } = createStreamLineParser((lines) => log(lines));
+  emit({
+    ts: new Date().toISOString(),
+    phase: "installer",
+    step: "run-hermes-installer",
+    status: "info",
+    message: source === "bundled" ? "Running official installer" : "Running local-folder install",
+  });
   const result = await runHermesInstaller(source, localPath, parse);
   flush();
   if (isAborted()) return { ok: false, message: "Cancelled", cancelled: true };
@@ -156,13 +232,58 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
     if (result.stderr?.trim()) lines.push("--- stderr ---", tailOutput(result, 20));
     if (result.stdout?.trim()) lines.push("--- stdout ---", tailOutput(result, 20));
     log(lines);
-    return { ok: false, message: "Hermes installer exited with an error." };
+    const message = "Hermes installer exited with an error.";
+    emit({
+      ts: new Date().toISOString(),
+      phase: "installer",
+      step: "run-hermes-installer",
+      status: "error",
+      message: `${message} Exit ${result.code ?? "?"}`,
+    });
+    return { ok: false, message, failure: classifyInstallFailure(message), events };
   }
 
+  emit({
+    ts: new Date().toISOString(),
+    phase: "installer",
+    step: "run-hermes-installer",
+    status: "ok",
+    message: "Installer process completed",
+  });
   append("✓ Agent installed.");
+  emit({
+    ts: new Date().toISOString(),
+    phase: "verify",
+    step: "post-install-verification",
+    status: "info",
+    message: "Running post-install verification",
+  });
   const finalized = await finalizeAfterInstall({ seedPersona, agentName, source, log });
   if (isAborted()) return { ok: false, message: "Cancelled", cancelled: true };
-  if (!finalized.ok) return { ok: false, message: finalized.message };
+  if (!finalized.ok) {
+    emit({
+      ts: new Date().toISOString(),
+      phase: "verify",
+      step: "post-install-verification",
+      status: "error",
+      message: finalized.message,
+      errorCode: "verify_failed",
+    });
+    return {
+      ok: false,
+      message: finalized.message,
+      failure: classifyInstallFailure(finalized.message),
+      events,
+    };
+  }
 
-  return { ok: true };
+  emit({
+    ts: new Date().toISOString(),
+    phase: "finalize",
+    step: "complete",
+    status: "ok",
+    message: "Install + verification complete",
+  });
+
+  return { ok: true, events };
 }

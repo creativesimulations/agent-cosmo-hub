@@ -103,6 +103,7 @@ export default function SetupInstallPage() {
                   installing={setup.installing}
                   progress={setup.installProgress}
                   logLines={setup.logLines}
+                  failure={setup.installFailure}
                   preflightReady={preflightReady}
                   onPreflightReady={setPreflightReady}
                   onInstall={() => void setup.runInstall()}

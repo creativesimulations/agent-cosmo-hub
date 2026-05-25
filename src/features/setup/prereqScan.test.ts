@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { runPrereqScan } from "./prereqScan";
 import type { AgentProbe } from "./types";
+import type { InstallContractCheck } from "./installContract";
 
 vi.mock("@/lib/systemAPI", () => ({
   systemAPI: {
@@ -18,8 +19,31 @@ vi.mock("./setupService", () => ({
   probeAgent: vi.fn(),
 }));
 
+vi.mock("./installContract", () => ({
+  evaluateInstallContract: vi.fn(),
+}));
+
+vi.mock("@/lib/systemAPI/sudo", () => ({
+  sudoAPI: {
+    probe: vi.fn(),
+    aptInstall: vi.fn(),
+  },
+}));
+
 import { systemAPI } from "@/lib/systemAPI";
 import { probeAgent } from "./setupService";
+import { evaluateInstallContract } from "./installContract";
+
+const baseChecks = (): InstallContractCheck[] => [
+  { id: "os", label: "Operating system", status: "ok", severity: "hard", domain: "host", detail: "Linux" },
+  { id: "arch", label: "CPU architecture", status: "ok", severity: "hard", domain: "host", detail: "x64" },
+  { id: "git", label: "Git", status: "ok", severity: "hard", domain: "guest", detail: "git" },
+  { id: "fetcher", label: "Fetcher", status: "ok", severity: "hard", domain: "guest", detail: "curl" },
+  { id: "network", label: "Network", status: "ok", severity: "hard", domain: "guest", detail: "ok" },
+  { id: "disk", label: "Disk", status: "ok", severity: "hard", domain: "host", detail: "ok" },
+  { id: "python-discoverability", label: "Python", status: "ok", severity: "soft", domain: "guest", detail: "ok" },
+  { id: "sudo", label: "Sudo", status: "ok", severity: "soft", domain: "guest", detail: "ok" },
+];
 
 const emptyProbe = (partial: Partial<AgentProbe>): AgentProbe => ({
   ready: false,
@@ -47,6 +71,10 @@ describe("runPrereqScan", () => {
     vi.mocked(systemAPI.checkGit).mockResolvedValue({ installed: true, version: "2.43" });
     vi.mocked(systemAPI.checkRipgrep).mockResolvedValue({ installed: true, version: "14" });
     vi.mocked(systemAPI.checkCurl).mockResolvedValue({ installed: true, version: "8" });
+    vi.mocked(evaluateInstallContract).mockResolvedValue({
+      checks: baseChecks(),
+      hasHardBlockers: false,
+    });
   });
 
   it("sets agentReady only when probe reason is ready", async () => {

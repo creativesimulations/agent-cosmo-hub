@@ -1,7 +1,9 @@
 // Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { systemAPI } from "@/lib/systemAPI";
+import { sudoAPI } from "@/lib/systemAPI/sudo";
 import { probeAgent } from "./setupService";
 import type { AgentProbe } from "./types";
+import { evaluateInstallContract, type InstallContractCheck } from "./installContract";
 
 export type PrereqTier = "required" | "recommended" | "auto";
 export type PrereqStatus =
@@ -22,13 +24,22 @@ export type PrereqItem = {
   status: PrereqStatus;
   version?: string;
   windowsOnly?: boolean;
+  blocker?: boolean;
+  manualCommand?: string;
+  autoInstallId?: string;
 };
 
 const BASE: PrereqItem[] = [
-  { id: "os", name: "Operating System", description: "Detecting…", tier: "required", status: "pending" },
-  { id: "wsl2", name: "WSL2", description: "Windows only", tier: "required", status: "pending", windowsOnly: true },
-  { id: "git", name: "Git", description: "Required by installer", tier: "required", status: "pending" },
-  { id: "python", name: "Python 3.11+", description: "Required runtime", tier: "required", status: "pending" },
+  { id: "os", name: "Operating System", description: "Detecting…", tier: "required", status: "pending", blocker: true },
+  { id: "arch", name: "CPU Architecture", description: "Detecting…", tier: "required", status: "pending", blocker: true },
+  { id: "wsl2", name: "WSL2", description: "Windows only", tier: "required", status: "pending", windowsOnly: true, blocker: true },
+  { id: "wsl-distro", name: "WSL Ubuntu distro", description: "Windows only", tier: "required", status: "pending", windowsOnly: true, blocker: true },
+  { id: "git", name: "Git", description: "Required by installer", tier: "required", status: "pending", blocker: true },
+  { id: "fetcher", name: "curl/wget", description: "Required for installer fetch", tier: "required", status: "pending", blocker: true },
+  { id: "network", name: "Installer connectivity", description: "Checking network reachability…", tier: "required", status: "pending", blocker: true },
+  { id: "disk", name: "Disk space", description: "Checking free space…", tier: "required", status: "pending", blocker: true },
+  { id: "python-discoverability", name: "Python discoverability", description: "Advisory only", tier: "auto", status: "pending" },
+  { id: "sudo", name: "Sudo capability", description: "Advisory only", tier: "auto", status: "pending" },
   { id: "ripgrep", name: "ripgrep", description: "Recommended", tier: "recommended", status: "pending" },
   { id: "curl", name: "curl", description: "Recommended", tier: "recommended", status: "pending" },
 ];
@@ -79,45 +90,7 @@ async function scanDependencyItems(): Promise<PrereqItem[]> {
   };
 
   const platform = await systemAPI.getPlatform();
-
-  const osPromise = systemAPI
-    .detectOS()
-    .then((os) => patch("os", { status: "found", version: os.name, description: os.name }))
-    .catch(() => patch("os", { status: "error", description: "Could not detect OS" }));
-
-  const wslPromise = (async () => {
-    if (!platform.isWindows) {
-      const idx = items.findIndex((p) => p.id === "wsl2");
-      if (idx >= 0) items.splice(idx, 1);
-      return;
-    }
-    patch("wsl2", { status: "checking" });
-    const wsl = await systemAPI.checkWSL();
-    patch(
-      "wsl2",
-      wsl.installed
-        ? { status: "found", version: wsl.version, description: wsl.distro ?? wsl.version }
-        : { status: "missing", description: "WSL2 required on Windows" },
-    );
-  })();
-
-  const depPromise = Promise.all([
-    systemAPI.checkPython().then((py) =>
-      patch(
-        "python",
-        py.installed
-          ? { status: "found", version: py.version, description: `Python ${py.version}` }
-          : { status: "missing", description: "Python 3.11+ not found" },
-      ),
-    ),
-    systemAPI.checkGit().then((git) =>
-      patch(
-        "git",
-        git.installed
-          ? { status: "found", version: git.version, description: `Git ${git.version}` }
-          : { status: "missing", description: "Git not found" },
-      ),
-    ),
+  const optionalPromise = Promise.all([
     systemAPI.checkRipgrep().then((rg) =>
       patch(
         "ripgrep",
@@ -136,23 +109,24 @@ async function scanDependencyItems(): Promise<PrereqItem[]> {
     ),
   ]);
 
-  patch("os", { status: "checking" });
-  patch("python", { status: "checking" });
-  patch("git", { status: "checking" });
-  patch("ripgrep", { status: "checking" });
-  patch("curl", { status: "checking" });
+  for (const id of ["os", "arch", "wsl2", "wsl-distro", "git", "fetcher", "network", "disk", "python-discoverability", "sudo", "ripgrep", "curl"]) {
+    patch(id, { status: "checking" });
+  }
 
-  await Promise.all([osPromise, wslPromise, depPromise]);
+  const contract = await evaluateInstallContract();
+  applyContract(items, contract.checks, patch, platform.isWindows);
+  await optionalPromise;
   return items;
 }
 
 export function requiredPrereqsMet(items: PrereqItem[]): boolean {
   return items
-    .filter((p) => p.tier === "required")
+    .filter((p) => p.blocker)
     .every((p) => p.status === "found" || p.status === "installed");
 }
 
 export async function installPrereqItem(id: string): Promise<Partial<PrereqItem>> {
+  const platform = await systemAPI.getPlatform();
   switch (id) {
     case "wsl2": {
       const r = await systemAPI.installWSL();
@@ -161,22 +135,88 @@ export async function installPrereqItem(id: string): Promise<Partial<PrereqItem>
         : { status: "error", description: r.stderr || "WSL install failed" };
     }
     case "python": {
+      if (platform.isLinux || platform.isWindows) {
+        const apt = await installAptWithCapability(["python3.11", "python3.11-venv", "python3-pip"]);
+        return apt;
+      }
       const r = await systemAPI.installPython();
       return r.success ? { status: "installed" } : { status: "error", description: r.stderr || "Failed" };
     }
     case "git": {
+      if (platform.isLinux || platform.isWindows) {
+        return installAptWithCapability(["git"]);
+      }
       const r = await systemAPI.installGit();
       return r.success ? { status: "installed" } : { status: "error", description: r.stderr || "Failed" };
     }
+    case "fetcher":
     case "curl": {
+      if (platform.isLinux || platform.isWindows) {
+        return installAptWithCapability(["curl"]);
+      }
       const r = await systemAPI.installCurl();
       return r.success ? { status: "installed" } : { status: "error", description: r.stderr || "Failed" };
     }
     case "ripgrep": {
+      if (platform.isLinux || platform.isWindows) {
+        return installAptWithCapability(["ripgrep"]);
+      }
       const r = await systemAPI.installRipgrep();
       return r.success ? { status: "installed" } : { status: "error", description: r.stderr || "Failed" };
     }
     default:
       return { status: "error", description: "Unsupported" };
+  }
+}
+
+async function installAptWithCapability(packages: string[]): Promise<Partial<PrereqItem>> {
+  const probe = await sudoAPI.probe();
+  if (probe.kind === "root" || probe.kind === "passwordless") {
+    const result = await sudoAPI.aptInstall(packages, "");
+    return result.success
+      ? { status: "installed", description: `Installed ${packages.join(", ")}` }
+      : { status: "error", description: result.stderr || "apt install failed" };
+  }
+  if (probe.kind === "needs-password" || probe.kind === "no-password-set") {
+    return {
+      status: "error",
+      description: `Needs elevated access. Run manually: sudo apt-get install -y ${packages.join(" ")}`,
+      manualCommand: `sudo apt-get install -y ${packages.join(" ")}`,
+    };
+  }
+  return {
+    status: "error",
+    description: `sudo unavailable. Run manually as admin: apt-get install -y ${packages.join(" ")}`,
+    manualCommand: `sudo apt-get install -y ${packages.join(" ")}`,
+  };
+}
+
+function applyContract(
+  items: PrereqItem[],
+  checks: InstallContractCheck[],
+  patch: (id: string, partial: Partial<PrereqItem>) => void,
+  isWindows: boolean,
+) {
+  const toPrereqStatus = (status: InstallContractCheck["status"]): PrereqStatus => {
+    if (status === "ok") return "found";
+    if (status === "fixable_auto") return "missing";
+    return "error";
+  };
+
+  for (const check of checks) {
+    patch(check.id, {
+      status: toPrereqStatus(check.status),
+      description: check.detail,
+      blocker: check.severity === "hard",
+      autoInstallId: check.autoInstallId,
+      manualCommand: check.manualCommand,
+    });
+  }
+
+  if (!isWindows) {
+    for (const id of ["wsl2", "wsl-distro"]) {
+      const idx = items.findIndex((item) => item.id === id);
+      if (idx >= 0) items.splice(idx, 1);
+    }
   }
 }

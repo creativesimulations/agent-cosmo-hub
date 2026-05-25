@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 // Thresholds (bytes)
 const GB = 1024 ** 3;
-const DISK_RECOMMENDED = 4 * GB;   // green ≥ 4 GB
+const DISK_RECOMMENDED = 2 * GB;   // green ≥ 2 GB
 const DISK_HARD_MIN    = 1.5 * GB; // red < 1.5 GB
 const RAM_RECOMMENDED  = 8 * GB;
 const RAM_HARD_MIN     = 4 * GB;
@@ -130,14 +130,9 @@ export default function InstallPreflight({ onReadyChange }: Props) {
                   note="Managed by Windows. Virtual disk grows as needed."
                 />
                 <LocationRow
-                  name="Python 3.11"
-                  path={`${homeDir}\\AppData\\Local\\Programs\\Python\\Python311\\`}
-                  note="Installed by winget. Includes pip."
-                />
-                <LocationRow
                   name="Agent + config + venv"
                   path="\\wsl$\Ubuntu\home\<wsl-user>\.hermes\"
-                  note="Lives inside WSL Ubuntu. Accessible from Windows via the path above."
+                  note="Hermes installer runs in WSL Ubuntu and manages Python/venv there."
                 />
               </>
             ) : (

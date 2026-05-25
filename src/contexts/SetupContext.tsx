@@ -13,6 +13,8 @@ import { useAgentConnection } from "./AgentConnectionContext";
 import { invalidateAgentProbeCache, probeAgent } from "@/features/setup/setupService";
 import { runAgentInstall } from "@/features/setup/runAgentInstall";
 import { DEFAULT_AGENT_NAME } from "@/features/setup/constants";
+import type { InstallFailure } from "@/features/setup/installErrors";
+import { persistInstallReport } from "@/features/setup/installTelemetry";
 import { SetupPathPickerDialog } from "@/components/setup/SetupPathPickerDialog";
 import type {
   AgentProbe,
@@ -34,6 +36,7 @@ type SetupContextValue = {
   installSucceeded: boolean;
   installProgress: number;
   logLines: string[];
+  installFailure: InstallFailure | null;
   guardAgentName: string | null;
   existingProbe: { agentName?: string } | null;
   entryProbePending: boolean;
@@ -74,6 +77,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
   const [installSucceeded, setInstallSucceeded] = useState(false);
   const [installProgress, setInstallProgress] = useState(0);
   const [logLines, setLogLines] = useState<string[]>([]);
+  const [installFailure, setInstallFailure] = useState<InstallFailure | null>(null);
   const [guardAgentName, setGuardAgentName] = useState<string | null>(null);
   const [existingProbe, setExistingProbe] = useState<{ agentName?: string } | null>(null);
   const [entryProbePending, setEntryProbePending] = useState(false);
@@ -96,6 +100,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
     setLocalPath(path);
     setReplacePersona(source !== "local");
     setLogLines([]);
+    setInstallFailure(null);
     setInstallProgress(0);
     setInstallSucceeded(false);
     setWizardStep("prereqs");
@@ -237,10 +242,12 @@ export function SetupProvider({ children }: { children: ReactNode }) {
 
   const runInstall = useCallback(async () => {
     const gen = ++installGenRef.current;
+    const installLogBuffer: string[] = [];
     setInstalling(true);
     setInstallSucceeded(false);
     setInstallProgress(5);
     setLogLines([]);
+    setInstallFailure(null);
 
     const progressTimer = window.setInterval(() => {
       if (installGenRef.current !== gen) return;
@@ -254,7 +261,10 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       seedPersona,
       agentName: DEFAULT_AGENT_NAME,
       log: (lines) => {
-        if (installGenRef.current === gen) appendLog(lines);
+        if (installGenRef.current === gen) {
+          installLogBuffer.push(...lines);
+          appendLog(lines);
+        }
       },
       requestSudo,
       isAborted: () => installGenRef.current !== gen,
@@ -268,6 +278,11 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       setInstallProgress(100);
       invalidateAgentProbeCache();
       const connected = await refreshConnection();
+      void persistInstallReport({
+        events: result.events,
+        logLines: installLogBuffer,
+        result: "ok",
+      });
       if (connected) {
         setInstallSucceeded(true);
         setWizardStep("done");
@@ -277,6 +292,13 @@ export function SetupProvider({ children }: { children: ReactNode }) {
         toast.error("Could not verify connection after install");
       }
     } else if (!result.cancelled) {
+      setInstallFailure(result.failure ?? null);
+      void persistInstallReport({
+        events: result.events ?? [],
+        logLines: installLogBuffer,
+        result: "error",
+        errorCode: result.failure?.code,
+      });
       toast.error("Installation failed", { description: result.message });
     }
   }, [installSource, localPath, replacePersona, appendLog, requestSudo, refreshConnection]);
@@ -343,6 +365,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       installSucceeded,
       installProgress,
       logLines,
+      installFailure,
       guardAgentName,
       existingProbe,
       entryProbePending,
@@ -376,6 +399,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       installSucceeded,
       installProgress,
       logLines,
+      installFailure,
       guardAgentName,
       existingProbe,
       entryProbePending,

@@ -107,5 +107,46 @@ export async function finalizeAfterInstall(
     };
   }
 
+  append("Running launcher integrity checks…");
+  const launcher = await checkHermesLauncherPath();
+  if (!launcher.ok) {
+    return {
+      ok: false,
+      message: launcher.message,
+    };
+  }
+  append("✓ hermes launcher resolved to a supported path.");
+
+  append("Running hermes doctor and startup health checks…");
+  const health = await systemAPI.bootstrapStartupHealth().catch(() => null);
+  if (!health || !health.success) {
+    return {
+      ok: false,
+      message: "Install completed but startup health checks failed. Open Diagnostics for guided fixes.",
+    };
+  }
+  append("✓ Startup health checks passed.");
+
+  return { ok: true };
+}
+
+async function checkHermesLauncherPath(): Promise<{ ok: true } | { ok: false; message: string }> {
+  const platform = await systemAPI.getPlatform();
+  const probeCmd = 'command -v hermes || true';
+  const result = await systemAPI.runCommand(
+    platform.isWindows ? `wsl bash -lc "${probeCmd}"` : `bash -lc "${probeCmd}"`,
+    { timeout: 10000 },
+  );
+  const path = (result.stdout || "").trim().split("\n").pop() || "";
+  if (!path) {
+    return { ok: false, message: "Install verification failed: `hermes` is not on PATH in the runtime shell." };
+  }
+  const expectedPath = path.includes("/.local/bin/hermes") || path.includes("/venv/bin/hermes") || path.includes("/usr/local/bin/hermes");
+  if (!expectedPath) {
+    return {
+      ok: false,
+      message: `Install verification failed: unexpected hermes launcher path (${path}).`,
+    };
+  }
   return { ok: true };
 }
