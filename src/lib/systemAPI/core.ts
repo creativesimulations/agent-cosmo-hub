@@ -19,6 +19,13 @@ type CommandOutputEvent = {
   code?: number;
 };
 
+const reconcileStreamOutput = (collected: string, reported?: string): string => {
+  if (!reported) return collected;
+  if (!collected) return reported;
+  if (reported.length > collected.length && reported.includes(collected)) return reported;
+  return collected;
+};
+
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const simulatedPlatform: PlatformInfo = {
@@ -117,10 +124,12 @@ export const coreAPI = {
         promise
           .then((result) => {
             unsubscribe();
+            const mergedStdout = reconcileStreamOutput(stdout, result.stdout);
+            const mergedStderr = reconcileStreamOutput(stderr, result.stderr);
             resolve(finalize({
               success: result.success,
-              stdout,
-              stderr,
+              stdout: mergedStdout,
+              stderr: mergedStderr,
               code: typeof result.code === 'number' ? result.code : code,
             }));
           })

@@ -100,6 +100,8 @@ function registerCommandHandlers(ipcMain, IPC) {
       if (streamId) liveStreams.set(streamId, child);
       let settled = false;
       let timedOut = false;
+      let collectedStdout = '';
+      let collectedStderr = '';
 
       const finish = (result) => {
         if (settled) return;
@@ -126,18 +128,22 @@ function registerCommandHandlers(ipcMain, IPC) {
         : null;
 
       child.stdout.on('data', (data) => {
+        const chunk = data.toString();
+        collectedStdout += chunk;
         event.sender.send(IPC.COMMAND_OUTPUT, {
           streamId,
           type: 'stdout',
-          data: data.toString(),
+          data: chunk,
         });
       });
 
       child.stderr.on('data', (data) => {
+        const chunk = data.toString();
+        collectedStderr += chunk;
         event.sender.send(IPC.COMMAND_OUTPUT, {
           streamId,
           type: 'stderr',
-          data: data.toString(),
+          data: chunk,
         });
       });
 
@@ -148,7 +154,12 @@ function registerCommandHandlers(ipcMain, IPC) {
           type: 'exit',
           code: timedOut ? 124 : (code ?? 0),
         });
-        finish({ success: !timedOut && code === 0, code: timedOut ? 124 : (code ?? 0) });
+        finish({
+          success: !timedOut && code === 0,
+          code: timedOut ? 124 : (code ?? 0),
+          stdout: collectedStdout,
+          stderr: collectedStderr,
+        });
       });
 
       child.on('error', (err) => {
@@ -158,7 +169,7 @@ function registerCommandHandlers(ipcMain, IPC) {
           type: 'stderr',
           data: `[process] ${err.message}\n`,
         });
-        finish({ success: false, code: 1 });
+        finish({ success: false, code: 1, stdout: collectedStdout, stderr: `${collectedStderr}[process] ${err.message}\n` });
       });
     });
   });

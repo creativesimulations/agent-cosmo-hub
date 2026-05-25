@@ -35,7 +35,13 @@ declare global {
   interface Window {
     electronAPI?: {
       runCommand: (cmd: string, options?: Record<string, unknown>) => Promise<CommandResult>;
-      runCommandStream: (cmd: string, options?: Record<string, unknown>) => { id: string; promise: Promise<{ success: boolean; code?: number }> };
+      runCommandStream: (
+        cmd: string,
+        options?: Record<string, unknown>,
+      ) => {
+        id: string;
+        promise: Promise<{ success: boolean; code?: number; stdout?: string; stderr?: string }>;
+      };
       onCommandOutput: (callback: (data: { streamId: string; type: string; data?: string; code?: number }) => void) => () => void;
       getPlatform: () => Promise<PlatformInfo>;
       fileExists: (path: string) => Promise<boolean>;

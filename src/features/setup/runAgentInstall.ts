@@ -1,5 +1,6 @@
 // Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { systemAPI } from "@/lib/systemAPI";
+import { isElectron } from "@/lib/systemAPI/types";
 import { sudoAPI, promptForPasswordMac } from "@/lib/systemAPI/sudo";
 import type { CommandResult } from "@/lib/systemAPI/types";
 import { LOCAL_INSTALL_PIP_EXTRAS } from "./constants";
@@ -149,6 +150,15 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
   const append = (line: string) => {
     if (!isAborted()) log([line]);
   };
+
+  if (!isElectron()) {
+    return {
+      ok: false,
+      message:
+        "Desktop bridge unavailable: installer commands are not running through Electron IPC. Use the packaged Ronbot desktop app.",
+      failure: classifyInstallFailure("unsupported desktop bridge"),
+    };
+  }
 
   append("Running install preflight contract…");
   emit({
