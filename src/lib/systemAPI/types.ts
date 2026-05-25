@@ -66,7 +66,7 @@ declare global {
       quitApp: () => Promise<{ success: boolean }>;
       onAgentRunningChanged: (callback: (running: boolean) => void) => () => void;
 
-      isElectron: boolean;
+      isElectron?: boolean;
     };
   }
 }
@@ -74,7 +74,17 @@ declare global {
 export type { DiskSpaceInfo };
 
 export const isElectron = (): boolean => {
-  return !!window.electronAPI?.isElectron;
+  const api = window.electronAPI;
+  if (!api) return false;
+  // New preload versions set an explicit marker.
+  if (api.isElectron === true) return true;
+  // Backward-compatible detection for older packaged preload builds:
+  // if core IPC methods exist, we can treat this runtime as Electron.
+  return (
+    typeof api.runCommand === 'function' &&
+    typeof api.runCommandStream === 'function' &&
+    typeof api.getPlatform === 'function'
+  );
 };
 
 // ─── Simulation helpers for browser dev mode ──────────────────
