@@ -106,6 +106,24 @@ function tailOutput(result: CommandResult, lines = 5): string {
   return (result.stderr || result.stdout || "unknown error").trim().split("\n").slice(-lines).join("\n");
 }
 
+function summarizeFailureOutput(result: CommandResult): string[] {
+  const summarize = (text: string, lines: number) => {
+    const all = text.trim().split("\n").filter(Boolean);
+    if (all.length <= lines * 2) return all;
+    return [...all.slice(0, lines), "...", ...all.slice(-lines)];
+  };
+  const out: string[] = [];
+  if (result.stderr?.trim()) out.push("--- stderr ---", ...summarize(result.stderr, 20));
+  if (result.stdout?.trim()) out.push("--- stdout ---", ...summarize(result.stdout, 20));
+  if (result.code === 52) {
+    out.push(
+      "[hint] Install exited with verification code 52. This often means installer download/fetch failed before any files were created.",
+      "[hint] Check network/proxy access to raw.githubusercontent.com and retry.",
+    );
+  }
+  return out;
+}
+
 function runHermesInstaller(
   source: InstallSource,
   localPath: string | undefined,
@@ -228,10 +246,8 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
   if (isAborted()) return { ok: false, message: "Cancelled", cancelled: true };
 
   if (!result.success) {
-    const lines = [`✗ Installation failed (exit ${result.code ?? "?"})`];
-    if (result.stderr?.trim()) lines.push("--- stderr ---", tailOutput(result, 20));
-    if (result.stdout?.trim()) lines.push("--- stdout ---", tailOutput(result, 20));
-    log(lines);
+    const lines = [`✗ Installation failed (exit ${result.code ?? "?"})`, ...summarizeFailureOutput(result)];
+    log(lines.length > 1 ? lines : [`✗ Installation failed (exit ${result.code ?? "?"})`, `--- details ---`, tailOutput(result, 20)]);
     const message = "Hermes installer exited with an error.";
     emit({
       ts: new Date().toISOString(),

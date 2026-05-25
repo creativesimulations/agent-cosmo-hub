@@ -10,9 +10,16 @@ export const INSTALL_SCRIPT =
 /** Official Hermes one-liner (v0.13+). Run inside bash after prereqs; streamed via runHermesShell. */
 export const buildOfficialHermesInstallScript = (): string =>
   [
-    'set -e',
+    'set -euo pipefail',
     'export DEBIAN_FRONTEND=noninteractive',
-    `curl -fsSL "${INSTALL_SCRIPT}" | bash`,
+    'TMP_INSTALL_SCRIPT="$(mktemp 2>/dev/null || echo /tmp/hermes-install.$$.$RANDOM.sh)"',
+    'trap \'rm -f "$TMP_INSTALL_SCRIPT" 2>/dev/null || true\' EXIT',
+    `curl -fLsS --retry 3 --connect-timeout 10 --max-time 180 "${INSTALL_SCRIPT}" -o "$TMP_INSTALL_SCRIPT"`,
+    'if [ ! -s "$TMP_INSTALL_SCRIPT" ]; then',
+    '  echo "[install] FATAL: downloaded installer script is empty" >&2',
+    '  exit 52',
+    'fi',
+    'bash "$TMP_INSTALL_SCRIPT"',
   ].join('\n');
 
 /** @deprecated use buildOfficialHermesInstallScript — kept for grep/tests migration */
