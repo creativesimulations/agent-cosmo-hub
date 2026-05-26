@@ -1,5 +1,6 @@
 // Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { systemAPI } from "@/lib/systemAPI";
+import { runHermesShell, HERMES_PATH_EXPORT } from "@/lib/systemAPI/hermes/shell";
 
 export type ContractStatus = "ok" | "fixable_auto" | "fixable_manual" | "blocked_unsupported";
 export type ContractSeverity = "hard" | "soft";
@@ -29,22 +30,43 @@ function statusFromInstalled(installed: boolean, soft = false): ContractStatus {
   return soft ? "fixable_manual" : "fixable_auto";
 }
 
-function quoteForBash(inner: string): string {
-  return inner.replace(/(["\\$`])/g, "\\$1");
+/**
+ * Run a script in the same shell domain where the Hermes installer will run
+ * (WSL on Windows, native bash on macOS/Linux). Always prepends the standard
+ * Hermes PATH so Homebrew (/opt/homebrew/bin), /usr/local/bin, ~/.local/bin,
+ * snap, and the Hermes venv are visible. Without this, common tools installed
+ * via Homebrew on macOS report as "missing" → false-negative prereqs.
+ */
+async function runInHermesDomain(
+  inner: string,
+  timeout = 15000,
+): Promise<{ success: boolean; stdout: string; stderr: string }> {
+  const script = [HERMES_PATH_EXPORT, inner].join("\n");
+  const result = await runHermesShell(script, { timeout });
+  return {
+    success: result.success,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+  };
 }
 
-async function runInHermesDomain(inner: string): Promise<{ success: boolean; stdout: string; stderr: string }> {
-  const platform = await systemAPI.getPlatform();
-  const escaped = quoteForBash(inner);
-  const cmd = platform.isWindows ? `wsl bash -lc "${escaped}"` : `bash -lc "${escaped}"`;
-  const result = await systemAPI.runCommand(cmd, { timeout: 15000 });
-  return { success: result.success, stdout: result.stdout || "", stderr: result.stderr || "" };
-}
-
+/**
+ * Tolerant binary probe: a binary is considered installed if `command -v`
+ * resolves it, regardless of whether `--version` prints. Some tools (busybox
+ * wget) print to stderr or exit non-zero on `--version | head -1` because of
+ * SIGPIPE on the producer side.
+ */
 async function checkGuestBinary(bin: string): Promise<{ installed: boolean; version?: string }> {
-  const result = await runInHermesDomain(`command -v ${bin} >/dev/null 2>&1 && ${bin} --version 2>/dev/null | head -1`);
-  if (!result.success || !result.stdout.trim()) return { installed: false };
-  return { installed: true, version: result.stdout.trim().split("\n")[0] };
+  const presence = await runInHermesDomain(
+    `command -v ${bin} >/dev/null 2>&1 && echo FOUND || echo MISSING`,
+  );
+  if (!presence.stdout.includes("FOUND")) return { installed: false };
+  const versionResult = await runInHermesDomain(
+    `${bin} --version 2>&1 | head -1 || true`,
+    8000,
+  );
+  const versionLine = (versionResult.stdout || "").trim().split("\n").pop() || "";
+  return { installed: true, version: versionLine || `${bin} found` };
 }
 
 function parseFirstVersion(raw: string): number | null {
