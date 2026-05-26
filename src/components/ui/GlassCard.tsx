@@ -32,16 +32,25 @@ const GlassCard = React.forwardRef<HTMLDivElement, GlassCardProps>(
         }
       : {};
 
-    return (
-      <Wrapper
-        ref={ref}
-        className={cn("rounded-xl p-5", glassClass, glowClass, className)}
-        {...animProps}
-        {...(props as React.HTMLAttributes<HTMLDivElement>)}
-      >
-        {children}
-      </Wrapper>
-    );
+    const commonProps = {
+      ref,
+      className: cn("rounded-xl p-5", glassClass, glowClass, className),
+      ...(props as React.HTMLAttributes<HTMLDivElement>),
+    };
+
+    if (animated) {
+      return (
+        <motion.div
+          {...(commonProps as React.ComponentProps<typeof motion.div>)}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] as [number, number, number, number] }}
+        >
+          {children}
+        </motion.div>
+      );
+    }
+    return <div {...commonProps}>{children}</div>;
   }
 );
 
