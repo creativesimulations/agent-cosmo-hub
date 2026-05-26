@@ -291,7 +291,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
         appendLog(["✗ Install completed but connection verification failed."]);
         toast.error("Could not verify connection after install");
       }
-    } else if (!result.cancelled) {
+    } else if (result.ok === false && !result.cancelled) {
       setInstallFailure(result.failure ?? null);
       void persistInstallReport({
         events: result.events ?? [],

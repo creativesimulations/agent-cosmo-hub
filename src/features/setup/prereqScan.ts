@@ -185,7 +185,7 @@ export async function installPrereqItem(id: string): Promise<Partial<PrereqItem>
 
 async function installAptWithCapability(packages: string[]): Promise<Partial<PrereqItem>> {
   const probe = await sudoAPI.probe();
-  if (probe.kind === "root" || probe.kind === "passwordless") {
+  if (probe.kind === "passwordless") {
     const result = await sudoAPI.aptInstall(packages, "");
     return result.success
       ? { status: "installed", description: `Installed ${packages.join(", ")}` }

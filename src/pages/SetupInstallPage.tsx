@@ -65,7 +65,7 @@ export default function SetupInstallPage() {
               agentName={setup.guardAgentName}
               installState={setup.lastAgentProbe?.installState}
               onBack={setup.goHub}
-              onConnect={() => goHomeOnConnect(setup.guardConnect)}
+              onConnect={async () => { await goHomeOnConnect(setup.guardConnect); return true; }}
               onRename={async (name) => {
                 const ok = await setup.guardRename(name);
                 if (ok) navigate("/");

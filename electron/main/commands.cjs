@@ -59,12 +59,54 @@ function buildCommandEnv(extraEnv = {}) {
   return env;
 }
 
+/**
+ * Force wsl.exe to emit UTF-8 instead of UTF-16LE for its own management
+ * output (`wsl --status`, `wsl -l -v`, etc.). Without this, the regex
+ * parsing in checkWSL() never matches because every character is followed
+ * by a null byte. Supported in WSL >= 0.64.16.
+ * Only applies to commands that invoke wsl directly for management — does
+ * NOT affect `wsl bash -lc "..."` payloads, which output normal UTF-8 from
+ * Linux processes.
+ */
+function isWslManagementCommand(cmd) {
+  if (typeof cmd !== 'string') return false;
+  const trimmed = cmd.trim();
+  if (!/^wsl(\.exe)?(\s|$)/i.test(trimmed)) return false;
+  // wsl bash -lc "..." is a Linux payload — Linux already emits UTF-8.
+  if (/^wsl(\.exe)?\s+(bash|sh|--exec|-e|-d\s+\S+\s+bash)/i.test(trimmed)) return false;
+  return true;
+}
+
+/** Strip UTF-16 BOM and interleaved null bytes that leak through when WSL_UTF8 is unsupported. */
+function sanitizeWslOutput(text) {
+  if (!text) return text;
+  // If every other byte is 0x00, treat as UTF-16LE and decode.
+  if (text.includes('\u0000')) {
+    try {
+      const buf = Buffer.from(text, 'binary');
+      // Drop BOM
+      const offset = buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe ? 2 : 0;
+      const decoded = buf.slice(offset).toString('utf16le');
+      // Only use decoded form if it looks saner (fewer null bytes).
+      if (!decoded.includes('\u0000')) return decoded;
+    } catch {
+      /* fall through */
+    }
+    return text.replace(/\u0000/g, '');
+  }
+  return text;
+}
+
 function registerCommandHandlers(ipcMain, IPC) {
   const liveStreams = new Map();
 
   ipcMain.handle(IPC.RUN_COMMAND, async (_event, cmd, options = {}) => {
     return new Promise((resolve) => {
-      const env = buildCommandEnv(options.env || {});
+      const isWslMgmt = isWslManagementCommand(cmd);
+      const env = buildCommandEnv({
+        ...(isWslMgmt ? { WSL_UTF8: '1' } : {}),
+        ...(options.env || {}),
+      });
       const shellOverride = process.platform === 'win32' ? true : '/bin/bash';
       const timeoutMs = options.timeout ?? 60000;
       const opts = {
@@ -74,10 +116,16 @@ function registerCommandHandlers(ipcMain, IPC) {
         env,
       };
       exec(cmd, opts, (error, stdout, stderr) => {
+        let outStr = stdout?.toString() || '';
+        let errStr = stderr?.toString() || '';
+        if (isWslMgmt) {
+          outStr = sanitizeWslOutput(outStr);
+          errStr = sanitizeWslOutput(errStr);
+        }
         resolve({
           success: !error,
-          stdout: stdout?.toString() || '',
-          stderr: stderr?.toString() || '',
+          stdout: outStr,
+          stderr: errStr,
           code: error?.code || 0,
         });
       });

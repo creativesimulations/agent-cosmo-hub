@@ -218,7 +218,7 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
   const aptOutcome = await installAptPackages(aptPackages, log, requestSudo, isAborted);
   if (isAborted()) return { ok: false, message: "Cancelled", cancelled: true };
   if (!aptOutcome.ok) {
-    if (aptOutcome.cancelled) return { ok: false, message: "Cancelled", cancelled: true };
+    if (aptOutcome.ok === false && aptOutcome.cancelled) return { ok: false, message: "Cancelled", cancelled: true };
     const pkgs = aptPackages.join(" ");
     const message = pkgs
       ? `Missing packages. Run: sudo apt-get install -y ${pkgs}`
@@ -290,19 +290,20 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
   });
   const finalized = await finalizeAfterInstall({ seedPersona, agentName, source, log });
   if (isAborted()) return { ok: false, message: "Cancelled", cancelled: true };
-  if (!finalized.ok) {
+  if (finalized.ok === false) {
+    const failMessage = finalized.message;
     emit({
       ts: new Date().toISOString(),
       phase: "verify",
       step: "post-install-verification",
       status: "error",
-      message: finalized.message,
+      message: failMessage,
       errorCode: "verify_failed",
     });
     return {
       ok: false,
-      message: finalized.message,
-      failure: classifyInstallFailure(finalized.message),
+      message: failMessage,
+      failure: classifyInstallFailure(failMessage),
       events,
     };
   }

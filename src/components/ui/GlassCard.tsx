@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { motion } from "framer-motion";
+import { motion, type HTMLMotionProps } from "framer-motion";
 import React from "react";
 
 interface GlassCardProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -23,24 +23,30 @@ const GlassCard = React.forwardRef<HTMLDivElement, GlassCardProps>(
       none: "",
     }[glow];
 
-    const Wrapper = animated ? motion.div : "div";
-    const animProps = animated
-      ? {
-          initial: { opacity: 0, y: 8 },
-          animate: { opacity: 1, y: 0 },
-          transition: { duration: 0.3, ease: "easeOut" },
-        }
-      : {};
+    const finalClass = cn("rounded-xl p-5", glassClass, glowClass, className);
 
+    if (animated) {
+      // Strip native DOM animation handlers that conflict with framer-motion's signatures.
+      const { onAnimationStart, onAnimationEnd, onAnimationIteration, onDrag, onDragStart, onDragEnd, ...rest } = props;
+      void onAnimationStart; void onAnimationEnd; void onAnimationIteration;
+      void onDrag; void onDragStart; void onDragEnd;
+      return (
+        <motion.div
+          ref={ref}
+          className={finalClass}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+          {...(rest as HTMLMotionProps<"div">)}
+        >
+          {children}
+        </motion.div>
+      );
+    }
     return (
-      <Wrapper
-        ref={ref}
-        className={cn("rounded-xl p-5", glassClass, glowClass, className)}
-        {...animProps}
-        {...(props as React.HTMLAttributes<HTMLDivElement>)}
-      >
+      <div ref={ref} className={finalClass} {...props}>
         {children}
-      </Wrapper>
+      </div>
     );
   }
 );

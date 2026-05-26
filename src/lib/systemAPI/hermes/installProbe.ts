@@ -38,7 +38,12 @@ export function probeRecordToState(parsed: Record<string, string>): HermesInstal
   };
 }
 
-/** Same contract as the historical `hasUsableHermesInstall` in hermes.ts, with runtime CLI + model checks. */
+/** Same contract as the historical `hasUsableHermesInstall` in hermes.ts, with runtime CLI + model checks.
+ *  A successful install yields either:
+ *   - `~/.hermes/venv/bin/hermes` (venv install), or
+ *   - `~/.hermes/bin/hermes` (uv-managed install in Hermes v0.13+), reported as `hasVenvCli`, or
+ *   - hermes on PATH plus a `model:` line in config.yaml.
+ */
 export function hasUsableHermesInstall(state: HermesInstallProbe): boolean {
   if (!state.hasDir) return false;
   if (!state.hasCliRuns) return false;
