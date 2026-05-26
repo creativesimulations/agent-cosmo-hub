@@ -102,7 +102,11 @@ function registerCommandHandlers(ipcMain, IPC) {
 
   ipcMain.handle(IPC.RUN_COMMAND, async (_event, cmd, options = {}) => {
     return new Promise((resolve) => {
-      const env = buildCommandEnv(options.env || {});
+      const isWslMgmt = isWslManagementCommand(cmd);
+      const env = buildCommandEnv({
+        ...(isWslMgmt ? { WSL_UTF8: '1' } : {}),
+        ...(options.env || {}),
+      });
       const shellOverride = process.platform === 'win32' ? true : '/bin/bash';
       const timeoutMs = options.timeout ?? 60000;
       const opts = {
@@ -112,10 +116,16 @@ function registerCommandHandlers(ipcMain, IPC) {
         env,
       };
       exec(cmd, opts, (error, stdout, stderr) => {
+        let outStr = stdout?.toString() || '';
+        let errStr = stderr?.toString() || '';
+        if (isWslMgmt) {
+          outStr = sanitizeWslOutput(outStr);
+          errStr = sanitizeWslOutput(errStr);
+        }
         resolve({
           success: !error,
-          stdout: stdout?.toString() || '',
-          stderr: stderr?.toString() || '',
+          stdout: outStr,
+          stderr: errStr,
           code: error?.code || 0,
         });
       });
