@@ -138,11 +138,11 @@ describe("runPrereqScan", () => {
       checks: [
         ...baseChecks().map((check) =>
           check.id === "desktop-bridge"
-            ? {
+            ? ({
                 ...check,
-                status: "blocked_unsupported",
+                status: "blocked_unsupported" as const,
                 detail: "Electron preload bridge is missing (window.electronAPI unavailable).",
-              }
+              })
             : check,
         ),
       ],

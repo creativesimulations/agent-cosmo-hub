@@ -109,7 +109,7 @@ export async function finalizeAfterInstall(
 
   append("Running launcher integrity checks…");
   const launcher = await checkHermesLauncherPath();
-  if (!launcher.ok) {
+  if (launcher.ok === false) {
     return {
       ok: false,
       message: launcher.message,
