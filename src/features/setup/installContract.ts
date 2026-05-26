@@ -320,12 +320,13 @@ async function evaluateInstallContractInner(): Promise<InstallContractReport> {
     checks.push({
       id: "wsl-distro",
       label: "WSL distro",
-      status: distroLooksUbuntu ? "ok" : "fixable_manual",
+      status: distroLooksUbuntu ? "ok" : "fixable_auto",
       severity: "hard",
       domain: "host",
       detail: distroLooksUbuntu
         ? `Using ${wsl.distro}`
-        : "Ubuntu distro not selected/detected. Use an Ubuntu distro for Hermes.",
+        : "Ubuntu distro not selected/detected. Click Auto-fix to install Ubuntu.",
+      autoInstallId: "wsl-distro",
       manualCommand: "wsl --install -d Ubuntu",
     });
   }
