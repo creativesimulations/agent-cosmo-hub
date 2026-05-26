@@ -141,7 +141,12 @@ async function checkHermesLauncherPath(): Promise<{ ok: true } | { ok: false; me
   if (!path) {
     return { ok: false, message: "Install verification failed: `hermes` is not on PATH in the runtime shell." };
   }
-  const expectedPath = path.includes("/.local/bin/hermes") || path.includes("/venv/bin/hermes") || path.includes("/usr/local/bin/hermes");
+  const expectedPath =
+    path.includes("/.local/bin/hermes") ||
+    path.includes("/venv/bin/hermes") ||
+    path.includes("/.hermes/bin/hermes") ||
+    path.includes("/.hermes/venv/bin/hermes") ||
+    path.includes("/usr/local/bin/hermes");
   if (!expectedPath) {
     return {
       ok: false,
