@@ -1,120 +1,103 @@
-## Comprehensive refactor: organize, clean up, kill dead code
 
-A staged refactor with measurable goals. Each stage stands on its own and is independently reviewable so we don't trade one mess for another. No feature changes — only structure, naming, and deletions.
+# Installation Wizard — Hardening Plan
 
-### Why now
-
-Three pain points dominate the codebase:
-
-1. **`src/lib/systemAPI/hermes.ts` is 6,082 lines** containing ~70 methods across many unrelated concerns (install, env, config, gateway, WhatsApp adapter patching, skills, scheduled jobs, browser probing, etc.).
-2. **~1,800 lines of confirmed dead WhatsApp/gateway code** in that same file — verified by `rg`: zero callers outside `hermes.ts` itself for `runWhatsAppPairing`, `repairWhatsAppGatewayRuntime`, `patchGatewayServicePathForWhatsApp`, `ensureWhatsAppBridgeDeps`, `auditWhatsAppBridgeRuntime`, `classifyWhatsAppBridgeFailure`, plus ~20 more. The agent owns these flows over the intent protocol now.
-3. **Page components mixing UI, business logic, and IPC** (`Index.tsx` 1,025 lines, `Diagnostics.tsx` 1,042, `BrowserSetupDialog.tsx` 1,151, `SettingsPage.tsx` 911). Effects, derived state, and command pipelines are inlined alongside JSX.
-
-### Stage 1 — Delete dead WhatsApp/gateway code (biggest win)
-
-Target: `src/lib/systemAPI/hermes.ts` lines ~2000-4080 plus their helper types/parsers around lines 31-510.
-
-Methods to remove (verified zero external callers):
+## What the wizard does today
 
 ```
-getWhatsAppGatewayHealth        getWhatsAppBridgeStatus
-readWhatsAppBridgeLogTail       findUnauthorizedWhatsAppSenders
-ensureWhatsAppRuntimeSecrets    terminateConflictingGatewayProcess
-testChannel                     checkNpmForMessaging
-ensureHermesNodeRuntime         checkWhatsAppPairingPrereqs
-ensureWhatsAppBridgeDeps        checkChannelSetupTools
-isWhatsAppPaired                getWhatsAppSessionFileCount
-clearWhatsAppSession            removeChannelEnvKeys
-resetWhatsAppChannel            terminateWhatsAppPairingProcesses
-ensureWhatsAppManagedNode       patchGatewayServicePathForWhatsApp
-patchHermesWhatsAppAdapterForNode
-getWhatsAppRuntimeDiagnostic    auditWhatsAppBridgeRuntime
-classifyWhatsAppBridgeFailure   rotateWhatsAppBridgeLogs
-verifyGatewayUsesManagedNode    repairWhatsAppGatewayRuntime
-runWhatsAppPairing
+SetupHub → (optional) ConnectPanel / ExistingInstallGuard
+        → WizardChrome
+              ├── PrereqsStep        (scan + auto-fix)
+              ├── InstallStep        (preflight → apt → curl|bash → verify)
+              └── DoneStep
 ```
 
-Plus the dead supporting types: `WhatsAppFatalReason`, `WhatsAppGatewaySignalReport`, `SlackGatewayConflictInfo`, `GatewayStartupRecoverySignals`, and the parsers `parseSlackGatewayConflict` / `parseGatewayStartupRecoverySignals` / fatal-WA snippet extractor.
+- Probe order: `setupService.probeAgent()` → if not ready → `evaluateInstallContract()` → optional recommended (`ripgrep`, host `curl`).
+- All "guest" checks (git, curl/wget, python3, network) run inside the shell where Hermes installs: WSL Ubuntu on Windows, native bash on macOS/Linux.
+- The actual install is the **official Hermes curl-pipe**: `bash <(curl … hermes-agent/main/scripts/install.sh)` — this stays. It always pulls the latest Hermes from the official repo, which is what the user asked for.
 
-After this, also drop `startGateway` / `stopGateway` / `refreshGatewayInstall` if no internal caller survives. Expected reduction: **~1,800-2,000 lines from hermes.ts**.
+## Bugs causing false negatives + manual terminal trips
 
-Verification: `rg "WhatsApp|Gateway"` should drop to a handful of comments + the channel-setup UI cards.
+### 1. Guest probes use a sterile PATH — biggest source of false negatives
+`installContract.ts → runInHermesDomain` invokes `bash -lc "command -v git && git --version"` **without** exporting the standard install paths.
 
-### Stage 2 — Split `hermes.ts` into focused modules
+Consequences:
+- **macOS (Apple Silicon)**: Homebrew lives in `/opt/homebrew/bin`. A non-interactive `bash -lc` (the user's default shell is usually zsh, so bash login files are empty) misses it → `git`, `curl`, `python3` all report missing even though they are installed.
+- **Linux**: tools in `/usr/local/bin`, `~/.local/bin`, snaps in `/snap/bin`, and asdf/pyenv shims are missed.
+- **Windows/WSL**: similar — anything the user installed via `~/.local/bin` (e.g. `uv`) is missed.
 
-Move the remaining ~4,000 lines into a folder `src/lib/systemAPI/hermes/` with one file per domain:
+Fix: Reuse the same `HERMES_PATH_EXPORT` constant already defined in `src/lib/systemAPI/hermes/shell.ts` (it exports venv + `~/.local/bin` + `/usr/local/bin` + `/opt/homebrew/bin` + `/snap/bin`) and prepend it to every guest probe in `installContract.ts`. Switch `runInHermesDomain` to call `runHermesShell` (which already handles base64-encoding, WSL wrapping, quoting safely) instead of hand-rolled `bash -lc "${escaped}"`.
 
+### 2. `checkGuestBinary` returns false when the binary prints to stderr
+`command -v X >/dev/null 2>&1 && X --version 2>/dev/null | head -1` — for tools like `wget --version` exit code is 0 and stdout works, but combined with stricter shells / SIGPIPE on `head` we sometimes get empty stdout → "installed: false". Replace with a more tolerant probe: rely on `command -v` for "installed" and fall back to a separate `--version` call for the version label.
+
+### 3. WSL detection on Windows is fragile
+`wsl --status` and `wsl -l -v` output **UTF-16LE** on stock Windows. `child_process.exec` returns it as a UTF-8 string with null bytes between every character → the regexes `Default Version:\s*(\d+)` and `\*\s+(\S+)\s+\w+\s+(\d+)` never match → "WSL not installed".
+
+Fix: in `electron/main/commands.cjs`, for any command starting with `wsl ` (not `wsl bash -lc`), spawn with `WSL_UTF8=1` in the env (supported in WSL ≥ 0.64), and as a belt-and-suspenders strip null bytes in the renderer parser. Add a tiny helper in `prereqs.ts → checkWSL` that re-parses with both encodings.
+
+### 4. "Auto-fix" buttons silently fail when sudo needs a password
+`prereqScan.ts → installAptWithCapability` only succeeds when sudo is `root`/`passwordless`. For `needs-password` / `no-password-set` it returns an error string telling the user to run `sudo apt-get install …` in a terminal. This violates the "user never touches the terminal" requirement.
+
+Fix: route through the existing `SudoPromptContext` (used during install). Lift the sudo dialog so it's available during the Prereqs step too. The auto-fix handler:
+1. Probes sudo. If passwordless → run directly.
+2. If `needs-password` → call `requestSudoPassword(reason)` which opens `SudoPasswordDialog`, then `sudoAPI.aptInstall(packages, password)`.
+3. If `no-password-set` → open the same dialog in "set password" mode, then `sudoAPI.setUserPassword` then retry.
+4. macOS → already supports native `osascript` GUI prompt via `promptForPasswordMac`; reuse it here.
+5. Windows-host installs (winget/wsl --install) → already user-elevation via UAC; no change.
+
+### 5. `wsl --install` auto-fix can't elevate from Electron
+`installWSL()` calls `wsl --install` directly. From a non-elevated Electron renderer that fails with "Access denied".
+
+Fix: on Windows, run via PowerShell `Start-Process -Verb RunAs` so Windows pops the standard UAC consent dialog. After it returns, set the `wsl2` row to `reboot_required` (already supported by `PrereqStatus`).
+
+### 6. Ubuntu distro auto-install is marked "manual"
+The contract sets `wsl-distro` to `fixable_manual` with a copy-able `wsl --install -d Ubuntu` command. We can auto-install it via the same elevated PowerShell path. Mark it `autoInstallId: "wsl-distro"` and add a handler in `installPrereqItem` that runs the elevated install + waits for the first boot prompt.
+
+### 7. `checkHermesLauncherPath` only accepts hard-coded paths
+After installation, post-install verification rejects launchers that aren't in `/.local/bin`, `/venv/bin`, or `/usr/local/bin`. The official installer in Hermes v0.13 may also drop the entrypoint into `~/.hermes/bin/hermes` (when uv-managed). Add this path to the allow-list so a successful install isn't reported as "unexpected launcher path".
+
+### 8. Inline tweaks for clarity / robustness
+- Drop the redundant **host** `curl` row when the platform is Windows (curl on the host is irrelevant; Hermes runs in WSL).
+- Replace the `BASE` array's `windowsOnly` filtering shortcut (`splice` in `applyContract`) with a single filter pass so removed items never re-appear after a re-scan.
+- Cache the contract result for the lifetime of the wizard step (skip second redundant evaluation when the user clicks "Rescan" within 2s — same idea as `probeCache`).
+
+## Files to edit
+
+```text
+src/features/setup/installContract.ts        Reuse HERMES_PATH_EXPORT + runHermesShell;
+                                              tolerant guest binary probe; cache result
+src/features/setup/prereqScan.ts             Route auto-fix through SudoPromptContext;
+                                              add wsl-distro auto-install; drop host curl
+                                              row on Windows
+src/features/setup/runAgentInstall.ts        Use new sudo flow (no duplicate dialog logic)
+src/features/setup/components/PrereqsStep.tsx Replace inline install-one with hook that
+                                              uses useSudoPrompt + toast on failure
+src/lib/systemAPI/prereqs.ts                 checkWSL → utf-8 reparse, WSL_UTF8 env;
+                                              installWSL → elevated PowerShell launcher;
+                                              new installWSLDistro('Ubuntu')
+src/lib/systemAPI/hermes/installProbe.ts     Allow ~/.hermes/bin/hermes path
+src/features/setup/setupService.ts           Accept new launcher path in
+                                              checkHermesLauncherPath
+electron/main/commands.cjs                   Inject WSL_UTF8=1 for wsl.* commands;
+                                              strip BOM/null bytes on stdout when
+                                              command starts with "wsl "
+src/contexts/SudoPromptContext.tsx           Expose during PrereqsStep (already wired
+                                              for install; just ensure provider wraps
+                                              the wizard route)
 ```
-hermes/
-  index.ts            — assembles & exports `hermesAPI`
-  install.ts          — install / installFromLocalFolder / installViaPip / uninstall / update
-  env.ts              — readEnvFile / setEnvVar / removeEnvVar / materializeEnv
-  config.ts           — readConfig / writeConfig / setModel / writeInitialConfig / repairConfig / configCheck
-  doctor.ts           — doctor / analyzeDoctorIssues / bootstrapStartupHealth / runStartupAutoFix / status
-  agent.ts            — start / chat / chatPing / setAgentName / getAgentName / restartAgent / isConfigured
-  skills.ts           — listSkills / getSkillsConfig / setSkillEnabled / installSkillFromPath / installSkillFromGit / installToolFromPath / revealSkillsFolder / reloadToolsets
-  browser.ts          — getBrowserDiagnostics / setBrowserCamofoxPersistence / setBrowserCdpUrl / probeBrowserNavigate / runBrowserSelfTest
-  subagents.ts        — listSubAgents
-  scheduling.ts       — listScheduledJobs / deleteScheduledJob
-  introspection.ts    — listMCPServers / listProfiles / listPlugins / discoverCapabilities / getInsights / getBusyInputMode / setBusyInputMode / launchHermesDashboard
-  permissions.ts      — syncPermissions / readPermissionsBlock / enableFileLogging
-  ronbotRules.ts      — writeRonbotAgentRules / writeRonbotAppGuide (+ the embedded markdown content)
-  shared.ts           — runHermesShell / runHermesCli / encodeScript / path helpers / shared constants
-```
 
-Each file exports a small typed object; `hermes/index.ts` spreads them into `hermesAPI`. The public `systemAPI` import path stays unchanged so no consumer needs editing.
+## What we are NOT changing
 
-### Stage 3 — Trim `electron/main.cjs` and align with the API split
+- The official `curl … | bash` installer remains the sole install path; we still pull from `NousResearch/hermes-agent/main`. The user explicitly asked for the latest from the official repo.
+- The bundled Ubuntu/macOS/Windows bootstrap scripts in `scripts/bootstrap/` stay as the MDM/locked-down fallback documented in `docs/hermes-managed-bootstrap.md`.
+- No backend / Lovable Cloud changes — this is a desktop Electron client.
 
-`electron/main.cjs` (928 lines) registers ~40 IPC handlers in one file. Split into `electron/ipc/{platform,fs,hermes,sudo,window}.cjs` and have `main.cjs` import + register them. Drop any IPC handlers that exclusively serviced the deleted WhatsApp methods. Keep `preload.cjs` API surface intact.
+## Verification
 
-### Stage 4 — Page-level cleanup
+1. `vitest run src/features/setup` (contract + prereq scan tests; add 3 new cases: macOS Homebrew path, WSL UTF-16 status, sudo-needs-password auto-fix).
+2. Manual: on each of macOS / Ubuntu / Windows+WSL, fresh-install a clean VM, open Ronbot:
+   - Prereqs page shows no red rows when tools are present (no false negatives).
+   - Each red row's "Auto-fix" button either resolves silently (passwordless), pops the in-app password dialog, or pops native UAC/polkit — never directs the user to a terminal.
+   - Install proceeds end-to-end into `~/.hermes` and the connect step succeeds.
+3. Confirm `hermes --version` reports the latest GitHub release after install.
 
-For each oversized page, extract logic into hooks and presentational subcomponents. No new features; same JSX, smaller files.
-
-- **`pages/Index.tsx` (1,025 lines)** — installer wizard. Extract `useInstallSteps`, `useLaunchHealth`, and step subcomponents into `components/install/steps/`.
-- **`pages/Diagnostics.tsx` (1,042)** — pull each section card into `components/diagnostics/*Card.tsx`; move command runners into `hooks/useDoctorReport.ts`.
-- **`pages/SettingsPage.tsx` (911)** — group settings into `components/settings/sections/{General,Agent,Sound,Privacy,Advanced}.tsx`.
-- **`pages/AgentChat.tsx` (588)** — split into `<ChatHeader>`, `<ChatTranscript>`, `<ChatComposer>`; keep ChatContext as the source of truth.
-- **`components/skills/BrowserSetupDialog.tsx` (1,151)** — split per backend (Camofox / CDP / Self-test) into sibling components.
-
-### Stage 5 — Context + lib hygiene
-
-- **`contexts/ChatContext.tsx` (920)** — extract `useChatPersistence` (localStorage + disk mirror), `useChatWorker` (queue/worker/stop), and `useSubAgentTracker` (delegate-task regex). The provider becomes a thin shell.
-- **`contexts/InstallContext.tsx` (603)** and **`CapabilitiesContext.tsx` (430)** — same treatment, lift effects into hooks.
-- **`lib/capabilities.ts` (395)** vs `lib/capabilities/` folder — consolidate; keep the folder, delete the loose file once duplicates are merged.
-- **`lib/agentIntents/`** — already well-split, no action.
-
-### Stage 6 — Remove orphan files & tighten exports
-
-Files with **zero importers** (verified): `components/dashboard/AgentPowerCard.tsx`, `components/channels/UpgradeCard.tsx`. Delete.
-
-Sweep with `ts-prune` (one-time install dev) to surface other unreferenced exports; remove only the obvious ones, leave a TODO list for ambiguous cases.
-
-### Stage 7 — Lint & convention pass
-
-- Add an `eslint-plugin-unused-imports` rule and run `--fix` once.
-- Standardize file naming: pages = `PascalCase.tsx`, hooks = `useCamelCase.ts`, libs = `camelCase.ts`. Most already comply; rename the few stragglers.
-- Replace remaining `any` casts with typed interfaces where trivial.
-- Ensure every component file exports exactly one default + named types.
-
-### Out of scope (for this refactor)
-
-- No design system changes, no behavior changes, no new dependencies beyond `ts-prune` and `eslint-plugin-unused-imports` (dev-only).
-- Tests beyond keeping `vitest run` green after each stage.
-- Renaming public IPC channels in `preload.cjs` (would touch the Electron main process contract).
-
-### Sequencing & checkpoints
-
-Each stage is a separate PR-sized change. Suggested order: 1 → 2 → 6 → 4 → 5 → 3 → 7. After each stage:
-
-- `bun run build` clean
-- Vitest green
-- App launches, agent connects, chat sends a message, sub-agent panel populates, channels page opens.
-
-### Estimated impact
-
-- `hermes.ts`: 6,082 → ~3,200 lines, then split across 13 files of ≤400 lines each.
-- Top 5 pages: each under 400 lines.
-- Two orphan components deleted.
-- One source-of-truth per concern; no more spaghetti where install logic and gateway patching live in the same file.
