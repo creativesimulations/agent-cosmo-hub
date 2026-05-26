@@ -100,7 +100,24 @@ async function checkNetworkReachability(): Promise<{ ok: boolean; detail: string
   return { ok: false, detail: "Could not reach raw.githubusercontent.com from install shell." };
 }
 
-export async function evaluateInstallContract(): Promise<InstallContractReport> {
+const CONTRACT_CACHE_TTL_MS = 3000;
+let contractCache: { report: InstallContractReport; at: number } | null = null;
+
+export function invalidateInstallContractCache(): void {
+  contractCache = null;
+}
+
+export async function evaluateInstallContract(options?: { useCache?: boolean }): Promise<InstallContractReport> {
+  const now = Date.now();
+  if (options?.useCache && contractCache && now - contractCache.at < CONTRACT_CACHE_TTL_MS) {
+    return contractCache.report;
+  }
+  const report = await evaluateInstallContractInner();
+  contractCache = { report, at: now };
+  return report;
+}
+
+async function evaluateInstallContractInner(): Promise<InstallContractReport> {
   const checks: InstallContractCheck[] = [];
   const platform = await systemAPI.getPlatform();
   const bridge = await systemAPI.checkDesktopBridge();
