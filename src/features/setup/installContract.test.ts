@@ -85,4 +85,31 @@ describe("evaluateInstallContract", () => {
     expect(network?.detail).toContain("desktop bridge");
     expect(systemAPI.runCommand).not.toHaveBeenCalled();
   });
+
+  it("does not cascade WSL setup failures into guest dependency failures", async () => {
+    vi.mocked(systemAPI.getPlatform).mockResolvedValue({
+      platform: "win32",
+      arch: "x64",
+      release: "10.0.19045",
+      isWSL: false,
+      isWindows: true,
+      isMac: false,
+      isLinux: false,
+      homeDir: "C:\\Users\\test",
+      totalMemory: 0,
+      freeMemory: 0,
+    });
+    vi.mocked(systemAPI.detectOS).mockResolvedValue({ name: "Windows", version: "10.0.19045" });
+    vi.mocked(systemAPI.checkWSL).mockResolvedValue({ installed: false });
+
+    const report = await evaluateInstallContract();
+    const wsl = report.checks.find((check) => check.id === "wsl2");
+    const git = report.checks.find((check) => check.id === "git");
+    const fetcher = report.checks.find((check) => check.id === "fetcher");
+
+    expect(wsl?.severity).toBe("hard");
+    expect(git?.severity).toBe("soft");
+    expect(fetcher?.severity).toBe("soft");
+    expect(git?.detail).toContain("after WSL2");
+  });
 });

@@ -97,6 +97,10 @@ async function scanDependencyItems(): Promise<PrereqItem[]> {
 
   const contract = await evaluateInstallContract();
   applyContract(items, contract.checks, patch, platform.isWindows);
+  const bridgeOk = contract.checks.find((check) => check.id === "desktop-bridge")?.status === "ok";
+  if (!bridgeOk) {
+    return items.filter((item) => item.id === "desktop-bridge");
+  }
   return items;
 }
 
@@ -201,7 +205,7 @@ function applyContract(
 ) {
   const toPrereqStatus = (status: InstallContractCheck["status"]): PrereqStatus => {
     if (status === "ok") return "found";
-    if (status === "fixable_auto") return "missing";
+    if (status === "fixable_auto" || status === "fixable_manual") return "missing";
     return "error";
   };
 

@@ -320,6 +320,40 @@ async function evaluateInstallContractInner(): Promise<InstallContractReport> {
       autoInstallId: "wsl-distro",
       manualCommand: "wsl --install -d Ubuntu",
     });
+
+    if (!isWsl2 || !distroLooksUbuntu) {
+      checks.push(
+        {
+          id: "git",
+          label: "Git (install shell)",
+          status: "fixable_manual",
+          severity: "soft",
+          domain: "guest",
+          detail: "Ronbot will check Git inside Ubuntu after WSL2 and the Ubuntu distro are ready.",
+        },
+        {
+          id: "fetcher",
+          label: "curl/wget (install shell)",
+          status: "fixable_manual",
+          severity: "soft",
+          domain: "guest",
+          detail: "Ronbot will check curl/wget inside Ubuntu after WSL2 and the Ubuntu distro are ready.",
+        },
+        {
+          id: "network",
+          label: "Installer connectivity",
+          status: "fixable_manual",
+          severity: "soft",
+          domain: "guest",
+          detail: "Ronbot will test installer connectivity after WSL2 and Ubuntu are ready.",
+        },
+      );
+
+      return {
+        checks,
+        hasHardBlockers: true,
+      };
+    }
   }
 
   // Guest/domain checks (where Hermes installer actually executes)
