@@ -174,20 +174,12 @@ async function evaluateInstallContractInner(): Promise<InstallContractReport> {
         detail: "Cannot verify install shell dependencies until the desktop bridge is available.",
       },
       {
-        id: "python-discoverability",
-        label: "Python discoverability",
+        id: "network",
+        label: "Installer connectivity",
         status: "fixable_manual",
         severity: "soft",
         domain: "guest",
-        detail: "Python preflight check unavailable until the desktop bridge is available.",
-      },
-      {
-        id: "network",
-        label: "Installer connectivity",
-        status: "blocked_unsupported",
-        severity: "hard",
-        domain: "guest",
-        detail: "Connectivity preflight requires the desktop bridge.",
+        detail: "Connectivity preflight unavailable until the desktop bridge is available.",
       },
       {
         id: "sudo",
@@ -276,11 +268,10 @@ async function evaluateInstallContractInner(): Promise<InstallContractReport> {
   const disk = await systemAPI.getDiskSpace().catch(() => ({ success: false } as const));
   if (disk.success && typeof disk.freeBytes === "number") {
     const free = disk.freeBytes;
-    const status =
-      free < MIN_DISK_HARD_BYTES ? "blocked_unsupported" : free < MIN_DISK_RECOMMENDED_BYTES ? "fixable_manual" : "ok";
+    const status = free < MIN_DISK_RECOMMENDED_BYTES ? "fixable_manual" : "ok";
     const detail =
       free < MIN_DISK_HARD_BYTES
-        ? `Low disk space: ${(free / 1024 ** 3).toFixed(2)} GB free (need >=1.5 GB).`
+        ? `Very low disk space: ${(free / 1024 ** 3).toFixed(2)} GB free. The installer may fail.`
         : free < MIN_DISK_RECOMMENDED_BYTES
           ? `Disk space is below 2 GB recommended (${(free / 1024 ** 3).toFixed(2)} GB free).`
           : `${(free / 1024 ** 3).toFixed(2)} GB free`;
@@ -288,7 +279,7 @@ async function evaluateInstallContractInner(): Promise<InstallContractReport> {
       id: "disk",
       label: "Disk space",
       status,
-      severity: free < MIN_DISK_HARD_BYTES ? "hard" : "soft",
+      severity: "soft",
       domain: "host",
       detail,
     });
@@ -332,11 +323,10 @@ async function evaluateInstallContractInner(): Promise<InstallContractReport> {
   }
 
   // Guest/domain checks (where Hermes installer actually executes)
-  const [guestGit, guestCurl, guestWget, guestPython] = await Promise.all([
+  const [guestGit, guestCurl, guestWget] = await Promise.all([
     checkGuestBinary("git"),
     checkGuestBinary("curl"),
     checkGuestBinary("wget"),
-    checkGuestBinary("python3"),
   ]);
 
   checks.push({
@@ -362,23 +352,12 @@ async function evaluateInstallContractInner(): Promise<InstallContractReport> {
     autoInstallId: guestCurl.installed ? undefined : "curl",
   });
 
-  checks.push({
-    id: "python-discoverability",
-    label: "Python discoverability",
-    status: guestPython.installed ? "ok" : "fixable_manual",
-    severity: "soft",
-    domain: "guest",
-    detail: guestPython.installed
-      ? guestPython.version ?? "python3 found"
-      : "Python not found pre-install. Hermes installer can self-provision via uv when other requirements pass.",
-  });
-
   const network = await checkNetworkReachability();
   checks.push({
     id: "network",
     label: "Installer connectivity",
     status: network.ok ? "ok" : "fixable_manual",
-    severity: "hard",
+    severity: "soft",
     domain: "guest",
     detail: network.detail,
   });

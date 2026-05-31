@@ -17,9 +17,10 @@ type Props = {
   cachedProbe: AgentProbe | null;
   onContinue: () => void;
   onConnectExisting: () => Promise<void>;
+  onRequestSudo: (reason: string) => Promise<string | null>;
 };
 
-export function PrereqsStep({ entryProbePending, cachedProbe, onContinue, onConnectExisting }: Props) {
+export function PrereqsStep({ entryProbePending, cachedProbe, onContinue, onConnectExisting, onRequestSudo }: Props) {
   const [items, setItems] = useState<PrereqItem[]>([]);
   const [scanning, setScanning] = useState(true);
   const [agentReady, setAgentReady] = useState(false);
@@ -53,7 +54,7 @@ export function PrereqsStep({ entryProbePending, cachedProbe, onContinue, onConn
 
   const installOne = async (id: string) => {
     setItems((prev) => prev.map((p) => (p.id === id ? { ...p, status: "installing" } : p)));
-    const patch = await installPrereqItem(id);
+    const patch = await installPrereqItem(id, onRequestSudo);
     setItems((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   };
 

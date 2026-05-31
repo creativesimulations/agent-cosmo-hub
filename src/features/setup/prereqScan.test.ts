@@ -40,9 +40,8 @@ const baseChecks = (): InstallContractCheck[] => [
   { id: "arch", label: "CPU architecture", status: "ok", severity: "hard", domain: "host", detail: "x64" },
   { id: "git", label: "Git", status: "ok", severity: "hard", domain: "guest", detail: "git" },
   { id: "fetcher", label: "Fetcher", status: "ok", severity: "hard", domain: "guest", detail: "curl" },
-  { id: "network", label: "Network", status: "ok", severity: "hard", domain: "guest", detail: "ok" },
-  { id: "disk", label: "Disk", status: "ok", severity: "hard", domain: "host", detail: "ok" },
-  { id: "python-discoverability", label: "Python", status: "ok", severity: "soft", domain: "guest", detail: "ok" },
+  { id: "network", label: "Network", status: "ok", severity: "soft", domain: "guest", detail: "ok" },
+  { id: "disk", label: "Disk", status: "ok", severity: "soft", domain: "host", detail: "ok" },
   { id: "sudo", label: "Sudo", status: "ok", severity: "soft", domain: "guest", detail: "ok" },
 ];
 
@@ -132,7 +131,7 @@ describe("runPrereqScan", () => {
     expect(result.agentReady).toBe(false);
   });
 
-  it("does not flag optional tools as missing when desktop bridge is unavailable", async () => {
+  it("omits old optional tool rows when desktop bridge is unavailable", async () => {
     vi.mocked(probeAgent).mockResolvedValue(emptyProbe({ reason: "no_dir" }));
     vi.mocked(evaluateInstallContract).mockResolvedValue({
       checks: [
@@ -153,8 +152,8 @@ describe("runPrereqScan", () => {
     const rg = result.items.find((item) => item.id === "ripgrep");
     const curl = result.items.find((item) => item.id === "curl");
 
-    expect(rg?.status).toBe("pending");
-    expect(curl?.status).toBe("pending");
+    expect(rg).toBeUndefined();
+    expect(curl).toBeUndefined();
     expect(systemAPI.checkRipgrep).not.toHaveBeenCalled();
     expect(systemAPI.checkCurl).not.toHaveBeenCalled();
   });

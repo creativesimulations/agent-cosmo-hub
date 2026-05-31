@@ -16,6 +16,10 @@ dist
 dist-ssr
 *.local
 
+# Packaged Electron builds are generated artifacts and exceed GitHub limits.
+electron-release/
+/git
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

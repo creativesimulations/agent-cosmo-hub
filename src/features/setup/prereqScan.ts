@@ -37,12 +37,9 @@ const BASE: PrereqItem[] = [
   { id: "wsl-distro", name: "WSL Ubuntu distro", description: "Windows only", tier: "required", status: "pending", windowsOnly: true, blocker: true },
   { id: "git", name: "Git", description: "Required by installer", tier: "required", status: "pending", blocker: true },
   { id: "fetcher", name: "curl/wget", description: "Required for installer fetch", tier: "required", status: "pending", blocker: true },
-  { id: "network", name: "Installer connectivity", description: "Checking network reachability…", tier: "required", status: "pending", blocker: true },
-  { id: "disk", name: "Disk space", description: "Checking free space…", tier: "required", status: "pending", blocker: true },
-  { id: "python-discoverability", name: "Python discoverability", description: "Advisory only", tier: "auto", status: "pending" },
+  { id: "network", name: "Installer connectivity", description: "Checking network reachability…", tier: "auto", status: "pending" },
+  { id: "disk", name: "Disk space", description: "Checking free space…", tier: "auto", status: "pending" },
   { id: "sudo", name: "Sudo capability", description: "Advisory only", tier: "auto", status: "pending" },
-  { id: "ripgrep", name: "ripgrep", description: "Recommended", tier: "recommended", status: "pending" },
-  { id: "curl", name: "curl", description: "Recommended", tier: "recommended", status: "pending" },
 ];
 
 export type PrereqScanResult = {
@@ -59,6 +56,8 @@ export type PrereqScanOptions = {
   /** Reuse probe from setup context to avoid duplicate shell round-trips */
   cachedProbe?: AgentProbe | null;
 };
+
+export type SudoPasswordRequester = (reason: string) => Promise<string | null>;
 
 export async function runPrereqScan(options?: PrereqScanOptions): Promise<PrereqScanResult> {
   const probe = options?.cachedProbe ?? (await probeAgent());
@@ -92,44 +91,12 @@ async function scanDependencyItems(): Promise<PrereqItem[]> {
 
   const platform = await systemAPI.getPlatform();
 
-  for (const id of ["desktop-bridge", "os", "arch", "wsl2", "wsl-distro", "git", "fetcher", "network", "disk", "python-discoverability", "sudo", "ripgrep", "curl"]) {
+  for (const id of ["desktop-bridge", "os", "arch", "wsl2", "wsl-distro", "git", "fetcher", "network", "disk", "sudo"]) {
     patch(id, { status: "checking" });
   }
 
   const contract = await evaluateInstallContract();
   applyContract(items, contract.checks, patch, platform.isWindows);
-
-  const bridgeOk = contract.checks.find((check) => check.id === "desktop-bridge")?.status === "ok";
-  if (!bridgeOk) {
-    patch("ripgrep", {
-      status: "pending",
-      description: "Optional — verification requires desktop bridge.",
-    });
-    patch("curl", {
-      status: "pending",
-      description: "Optional — verification requires desktop bridge.",
-    });
-    return items;
-  }
-
-  await Promise.all([
-    systemAPI.checkRipgrep().then((rg) =>
-      patch(
-        "ripgrep",
-        rg.installed
-          ? { status: "found", version: rg.version }
-          : { status: "missing", description: "Optional — install later from Skills" },
-      ),
-    ),
-    systemAPI.checkCurl().then((curl) =>
-      patch(
-        "curl",
-        curl.installed
-          ? { status: "found", version: curl.version }
-          : { status: "missing", description: "Optional — used for updates" },
-      ),
-    ),
-  ]);
   return items;
 }
 
@@ -139,7 +106,7 @@ export function requiredPrereqsMet(items: PrereqItem[]): boolean {
     .every((p) => p.status === "found" || p.status === "installed");
 }
 
-export async function installPrereqItem(id: string): Promise<Partial<PrereqItem>> {
+export async function installPrereqItem(id: string, requestSudo?: SudoPasswordRequester): Promise<Partial<PrereqItem>> {
   const platform = await systemAPI.getPlatform();
   switch (id) {
     case "wsl2": {
@@ -148,34 +115,34 @@ export async function installPrereqItem(id: string): Promise<Partial<PrereqItem>
         ? { status: "reboot_required", description: "Reboot required, then scan again." }
         : { status: "error", description: r.stderr || "WSL install failed" };
     }
-    case "python": {
-      if (platform.isLinux || platform.isWindows) {
-        const apt = await installAptWithCapability(["python3.11", "python3.11-venv", "python3-pip"]);
-        return apt;
-      }
-      const r = await systemAPI.installPython();
-      return r.success ? { status: "installed" } : { status: "error", description: r.stderr || "Failed" };
+    case "wsl-distro": {
+      const r = await systemAPI.installWSL();
+      return r.success
+        ? { status: "reboot_required", description: "Ubuntu setup may require a reboot or first-launch account setup." }
+        : { status: "error", description: r.stderr || "Ubuntu WSL setup failed" };
     }
     case "git": {
       if (platform.isLinux || platform.isWindows) {
-        return installAptWithCapability(["git"]);
+        return installAptWithCapability(["git"], requestSudo);
       }
       const r = await systemAPI.installGit();
       return r.success ? { status: "installed" } : { status: "error", description: r.stderr || "Failed" };
     }
+    case "python3-venv": {
+      if (platform.isLinux || platform.isWindows) {
+        return installAptWithCapability(["python3-venv"], requestSudo);
+      }
+      return {
+        status: "error",
+        description: "Automatic python3-venv recovery is only available on apt-based Linux/WSL systems.",
+      };
+    }
     case "fetcher":
     case "curl": {
       if (platform.isLinux || platform.isWindows) {
-        return installAptWithCapability(["curl"]);
+        return installAptWithCapability(["curl"], requestSudo);
       }
       const r = await systemAPI.installCurl();
-      return r.success ? { status: "installed" } : { status: "error", description: r.stderr || "Failed" };
-    }
-    case "ripgrep": {
-      if (platform.isLinux || platform.isWindows) {
-        return installAptWithCapability(["ripgrep"]);
-      }
-      const r = await systemAPI.installRipgrep();
       return r.success ? { status: "installed" } : { status: "error", description: r.stderr || "Failed" };
     }
     default:
@@ -183,7 +150,10 @@ export async function installPrereqItem(id: string): Promise<Partial<PrereqItem>
   }
 }
 
-async function installAptWithCapability(packages: string[]): Promise<Partial<PrereqItem>> {
+async function installAptWithCapability(
+  packages: string[],
+  requestSudo?: SudoPasswordRequester,
+): Promise<Partial<PrereqItem>> {
   const probe = await sudoAPI.probe();
   if (probe.kind === "passwordless") {
     const result = await sudoAPI.aptInstall(packages, "");
@@ -191,11 +161,29 @@ async function installAptWithCapability(packages: string[]): Promise<Partial<Pre
       ? { status: "installed", description: `Installed ${packages.join(", ")}` }
       : { status: "error", description: result.stderr || "apt install failed" };
   }
-  if (probe.kind === "needs-password" || probe.kind === "no-password-set") {
+  if (probe.kind === "needs-password" && requestSudo) {
+    const reason = `install ${packages.join(", ")} for Hermes setup`;
+    const password = await requestSudo(reason);
+    if (password === null) {
+      return { status: "error", description: "Cancelled before installing system packages." };
+    }
+    const result = await sudoAPI.aptInstall(packages, password);
+    return result.success
+      ? { status: "installed", description: `Installed ${packages.join(", ")}` }
+      : { status: "error", description: result.stderr || "apt install failed" };
+  }
+  if (probe.kind === "needs-password") {
     return {
       status: "error",
       description: `Needs elevated access. Run manually: sudo apt-get install -y ${packages.join(" ")}`,
       manualCommand: `sudo apt-get install -y ${packages.join(" ")}`,
+    };
+  }
+  if (probe.kind === "no-password-set") {
+    return {
+      status: "error",
+      description: "This Linux user does not appear to have a sudo password yet. Set one for the WSL/Linux account, then retry.",
+      manualCommand: "passwd",
     };
   }
   return {

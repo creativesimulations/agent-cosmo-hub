@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { AlertTriangle, Copy, Download, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
 import InstallPreflight from "@/components/setup/InstallPreflight";
 import { StreamingLogPanel } from "@/components/setup/StreamingLogPanel";
+import { installPrereqItem } from "@/features/setup/prereqScan";
 import type { InstallSource } from "@/features/setup/types";
 import type { InstallFailure } from "@/features/setup/installErrors";
 import { downloadTextFile, timestampedFilename } from "@/lib/diagnosticsExport";
@@ -19,6 +21,7 @@ type Props = {
   failure: InstallFailure | null;
   preflightReady: boolean;
   onPreflightReady: (ready: boolean) => void;
+  onRequestSudo: (reason: string) => Promise<string | null>;
   onInstall: () => void;
   onCancel: () => void;
 };
@@ -34,9 +37,26 @@ export function InstallStep({
   failure,
   preflightReady,
   onPreflightReady,
+  onRequestSudo,
   onInstall,
   onCancel,
 }: Props) {
+  const [autoFixing, setAutoFixing] = useState(false);
+  const [autoFixMessage, setAutoFixMessage] = useState<string | null>(null);
+
+  const runAutoFix = async (id: string) => {
+    setAutoFixing(true);
+    setAutoFixMessage(null);
+    try {
+      const result = await installPrereqItem(id, onRequestSudo);
+      setAutoFixMessage(result.description ?? (result.status === "installed" ? "Fix applied. Retry the install." : "Fix finished."));
+    } catch (e) {
+      setAutoFixMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAutoFixing(false);
+    }
+  };
+
   if (installing) {
     return (
       <div className="space-y-4">
@@ -56,12 +76,17 @@ export function InstallStep({
           ? "Official Hermes installer (curl | bash from Nous Research)."
           : `Local install from: ${localPath}`}
       </p>
-      {source === "local" && (
-        <label className="flex items-start gap-2 text-sm cursor-pointer">
-          <Checkbox checked={replacePersona} onCheckedChange={(v) => onReplacePersonaChange(v === true)} />
-          <span>Replace SOUL, PERSONALITY, and memory files with Ronbot defaults</span>
-        </label>
-      )}
+      <label className="glass-subtle rounded-lg border border-white/10 p-3 flex items-start gap-2 text-sm cursor-pointer">
+        <Checkbox checked={replacePersona} onCheckedChange={(v) => onReplacePersonaChange(v === true)} />
+        <span className="space-y-1">
+          <span className="block font-medium">Apply Ronbot personality and app guidance after install</span>
+          <span className="block text-xs text-muted-foreground">
+            {source === "bundled"
+              ? "Leave unchecked to keep Hermes exactly as the official installer creates it."
+              : "Leave unchecked to keep the selected Hermes folder's existing core files unchanged."}
+          </span>
+        </span>
+      </label>
       <InstallPreflight onReadyChange={onPreflightReady} />
       {failure && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 space-y-2 text-sm">
@@ -71,6 +96,18 @@ export function InstallStep({
           </div>
           <p className="text-muted-foreground">{failure.message}</p>
           {failure.hint && <p className="text-xs text-muted-foreground">{failure.hint}</p>}
+          {autoFixMessage && <p className="text-xs text-muted-foreground">{autoFixMessage}</p>}
+          {failure.autoInstallId && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void runAutoFix(failure.autoInstallId ?? "")}
+              disabled={autoFixing}
+            >
+              {autoFixing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Download className="w-3 h-3 mr-1" />}
+              Try to fix automatically
+            </Button>
+          )}
           {failure.manualCommand && (
             <Button
               size="sm"

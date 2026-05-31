@@ -1,6 +1,8 @@
 // Hermes v0.13.0 sync — May 2026 (Ronbot)
 export type InstallErrorCode =
   | "desktop_bridge"
+  | "git_missing"
+  | "fetcher_missing"
   | "privilege"
   | "network"
   | "package_repo"
@@ -17,11 +19,13 @@ export type InstallFailure = {
   title: string;
   message: string;
   manualCommand?: string;
+  autoInstallId?: string;
   hint?: string;
 };
 
-export function classifyInstallFailure(message: string, manualCommand?: string): InstallFailure {
-  const lower = message.toLowerCase();
+export function classifyInstallFailure(message: string, manualCommand?: string, output = ""): InstallFailure {
+  const evidence = [message, output].filter(Boolean).join("\n");
+  const lower = evidence.toLowerCase();
   if (lower.includes("desktop bridge")) {
     return {
       code: "desktop_bridge",
@@ -36,6 +40,7 @@ export function classifyInstallFailure(message: string, manualCommand?: string):
       title: "WSL2 is required",
       message,
       manualCommand,
+      autoInstallId: "wsl2",
       hint: "Install WSL2 and an Ubuntu distro, then retry.",
     };
   }
@@ -45,6 +50,47 @@ export function classifyInstallFailure(message: string, manualCommand?: string):
       title: "Ubuntu distro required in WSL",
       message,
       manualCommand,
+      autoInstallId: "wsl-distro",
+    };
+  }
+  if (
+    lower.includes("git: command not found") ||
+    lower.includes("git is not installed") ||
+    lower.includes("git missing") ||
+    lower.includes("unable to find git")
+  ) {
+    return {
+      code: "git_missing",
+      title: "Git is required",
+      message,
+      manualCommand: manualCommand ?? "sudo apt-get update && sudo apt-get install -y git",
+      autoInstallId: "git",
+      hint: "Ronbot can install Git automatically when sudo is available; otherwise install Git in the same shell Hermes uses.",
+    };
+  }
+  if (
+    lower.includes("curl: command not found") ||
+    lower.includes("wget: command not found") ||
+    lower.includes("curl or wget") ||
+    lower.includes("no_fetcher")
+  ) {
+    return {
+      code: "fetcher_missing",
+      title: "Installer download tool is missing",
+      message,
+      manualCommand: manualCommand ?? "sudo apt-get update && sudo apt-get install -y curl",
+      autoInstallId: "fetcher",
+      hint: "Ronbot needs curl or wget only to fetch the official Hermes installer.",
+    };
+  }
+  if (lower.includes("python3-venv") || lower.includes("ensurepip") || lower.includes("venv")) {
+    return {
+      code: "privilege",
+      title: "Python venv package needs admin access",
+      message,
+      manualCommand: manualCommand ?? "sudo apt-get update && sudo apt-get install -y python3-venv",
+      autoInstallId: "python3-venv",
+      hint: "This is an official installer fallback path. Ronbot can retry after installing the package when sudo works.",
     };
   }
   if (lower.includes("sudo") || lower.includes("missing packages")) {

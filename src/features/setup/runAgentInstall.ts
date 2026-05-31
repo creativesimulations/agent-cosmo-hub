@@ -30,18 +30,17 @@ async function collectAptPackages(source: InstallSource, log: InstallLogSink): P
   const append = (line: string) => log([line]);
   const packages: string[] = [];
 
+  if (source === "bundled") {
+    append("ℹ The official Hermes installer will manage Python, uv, Node, and other runtime dependencies.");
+    return packages;
+  }
+
   if (source === "local" && LOCAL_INSTALL_PIP_EXTRAS.includes("voice")) {
     append("Checking ffmpeg…");
     const ff = await systemAPI.checkFfmpeg();
     if (!ff.found) packages.push("ffmpeg");
     else append(`✓ ffmpeg (${ff.version ?? "ok"})`);
   }
-
-  append("Checking Python venv support…");
-  const venv = await systemAPI.checkPythonVenv();
-  const venvPkg = venv.packageName ?? "python3-venv";
-  if (venv.installed) append(`✓ ${venvPkg} ready`);
-  else append(`ℹ ${venvPkg} missing pre-install; Hermes installer can self-provision Python/venv via uv.`);
 
   return packages;
 }
@@ -263,6 +262,7 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
     const lines = [`✗ Installation failed (exit ${result.code ?? "?"})`, ...summarizeFailureOutput(result)];
     log(lines.length > 1 ? lines : [`✗ Installation failed (exit ${result.code ?? "?"})`, `--- details ---`, tailOutput(result, 20)]);
     const message = "Hermes installer exited with an error.";
+    const failureOutput = [result.stderr, result.stdout].filter(Boolean).join("\n");
     emit({
       ts: new Date().toISOString(),
       phase: "installer",
@@ -270,7 +270,7 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
       status: "error",
       message: `${message} Exit ${result.code ?? "?"}`,
     });
-    return { ok: false, message, failure: classifyInstallFailure(message), events };
+    return { ok: false, message, failure: classifyInstallFailure(message, undefined, failureOutput), events };
   }
 
   emit({

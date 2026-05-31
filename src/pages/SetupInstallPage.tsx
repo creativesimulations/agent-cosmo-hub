@@ -88,6 +88,7 @@ export default function SetupInstallPage() {
                   entryProbePending={setup.entryProbePending}
                   cachedProbe={setup.lastAgentProbe}
                   onContinue={() => setup.setWizardStep("install")}
+                  onRequestSudo={setup.requestSudo}
                   onConnectExisting={async () => {
                     const ok = await setup.finishConnect();
                     if (ok) navigate("/");
@@ -106,6 +107,7 @@ export default function SetupInstallPage() {
                   failure={setup.installFailure}
                   preflightReady={preflightReady}
                   onPreflightReady={setPreflightReady}
+                  onRequestSudo={setup.requestSudo}
                   onInstall={() => void setup.runInstall()}
                   onCancel={setup.cancelInstall}
                 />

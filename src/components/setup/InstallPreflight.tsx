@@ -58,7 +58,7 @@ export default function InstallPreflight({ onReadyChange }: Props) {
     ramTotal >= RAM_RECOMMENDED ? "green" :
     ramTotal >= RAM_HARD_MIN ? "yellow" : "red";
 
-  const ready = diskStatus !== "red" && ramStatus !== "red" && diskStatus !== "loading" && ramStatus !== "loading";
+  const ready = diskStatus !== "loading" && ramStatus !== "loading";
 
   useEffect(() => {
     onReadyChange(ready);
@@ -81,7 +81,7 @@ export default function InstallPreflight({ onReadyChange }: Props) {
           }
           message={
             diskStatus === "red"
-              ? `Need at least ${fmtGB(DISK_HARD_MIN)} free — installation blocked.`
+              ? `Below ${fmtGB(DISK_HARD_MIN)} free — the official installer may fail.`
               : diskStatus === "yellow"
               ? `Below recommended ${fmtGB(DISK_RECOMMENDED)} — install may run tight.`
               : undefined
@@ -99,7 +99,7 @@ export default function InstallPreflight({ onReadyChange }: Props) {
           }
           message={
             ramStatus === "red"
-              ? `Need at least ${fmtGB(RAM_HARD_MIN)} total RAM — installation blocked.`
+              ? `Below ${fmtGB(RAM_HARD_MIN)} total RAM — install can continue, but the agent may struggle.`
               : ramStatus === "yellow"
               ? `Below recommended ${fmtGB(RAM_RECOMMENDED)} — agent may run slowly.`
               : undefined

@@ -58,6 +58,7 @@ type SetupContextValue = {
   guardResetAndReinstall: (onLog: (lines: string[]) => void) => Promise<boolean>;
 
   sudoPrompt: { open: boolean; reason: string };
+  requestSudo: (reason: string) => Promise<string | null>;
   closeSudoPrompt: () => void;
   submitSudoPassword: (password: string) => void;
   sudoPasswordless: () => void;
@@ -98,7 +99,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
   const resetWizard = useCallback((source: InstallSource, path = "") => {
     setInstallSource(source);
     setLocalPath(path);
-    setReplacePersona(source !== "local");
+    setReplacePersona(false);
     setLogLines([]);
     setInstallFailure(null);
     setInstallProgress(0);
@@ -254,7 +255,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       setInstallProgress((p) => Math.min(p + 2, 90));
     }, 800);
 
-    const seedPersona = installSource === "bundled" || replacePersona;
+    const seedPersona = replacePersona;
     const result = await runAgentInstall({
       source: installSource,
       localPath: localPath || undefined,
@@ -385,6 +386,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       guardRename,
       guardResetAndReinstall,
       sudoPrompt,
+      requestSudo,
       closeSudoPrompt,
       submitSudoPassword,
       sudoPasswordless,
@@ -417,6 +419,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       guardRename,
       guardResetAndReinstall,
       sudoPrompt,
+      requestSudo,
       closeSudoPrompt,
       submitSudoPassword,
       sudoPasswordless,
