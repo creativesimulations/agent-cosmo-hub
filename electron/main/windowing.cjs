@@ -141,6 +141,9 @@ function createWindowing(app, BrowserWindow, Tray, Menu, nativeImage, IPC, state
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
+        // The preload is a CommonJS bridge that requires local IPC modules.
+        // Keep it unsandboxed so Electron exposes the full preload Node API.
+        sandbox: false,
         preload: path.join(__dirname, '..', 'preload.cjs'),
       },
     });

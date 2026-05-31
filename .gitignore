@@ -18,6 +18,7 @@ dist-ssr
 
 # Packaged Electron builds are generated artifacts and exceed GitHub limits.
 electron-release/
+electron-release-fixed/
 /git
 
 # Editor directories and files
