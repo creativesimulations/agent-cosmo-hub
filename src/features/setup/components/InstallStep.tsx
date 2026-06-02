@@ -110,7 +110,7 @@ export function InstallStep({
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         {source === "bundled"
-          ? "Official Hermes installer (curl | bash from Nous Research)."
+          ? "Official Hermes installer from Nous Research. Configure API keys and setup after install."
           : `Local install from: ${localPath}`}
       </p>
       <label className="glass-subtle rounded-lg border border-white/10 p-3 flex items-start gap-2 text-sm cursor-pointer">
