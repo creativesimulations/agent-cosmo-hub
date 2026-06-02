@@ -254,6 +254,13 @@ function registerCommandHandlers(ipcMain, IPC) {
       return { success: false, error: err.message };
     }
   });
+
+  return {
+    terminateAllStreams() {
+      for (const child of liveStreams.values()) terminateChildTree(child);
+      liveStreams.clear();
+    },
+  };
 }
 
 module.exports = {

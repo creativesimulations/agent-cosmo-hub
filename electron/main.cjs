@@ -9,15 +9,23 @@ const { registerCommandHandlers } = require(path.join(__dirname, 'main', 'comman
 const { registerFsHandlers } = require(path.join(__dirname, 'main', 'fs.cjs'));
 const { registerSecretsHandlers } = require(path.join(__dirname, 'main', 'secrets.cjs'));
 const { registerControlHandlers } = require(path.join(__dirname, 'main', 'control.cjs'));
+const { createProcessCleanup } = require(path.join(__dirname, 'main', 'processCleanup.cjs'));
 
 const windowing = createWindowing(app, BrowserWindow, Tray, Menu, nativeImage, IPC, state);
 
-registerCommandHandlers(ipcMain, IPC);
+const commandRuntime = registerCommandHandlers(ipcMain, IPC);
 registerFsHandlers(ipcMain, BrowserWindow, dialog, IPC);
 registerSecretsHandlers(ipcMain, safeStorage, IPC);
 registerControlHandlers(ipcMain, app, IPC, state, windowing.rebuildTrayMenu);
+const processCleanup = createProcessCleanup(commandRuntime);
 
-app.on('before-quit', () => { state.isQuittingForReal = true; });
+app.on('before-quit', (event) => {
+  state.isQuittingForReal = true;
+  if (!processCleanup.shouldBlockQuit()) return;
+  event.preventDefault();
+  if (processCleanup.isQuitCleanupStarted()) return;
+  processCleanup.cleanupOnQuit().finally(() => app.quit());
+});
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
@@ -28,7 +36,10 @@ app.on('second-instance', () => {
   windowing.showMainWindow();
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await processCleanup.cleanupOnStartup().catch((error) => {
+    console.warn('[cleanup] startup cleanup failed:', error?.message || error);
+  });
   if (process.platform !== 'darwin') {
     try { Menu.setApplicationMenu(null); } catch { /* best effort */ }
   }

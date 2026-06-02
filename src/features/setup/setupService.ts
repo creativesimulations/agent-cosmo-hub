@@ -117,6 +117,19 @@ export async function finalizeAfterInstall(
   }
   append("✓ hermes launcher resolved to a supported path.");
 
+  append("Starting Hermes gateway…");
+  const gateway = await systemAPI.restartAgent().catch((e) => ({
+    success: false,
+    error: e instanceof Error ? e.message : String(e),
+  }));
+  if (!gateway.success) {
+    return {
+      ok: false,
+      message: `Install completed but Hermes gateway could not be started: ${gateway.error ?? "unknown error"}`,
+    };
+  }
+  append("✓ Hermes gateway started.");
+
   append("Running hermes doctor and startup health checks…");
   const health = await systemAPI.bootstrapStartupHealth().catch(() => null);
   if (!health || !health.success) {
@@ -130,6 +143,16 @@ export async function finalizeAfterInstall(
   return { ok: true };
 }
 
+export function isSupportedHermesLauncherPath(path: string): boolean {
+  return (
+    path.includes("/.local/bin/hermes") ||
+    path.includes("/venv/bin/hermes") ||
+    path.includes("/.hermes/bin/hermes") ||
+    path.includes("/.hermes/venv/bin/hermes") ||
+    path.includes("/usr/local/bin/hermes")
+  );
+}
+
 async function checkHermesLauncherPath(): Promise<{ ok: true } | { ok: false; message: string }> {
   const platform = await systemAPI.getPlatform();
   const probeCmd = 'command -v hermes || true';
@@ -141,13 +164,7 @@ async function checkHermesLauncherPath(): Promise<{ ok: true } | { ok: false; me
   if (!path) {
     return { ok: false, message: "Install verification failed: `hermes` is not on PATH in the runtime shell." };
   }
-  const expectedPath =
-    path.includes("/.local/bin/hermes") ||
-    path.includes("/venv/bin/hermes") ||
-    path.includes("/.hermes/bin/hermes") ||
-    path.includes("/.hermes/venv/bin/hermes") ||
-    path.includes("/usr/local/bin/hermes");
-  if (!expectedPath) {
+  if (!isSupportedHermesLauncherPath(path)) {
     return {
       ok: false,
       message: `Install verification failed: unexpected hermes launcher path (${path}).`,

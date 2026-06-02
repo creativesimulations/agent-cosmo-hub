@@ -53,20 +53,22 @@ export const buildHermesShellCommand = async (script: string): Promise<string> =
   if (script.length <= INLINE_SCRIPT_LIMIT) {
     const b64 = encodeScript(script);
     const decodeCmd = `echo ${b64} | base64 -d | bash`;
-    return platform.isWindows ? `wsl bash -lc "${decodeCmd}"` : `bash -lc "${decodeCmd}"`;
+    const markedDecodeCmd = `export RONBOT_MANAGED_PROCESS=1; ${decodeCmd}`;
+    return platform.isWindows ? `wsl bash -lc "${markedDecodeCmd}"` : `bash -lc "${markedDecodeCmd}"`;
   }
 
   const staged = await stageScript(script, "hermes");
   if (!staged) {
     const b64 = encodeScript(script);
     const decodeCmd = `echo ${b64} | base64 -d | bash`;
-    return platform.isWindows ? `wsl bash -lc "${decodeCmd}"` : `bash -lc "${decodeCmd}"`;
+    const markedDecodeCmd = `export RONBOT_MANAGED_PROCESS=1; ${decodeCmd}`;
+    return platform.isWindows ? `wsl bash -lc "${markedDecodeCmd}"` : `bash -lc "${markedDecodeCmd}"`;
   }
 
-  const exec = `bash ${staged.path}; __rc=$?; ${staged.cleanup}; exit $__rc`;
+  const exec = `export RONBOT_MANAGED_PROCESS=1; bash ${staged.path}; __rc=$?; ${staged.cleanup}; exit $__rc`;
   if (platform.isWindows) {
     const execB64 = encodeScript(exec);
-    return `wsl bash -lc "echo ${execB64} | base64 -d | bash"`;
+    return `wsl bash -lc "export RONBOT_MANAGED_PROCESS=1; echo ${execB64} | base64 -d | bash"`;
   }
   return `bash -lc '${exec}'`;
 };
