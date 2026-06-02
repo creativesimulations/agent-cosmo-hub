@@ -558,8 +558,8 @@ export const hermesAPI = {
   /** Install the agent using the official install script.
    *  On Windows we always run inside WSL because hermes-agent is not published
    *  to PyPI and requires the install script (which expects a POSIX shell). */
-  async install(extras?: string[], onOutput?: CommandOutputHandler): Promise<CommandResult> {
-    return runOfficialHermesInstall(extras, onOutput, finalizeInstallVerification);
+  async install(extras?: string[], onOutput?: CommandOutputHandler, onStreamId?: (id: string) => void): Promise<CommandResult> {
+    return runOfficialHermesInstall(extras, onOutput, finalizeInstallVerification, onStreamId);
   },
 
   /** Install from a local folder the user already has on disk
@@ -571,6 +571,7 @@ export const hermesAPI = {
     folderPath: string,
     extras?: string[],
     onOutput?: CommandOutputHandler,
+    onStreamId?: (id: string) => void,
   ): Promise<CommandResult> {
     const platform = await coreAPI.getPlatform();
     let posixPath = folderPath;
@@ -586,7 +587,7 @@ export const hermesAPI = {
       }
       posixPath = mounted;
     }
-    return runLocalFolderHermesInstall(posixPath, extras, onOutput, finalizeInstallVerification);
+    return runLocalFolderHermesInstall(posixPath, extras, onOutput, finalizeInstallVerification, onStreamId);
   },
 
   /** Run hermes doctor to verify installation */

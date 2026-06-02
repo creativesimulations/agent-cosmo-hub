@@ -20,6 +20,7 @@ export type RunInstallParams = {
   log: InstallLogSink;
   requestSudo: SudoRequester;
   isAborted: () => boolean;
+  onStreamId?: (id: string) => void;
 };
 
 export type RunInstallResult =
@@ -127,19 +128,21 @@ function runHermesInstaller(
   source: InstallSource,
   localPath: string | undefined,
   onStream: (event: StreamEvent) => void,
+  onStreamId?: (id: string) => void,
 ): Promise<CommandResult> {
   if (source === "local" && localPath) {
     return systemAPI.installHermesFromLocalFolder(
       localPath,
       [...LOCAL_INSTALL_PIP_EXTRAS],
       onStream,
+      onStreamId,
     );
   }
-  return systemAPI.installHermes(undefined, onStream);
+  return systemAPI.installHermes(undefined, onStream, onStreamId);
 }
 
 export async function runAgentInstall(params: RunInstallParams): Promise<RunInstallResult> {
-  const { source, localPath, seedPersona, agentName, log, requestSudo, isAborted } = params;
+  const { source, localPath, seedPersona, agentName, log, requestSudo, isAborted, onStreamId } = params;
   const events: InstallEvent[] = [];
   const emit = (event: InstallEvent) => {
     events.push(event);
@@ -254,7 +257,7 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
     status: "info",
     message: source === "bundled" ? "Running official installer" : "Running local-folder install",
   });
-  const result = await runHermesInstaller(source, localPath, parse);
+  const result = await runHermesInstaller(source, localPath, parse, onStreamId);
   flush();
   if (isAborted()) return { ok: false, message: "Cancelled", cancelled: true };
 

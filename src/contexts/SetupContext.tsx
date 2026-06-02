@@ -33,6 +33,7 @@ type SetupContextValue = {
   replacePersona: boolean;
   setReplacePersona: (v: boolean) => void;
   installing: boolean;
+  installCancelling: boolean;
   installSucceeded: boolean;
   installProgress: number;
   logLines: string[];
@@ -75,6 +76,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
   const [localPath, setLocalPath] = useState("");
   const [replacePersona, setReplacePersona] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [installCancelling, setInstallCancelling] = useState(false);
   const [installSucceeded, setInstallSucceeded] = useState(false);
   const [installProgress, setInstallProgress] = useState(0);
   const [logLines, setLogLines] = useState<string[]>([]);
@@ -88,6 +90,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
   const [pathPickerOpen, setPathPickerOpen] = useState(false);
 
   const installGenRef = useRef(0);
+  const activeInstallStreamIdRef = useRef<string | null>(null);
   const probeGenRef = useRef(0);
   const sudoResolverRef = useRef<((password: string | null) => void) | null>(null);
   const [sudoPrompt, setSudoPrompt] = useState({ open: false, reason: "" });
@@ -103,6 +106,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
     setLogLines([]);
     setInstallFailure(null);
     setInstallProgress(0);
+    setInstallCancelling(false);
     setInstallSucceeded(false);
     setWizardStep("prereqs");
     setPhase("wizard");
@@ -245,10 +249,12 @@ export function SetupProvider({ children }: { children: ReactNode }) {
     const gen = ++installGenRef.current;
     const installLogBuffer: string[] = [];
     setInstalling(true);
+    setInstallCancelling(false);
     setInstallSucceeded(false);
     setInstallProgress(5);
     setLogLines([]);
     setInstallFailure(null);
+    activeInstallStreamIdRef.current = null;
 
     const progressTimer = window.setInterval(() => {
       if (installGenRef.current !== gen) return;
@@ -269,12 +275,17 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       },
       requestSudo,
       isAborted: () => installGenRef.current !== gen,
+      onStreamId: (id) => {
+        if (installGenRef.current === gen) activeInstallStreamIdRef.current = id;
+      },
     });
 
     window.clearInterval(progressTimer);
     if (installGenRef.current !== gen) return;
+    activeInstallStreamIdRef.current = null;
 
     setInstalling(false);
+    setInstallCancelling(false);
     if (result.ok) {
       setInstallProgress(100);
       invalidateAgentProbeCache();
@@ -305,12 +316,29 @@ export function SetupProvider({ children }: { children: ReactNode }) {
   }, [installSource, localPath, replacePersona, appendLog, requestSudo, refreshConnection]);
 
   const cancelInstall = useCallback(() => {
+    if (installCancelling) return;
+    const streamId = activeInstallStreamIdRef.current;
+    appendLog(["Cancelling installation..."]);
+    setInstallCancelling(true);
     installGenRef.current += 1;
     closeSudoPrompt();
-    void systemAPI.killStream();
-    setInstalling(false);
-    appendLog(["✗ Installation cancelled."]);
-  }, [closeSudoPrompt, appendLog]);
+    activeInstallStreamIdRef.current = null;
+    void (async () => {
+      if (streamId) {
+        const killed = await systemAPI.killStream(streamId);
+        appendLog([
+          killed.success
+            ? "✓ Installer process was terminated."
+            : `✗ Installer process could not be terminated: ${killed.error ?? "unknown error"}`,
+        ]);
+      } else {
+        appendLog(["✗ No active installer process id was captured; close Ronbot if the external installer keeps running."]);
+      }
+      setInstalling(false);
+      setInstallCancelling(false);
+      appendLog(["✗ Installation cancelled."]);
+    })();
+  }, [installCancelling, closeSudoPrompt, appendLog]);
 
   const guardConnect = useCallback(() => finishConnect(), [finishConnect]);
 
@@ -347,12 +375,12 @@ export function SetupProvider({ children }: { children: ReactNode }) {
   );
 
   const blocking = useMemo<SetupBlockingState>(() => {
-    if (installing) return { active: true, message: "Installing agent…" };
+    if (installing) return { active: true, message: installCancelling ? "Cancelling install…" : "Installing agent…", blocksInteraction: false };
     if (pickingFolder) return { active: true, message: "Choose a folder…" };
     if (connecting) return { active: true, message: "Connecting to agent…" };
     if (entryProbePending) return { active: true, message: "Checking for existing install…" };
     return { active: false, message: "" };
-  }, [installing, pickingFolder, connecting, entryProbePending]);
+  }, [installing, installCancelling, pickingFolder, connecting, entryProbePending]);
 
   const value = useMemo<SetupContextValue>(
     () => ({
@@ -363,6 +391,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       replacePersona,
       setReplacePersona,
       installing,
+      installCancelling,
       installSucceeded,
       installProgress,
       logLines,
@@ -398,6 +427,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       localPath,
       replacePersona,
       installing,
+      installCancelling,
       installSucceeded,
       installProgress,
       logLines,

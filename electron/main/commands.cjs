@@ -100,6 +100,20 @@ function sanitizeWslOutput(text) {
 function registerCommandHandlers(ipcMain, IPC) {
   const liveStreams = new Map();
 
+  function terminateChildTree(child) {
+    if (!child || child.killed) return;
+    if (process.platform === 'win32' && child.pid) {
+      exec(`taskkill /pid ${child.pid} /T /F`, { windowsHide: true }, () => {
+        try { if (!child.killed) child.kill('SIGKILL'); } catch { /* best effort */ }
+      });
+      return;
+    }
+    try { child.kill('SIGTERM'); } catch { /* best effort */ }
+    setTimeout(() => {
+      try { if (!child.killed) child.kill('SIGKILL'); } catch { /* best effort */ }
+    }, 2000);
+  }
+
   ipcMain.handle(IPC.RUN_COMMAND, async (_event, cmd, options = {}) => {
     return new Promise((resolve) => {
       const isWslMgmt = isWslManagementCommand(cmd);
@@ -166,12 +180,7 @@ function registerCommandHandlers(ipcMain, IPC) {
             type: 'stderr',
             data: `[process] Command timed out after ${timeoutMs}ms\n`,
           });
-          try { child.kill('SIGTERM'); } catch { /* best effort */ }
-          setTimeout(() => {
-            if (!child.killed) {
-              try { child.kill('SIGKILL'); } catch { /* best effort */ }
-            }
-          }, 2000);
+          terminateChildTree(child);
         }, timeoutMs)
         : null;
 
@@ -239,8 +248,7 @@ function registerCommandHandlers(ipcMain, IPC) {
     const child = liveStreams.get(streamId);
     if (!child) return { success: false, error: 'stream not found' };
     try {
-      child.kill('SIGTERM');
-      setTimeout(() => { try { if (!child.killed) child.kill('SIGKILL'); } catch { /* */ } }, 1500);
+      terminateChildTree(child);
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };

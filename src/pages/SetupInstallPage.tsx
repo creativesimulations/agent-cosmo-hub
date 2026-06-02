@@ -102,6 +102,7 @@ export default function SetupInstallPage() {
                   replacePersona={setup.replacePersona}
                   onReplacePersonaChange={setup.setReplacePersona}
                   installing={setup.installing}
+                  installCancelling={setup.installCancelling}
                   progress={setup.installProgress}
                   logLines={setup.logLines}
                   failure={setup.installFailure}

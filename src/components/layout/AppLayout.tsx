@@ -10,11 +10,12 @@ import { cn } from "@/lib/utils";
 
 const AppLayout = () => {
   const { sudoPrompt, closeSudoPrompt, submitSudoPassword, sudoPasswordless, blocking } = useSetup();
+  const blocksInteraction = blocking.active && blocking.blocksInteraction !== false;
 
   return (
     <SudoPromptProvider>
       <div className="relative flex min-h-screen gradient-bg">
-        <div className={cn("flex min-h-screen flex-1 w-full", blocking.active && "pointer-events-none")}>
+        <div className={cn("flex min-h-screen flex-1 w-full", blocksInteraction && "pointer-events-none")}>
           <AppSidebar />
           <main className="flex-1 min-w-0">
             <Outlet />

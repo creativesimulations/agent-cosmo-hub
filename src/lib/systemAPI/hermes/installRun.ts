@@ -17,10 +17,11 @@ export async function runOfficialHermesInstall(
   _extras: string[] | undefined,
   onOutput: CommandOutputHandler | undefined,
   finalize: FinalizeInstall,
+  onStreamId?: (id: string) => void,
 ): Promise<CommandResult> {
   void _extras;
   const script = buildOfficialHermesInstallScript();
-  const baseResult = await runHermesShell(script, { timeout: 600_000 }, onOutput);
+  const baseResult = await runHermesShell(script, { timeout: 600_000, onStreamId }, onOutput);
   if (!baseResult.success) return baseResult;
   await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15_000 }, onOutput).catch(() => undefined);
   return finalize(baseResult, onOutput);
@@ -32,6 +33,7 @@ export async function runLocalFolderHermesInstall(
   extras: string[] | undefined,
   onOutput: CommandOutputHandler | undefined,
   finalize: FinalizeInstall,
+  onStreamId?: (id: string) => void,
 ): Promise<CommandResult> {
   const wantsExtras = !!(extras && extras.length > 0);
   const extrasFlag = wantsExtras ? `[${extras!.join(',')}]` : '';
@@ -77,7 +79,7 @@ export async function runLocalFolderHermesInstall(
     'echo "[local-install] done."',
   ].join('\n');
 
-  const result = await runHermesShell(script, { timeout: 600_000 }, onOutput);
+  const result = await runHermesShell(script, { timeout: 600_000, onStreamId }, onOutput);
   if (!result.success) return result;
   await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15_000 }, onOutput).catch(() => undefined);
   return finalize(result, onOutput);

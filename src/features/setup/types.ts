@@ -32,4 +32,5 @@ export type StreamEvent = { type: string; data?: string; code?: number };
 export type SetupBlockingState = {
   active: boolean;
   message: string;
+  blocksInteraction?: boolean;
 };

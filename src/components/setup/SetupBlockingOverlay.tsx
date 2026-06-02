@@ -8,6 +8,7 @@ type Props = {
 
 export default function SetupBlockingOverlay({ blocking }: Props) {
   if (!blocking.active) return null;
+  if (blocking.blocksInteraction === false) return null;
 
   return (
     <div

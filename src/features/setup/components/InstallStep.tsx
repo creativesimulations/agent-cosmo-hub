@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Copy, Download, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -16,6 +16,7 @@ type Props = {
   replacePersona: boolean;
   onReplacePersonaChange: (v: boolean) => void;
   installing: boolean;
+  installCancelling: boolean;
   progress: number;
   logLines: string[];
   failure: InstallFailure | null;
@@ -32,6 +33,7 @@ export function InstallStep({
   replacePersona,
   onReplacePersonaChange,
   installing,
+  installCancelling,
   progress,
   logLines,
   failure,
@@ -43,6 +45,13 @@ export function InstallStep({
 }: Props) {
   const [autoFixing, setAutoFixing] = useState(false);
   const [autoFixMessage, setAutoFixMessage] = useState<string | null>(null);
+  const logScrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = logScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [logLines]);
 
   const runAutoFix = async (id: string) => {
     setAutoFixing(true);
@@ -60,11 +69,33 @@ export function InstallStep({
   if (installing) {
     return (
       <div className="space-y-4">
-        <Button variant="ghost" size="sm" className="text-destructive" onClick={onCancel}>
-          <XCircle className="w-4 h-4 mr-1" /> Cancel installation
-        </Button>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">Installing Hermes</p>
+            <p className="text-xs text-muted-foreground">Live installer output stays visible while buttons are disabled.</p>
+          </div>
+          <Button variant="ghost" size="sm" className="text-destructive" onClick={onCancel} disabled={installCancelling}>
+            {installCancelling ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <XCircle className="w-4 h-4 mr-1" />}
+            {installCancelling ? "Cancelling..." : "Cancel installation"}
+          </Button>
+        </div>
         <Progress value={progress} className="h-2" />
-        <StreamingLogPanel lines={logLines} variant="install" />
+        <StreamingLogPanel
+          lines={logLines.length > 0 ? logLines : ["Waiting for installer output..."]}
+          variant="install"
+          scrollRef={logScrollRef}
+          className="max-h-72 rounded-lg border border-white/10 bg-background/40 p-3"
+        />
+        {logLines.length > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => downloadTextFile(logLines.join("\n"), timestampedFilename("ronbot-install-log"))}
+          >
+            <Download className="w-4 h-4 mr-1" />
+            Export install log
+          </Button>
+        )}
       </div>
     );
   }
