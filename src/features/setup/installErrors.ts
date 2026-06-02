@@ -83,6 +83,22 @@ export function classifyInstallFailure(message: string, manualCommand?: string, 
       hint: "Ronbot needs curl or wget only to fetch the official Hermes installer.",
     };
   }
+  if (
+    lower.includes("build-essential") ||
+    lower.includes("python3-dev") ||
+    lower.includes("libffi-dev") ||
+    lower.includes("some build tools may be needed") ||
+    lower.includes("sudo is needed only to install build tools")
+  ) {
+    return {
+      code: "privilege",
+      title: "Build tools need admin access",
+      message,
+      manualCommand: manualCommand ?? "sudo apt-get update && sudo apt-get install -y build-essential python3-dev libffi-dev",
+      autoInstallId: "build-tools",
+      hint: "The official installer reached dependency installation and needs native build packages. Ronbot can install them, then continue automatically.",
+    };
+  }
   if (lower.includes("python3-venv") || lower.includes("ensurepip") || lower.includes("venv")) {
     return {
       code: "privilege",

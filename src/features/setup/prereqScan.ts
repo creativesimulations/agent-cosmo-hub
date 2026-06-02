@@ -141,6 +141,15 @@ export async function installPrereqItem(id: string, requestSudo?: SudoPasswordRe
         description: "Automatic python3-venv recovery is only available on apt-based Linux/WSL systems.",
       };
     }
+    case "build-tools": {
+      if (platform.isLinux || platform.isWindows) {
+        return installAptWithCapability(["build-essential", "python3-dev", "libffi-dev"], requestSudo);
+      }
+      return {
+        status: "error",
+        description: "Automatic build-tools recovery is only available on apt-based Linux/WSL systems.",
+      };
+    }
     case "fetcher":
     case "curl": {
       if (platform.isLinux || platform.isWindows) {

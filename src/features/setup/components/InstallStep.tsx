@@ -58,7 +58,13 @@ export function InstallStep({
     setAutoFixMessage(null);
     try {
       const result = await installPrereqItem(id, onRequestSudo);
-      setAutoFixMessage(result.description ?? (result.status === "installed" ? "Fix applied. Retry the install." : "Fix finished."));
+      const installed = result.status === "installed";
+      setAutoFixMessage(result.description ?? (installed ? "Fix applied. Continuing installation..." : "Fix finished."));
+      if (installed) {
+        setAutoFixing(false);
+        onInstall();
+        return;
+      }
     } catch (e) {
       setAutoFixMessage(e instanceof Error ? e.message : String(e));
     } finally {
