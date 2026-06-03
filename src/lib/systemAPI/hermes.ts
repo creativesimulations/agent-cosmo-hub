@@ -80,6 +80,8 @@ import {
   isEchoLine,
   stripAnsi,
 } from './hermes/chatOutput';
+import { detectAgentPrompt, promptDetectionSignature } from '../chat/agentPromptDetection';
+import { getAgentPromptHandler } from '../agentPromptBridge';
 import { parseSubAgentLog } from './hermes/subAgentLog';
 import { tailAgentLog as runTailAgentLog } from './hermes/tailAgentLog';
 import {
@@ -971,6 +973,8 @@ export const hermesAPI = {
     let activeStreamId: string | null = null;
     let promptBuffer = '';
     let answeringPrompt = false;
+    let answeringAgentPrompt = false;
+    let lastAgentPromptSignature = '';
     const wrappedOnStreamId = (id: string) => {
       activeStreamId = id;
       onStreamId?.(id);
@@ -982,7 +986,10 @@ export const hermesAPI = {
       if (!text) return;
       promptBuffer = (promptBuffer + text).slice(-8000);
       if (answeringPrompt) return;
-      if (!matchesApprovalPrompt(promptBuffer)) return;
+      if (!matchesApprovalPrompt(promptBuffer)) {
+        detectInteractiveAgentPrompt(chunk);
+        return;
+      }
 
       // Pull the 20 lines preceding the prompt as context — this is what
       // gets shown to the user as "What" in the approval dialog so they
@@ -1017,6 +1024,39 @@ export const hermesAPI = {
       void handler({ action, target }).then((choice) => {
         void coreAPI.writeStreamStdin(sid, choiceToStdin(choice)).catch(() => { /* */ });
         answeringPrompt = false;
+      });
+    };
+
+    const detectInteractiveAgentPrompt = (chunk: Parameters<CommandOutputHandler>[0]) => {
+      if (chunk.type !== 'stdout' && chunk.type !== 'stderr') return;
+      if (answeringPrompt || answeringAgentPrompt) return;
+      const detected = detectAgentPrompt(promptBuffer);
+      if (!detected) return;
+
+      const signature = promptDetectionSignature(detected);
+      if (signature === lastAgentPromptSignature) return;
+      lastAgentPromptSignature = signature;
+
+      const handler = getAgentPromptHandler();
+      const sid = activeStreamId;
+      if (!handler || !sid) {
+        agentLogs.push({
+          source: 'chat',
+          level: 'warn',
+          summary: '[agent-prompt] setup prompt detected but no UI handler was available',
+          detail: detected.context,
+        });
+        return;
+      }
+
+      answeringAgentPrompt = true;
+      promptBuffer = '';
+      void handler({ ...detected, source: 'chat' }).then((answer) => {
+        if (answer && activeStreamId === sid) {
+          void coreAPI.writeStreamStdin(sid, `${answer}\n`).catch(() => { /* */ });
+        }
+      }).finally(() => {
+        answeringAgentPrompt = false;
       });
     };
 

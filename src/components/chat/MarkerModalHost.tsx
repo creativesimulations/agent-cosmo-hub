@@ -45,6 +45,10 @@ const MarkerModalHost = () => {
       return;
     }
     const payload = active.payload.trim();
+    if (active.display === "terminal") {
+      setQrSrc(null);
+      return;
+    }
     if (isDirectImagePayload(payload)) {
       setQrSrc(payload.startsWith("data:") ? payload : payload);
       return;
@@ -83,14 +87,18 @@ const MarkerModalHost = () => {
           </DialogHeader>
           {active?.kind === "qr" && (
             <div className="flex flex-col items-center gap-3 py-2">
-              {qrSrc ? (
+              {active.display === "terminal" ? (
+                <pre className="max-w-full overflow-auto rounded-lg bg-white p-3 font-mono text-[9px] leading-none text-black">
+                  {active.payload}
+                </pre>
+              ) : qrSrc ? (
                 <div className="bg-white p-3 rounded-lg">
                   <img src={qrSrc} alt="QR code from agent" className="w-52 h-52 object-contain" />
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">Generating QR…</p>
               )}
-              {!isDirectImagePayload(active.payload) && (
+              {active.display !== "terminal" && !isDirectImagePayload(active.payload) && (
                 <p className="text-[10px] text-muted-foreground font-mono break-all max-h-20 overflow-y-auto">
                   {active.payload}
                 </p>

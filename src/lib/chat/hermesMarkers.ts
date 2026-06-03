@@ -1,7 +1,7 @@
 // Hermes v0.13.0 sync — May 2026 (Ronbot)
 
 export type HermesMarker =
-  | { kind: "qr"; payload: string }
+  | { kind: "qr"; payload: string; display?: "image" | "terminal" | "payload" }
   | { kind: "password"; purpose: string }
   | { kind: "braid"; mermaid?: string };
 
@@ -30,9 +30,9 @@ export function stripHermesMarkers(source: string): { text: string; markers: Her
   const markers: HermesMarker[] = [];
   let text = source;
 
-  const pushQr = (payload: string) => {
+  const pushQr = (payload: string, display?: "terminal" | "payload") => {
     const p = payload.trim();
-    if (p) markers.push({ kind: "qr", payload: p });
+    if (p) markers.push({ kind: "qr", payload: p, display });
   };
   const pushPw = (purpose: string) => {
     markers.push({ kind: "password", purpose: purpose.trim() || "credential" });
@@ -42,8 +42,16 @@ export function stripHermesMarkers(source: string): { text: string; markers: Her
     markers.push({ kind: "braid", mermaid: d || undefined });
   };
 
+  text = text.replace(
+    /\[SHOW_QR\]\s*\r?\n```(?:text|terminal|ansi)?\r?\n([\s\S]*?)```\s*/gi,
+    (_full, payload: string) => {
+      pushQr(payload, "terminal");
+      return "";
+    },
+  );
+
   text = text.replace(/\[SHOW_QR\]\s*([^\r\n]+)/gi, (_, payload: string) => {
-    pushQr(payload);
+    pushQr(payload, "payload");
     return "";
   });
 

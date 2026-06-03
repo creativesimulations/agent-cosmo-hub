@@ -31,6 +31,10 @@ export const RONBOT_RULES_BLOCK = [
   '- For API keys, tokens, passwords, QRs, OAuth, confirms, and file pickers:',
   '  emit a fenced ```ronbot-intent``` JSON card (see `~/.ronbot/APP_GUIDE.md`).',
   '  NEVER ask for a secret in plain prose.',
+  '- For QR pairing, NEVER say "scan the QR code above" unless the same message',
+  '  contains a `qr_display` intent or `[SHOW_QR]` marker with the actual QR data.',
+  '  If a CLI printed a terminal QR matrix, copy that matrix into `[SHOW_QR]`',
+  '  with a fenced `text` block so Ronbot can open it in a scan modal.',
   '- Stream markers (`[SHOW_QR]`, `[REQUEST_PASSWORD]`, `[SHOW_BRAID_GRAPH]`) are',
   '  secondary — see `~/.hermes/ELECTRON_APP_GUIDE.md`. Prefer intents for secrets and QR.',
   '- User replies arrive as ```ronbot-intent-response``` keyed by your `id`.',
@@ -42,9 +46,9 @@ export const RONBOT_RULES_BLOCK = [
   '',
 ].join('\n');
 
-export const RONBOT_APP_GUIDE_VERSION = '<!-- ronbot-app-guide v3 -->';
+export const RONBOT_APP_GUIDE_VERSION = '<!-- ronbot-app-guide v4 -->';
 
-export const RONBOT_ELECTRON_APP_GUIDE_VERSION = '<!-- ronbot-electron-app-guide v4 -->';
+export const RONBOT_ELECTRON_APP_GUIDE_VERSION = '<!-- ronbot-electron-app-guide v5 -->';
 
 export const RONBOT_ELECTRON_APP_GUIDE = [
   RONBOT_ELECTRON_APP_GUIDE_VERSION,
@@ -90,7 +94,14 @@ export const RONBOT_ELECTRON_APP_GUIDE = [
   'Ronbot strips them from the bubble and opens a modal.',
   '',
   '- **`[SHOW_QR]`** — same line: `data:image/...` URL, `https://` image, or text to',
-  '  encode. Prefer **`qr_display`** intent for channel setup.',
+  '  encode. Or put a terminal QR matrix in the next fenced `text` block:',
+  '',
+  '      [SHOW_QR]',
+  '      ```text',
+  '      ████ ...',
+  '      ```',
+  '',
+  '  Prefer **`qr_display`** intent for channel setup when you have PNG/base64.',
   '- **`[REQUEST_PASSWORD]<purpose>`** — inserts into the **chat draft only**, not',
   '  the keychain. **Never use for API keys** — use **`credential_request`** instead.',
   '- **`[SHOW_BRAID_GRAPH]`** — marker on its own line, then a ```mermaid fenced block.',
@@ -142,7 +153,7 @@ export const RONBOT_APP_GUIDE = [
   '| Need | Use (preferred) | Avoid |',
   '|------|-----------------|-------|',
   '| API keys, tokens, passwords | `credential_request` | `[REQUEST_PASSWORD]` (draft only, not keychain) |',
-  '| QR for WhatsApp / pairing | `qr_display` or `pairing_approve` | `[SHOW_QR]` unless trivial |',
+  '| QR for WhatsApp / pairing | `qr_display` or `pairing_approve`; `[SHOW_QR]` for terminal QR blocks | plain "QR above" text |',
   '| OAuth consent URL | `oauth_open` | plain link only |',
   '| Yes / no | `confirm` | prose yes/no in chat |',
   '| Pick folder/file | `file_pick` | — |',
@@ -229,6 +240,13 @@ export const RONBOT_APP_GUIDE = [
   '{ "id": "intent_wa_qr", "type": "qr_display", "title": "Scan WhatsApp",',
   '  "qr": "data:image/png;base64,..." }',
   '```',
+  '- If the wizard only printed a terminal QR matrix, use the modal marker instead:',
+  '',
+  '      [SHOW_QR]',
+  '      ```text',
+  '      <paste the full terminal QR block exactly>',
+  '      ```',
+  '- Never say "scan the QR above" unless the message includes `qr_display` or `[SHOW_QR]`.',
   '',
   '### oauth_open — open URL externally',
   '```ronbot-intent',
@@ -260,7 +278,7 @@ export const RONBOT_APP_GUIDE = [
   '',
   '### WhatsApp setup',
   '1. Run `hermes whatsapp` yourself.',
-  '2. PNG/base64 → `qr_display`; ASCII code → `pairing_approve`.',
+  '2. PNG/base64 → `qr_display`; terminal QR matrix → `[SHOW_QR]` fenced `text` block; ASCII code → `pairing_approve`.',
   '3. `progress` heartbeats in follow-up messages while the wizard runs.',
   '4. `done` with `capabilityId: "whatsapp"`.',
   '',

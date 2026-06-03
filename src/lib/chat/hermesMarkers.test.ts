@@ -7,7 +7,24 @@ describe("stripHermesMarkers", () => {
     expect(text).toContain("Hello");
     expect(text).toContain("Tail");
     expect(text).not.toContain("SHOW_QR");
-    expect(markers).toEqual([{ kind: "qr", payload: "https://example.com/x" }]);
+    expect(markers).toEqual([{ kind: "qr", payload: "https://example.com/x", display: "payload" }]);
+  });
+
+  it("strips SHOW_QR with a terminal QR block", () => {
+    const src = [
+      "Scan this:",
+      "[SHOW_QR]",
+      "```text",
+      "████  ██",
+      "██  ████",
+      "```",
+      "Done",
+    ].join("\n");
+    const { text, markers } = stripHermesMarkers(src);
+    expect(text).toContain("Scan this:");
+    expect(text).toContain("Done");
+    expect(text).not.toContain("SHOW_QR");
+    expect(markers).toEqual([{ kind: "qr", payload: "████  ██\n██  ████", display: "terminal" }]);
   });
 
   it("strips REQUEST_PASSWORD with purpose", () => {
@@ -40,7 +57,7 @@ describe("publishHermesMarkers", () => {
     const unsub = subscribeHermesMarkers((m) => {
       for (const x of m) seen.push(x.kind);
     });
-    publishHermesMarkers([{ kind: "qr", payload: "x" }]);
+    publishHermesMarkers([{ kind: "qr", payload: "x", display: "payload" }]);
     unsub();
     expect(seen).toEqual(["qr"]);
   });

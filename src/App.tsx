@@ -12,6 +12,8 @@ import { SettingsProvider } from "./contexts/SettingsContext";
 import { PermissionsProvider } from "./contexts/PermissionsContext";
 import { CapabilitiesProvider } from "./contexts/CapabilitiesContext";
 import ApprovalDialog from "./components/permissions/ApprovalDialog";
+import AgentPromptDialog from "./components/chat/AgentPromptDialog";
+import { AgentPromptProvider } from "./contexts/AgentPromptContext";
 import { AppRuntimeBridges } from "./components/AppRuntimeBridges";
 import WelcomeDialog from "./components/companion/WelcomeDialog";
 import SetupInstallPage from "./pages/SetupInstallPage";
@@ -41,41 +43,44 @@ const App = () => (
       <HashRouter>
         <SettingsProvider>
           <PermissionsProvider>
-            <ApprovalDialog />
-            <AgentConnectionProvider>
-              <AppRuntimeBridges />
-              <CapabilitiesProvider>
-                <SetupProvider>
-                  <ChatProvider>
-                    <MarkerModalHost />
-                    <WelcomeDialog />
-                    <Routes>
-                      <Route element={<AppLayout />}>
-                        <Route path="/" element={<RootRoute />} />
-                        <Route path="/install" element={<SetupInstallPage />} />
-                        <Route path="/dashboard" element={<Navigate to="/" replace />} />
-                        <Route path="/agents" element={<SubAgents />} />
-                        <Route path="/models" element={<LLMConfig />} />
-                        <Route path="/secrets" element={<Secrets />} />
-                        {/* Legacy redirect */}
-                        <Route path="/keys" element={<Secrets />} />
-                        <Route path="/skills" element={<Skills />} />
-                        <Route path="/settings" element={<SettingsPage />} />
-                        <Route path="/terminal" element={<TerminalPage />} />
-                        <Route path="/channels" element={<Channels />} />
+            <AgentPromptProvider>
+              <ApprovalDialog />
+              <AgentPromptDialog />
+              <AgentConnectionProvider>
+                <AppRuntimeBridges />
+                <CapabilitiesProvider>
+                  <SetupProvider>
+                    <ChatProvider>
+                      <MarkerModalHost />
+                      <WelcomeDialog />
+                      <Routes>
+                        <Route element={<AppLayout />}>
+                          <Route path="/" element={<RootRoute />} />
+                          <Route path="/install" element={<SetupInstallPage />} />
+                          <Route path="/dashboard" element={<Navigate to="/" replace />} />
+                          <Route path="/agents" element={<SubAgents />} />
+                          <Route path="/models" element={<LLMConfig />} />
+                          <Route path="/secrets" element={<Secrets />} />
+                          {/* Legacy redirect */}
+                          <Route path="/keys" element={<Secrets />} />
+                          <Route path="/skills" element={<Skills />} />
+                          <Route path="/settings" element={<SettingsPage />} />
+                          <Route path="/terminal" element={<TerminalPage />} />
+                          <Route path="/channels" element={<Channels />} />
 
-                        <Route path="/updates" element={<UpdateManager />} />
-                        <Route path="/backups" element={<BackupRestore />} />
-                        <Route path="/diagnostics" element={<Diagnostics />} />
-                        <Route path="/scheduled" element={<Scheduled />} />
-                        <Route path="/insights" element={<Insights />} />
-                      </Route>
-                      <Route path="*" element={<NotFound />} />
-                    </Routes>
-                  </ChatProvider>
-                </SetupProvider>
-              </CapabilitiesProvider>
-            </AgentConnectionProvider>
+                          <Route path="/updates" element={<UpdateManager />} />
+                          <Route path="/backups" element={<BackupRestore />} />
+                          <Route path="/diagnostics" element={<Diagnostics />} />
+                          <Route path="/scheduled" element={<Scheduled />} />
+                          <Route path="/insights" element={<Insights />} />
+                        </Route>
+                        <Route path="*" element={<NotFound />} />
+                      </Routes>
+                    </ChatProvider>
+                  </SetupProvider>
+                </CapabilitiesProvider>
+              </AgentConnectionProvider>
+            </AgentPromptProvider>
           </PermissionsProvider>
         </SettingsProvider>
       </HashRouter>
