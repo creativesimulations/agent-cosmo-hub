@@ -74,7 +74,7 @@ export const AgentPromptProvider = ({ children }: { children: ReactNode }) => {
       ) {
         void ensureNotificationPermission().then((perm) => {
           if (perm === "granted") {
-            showDesktopNotification("Ronbot needs your choice", req.prompt.slice(0, 120));
+            showDesktopNotification("Agent waiting for your answer", req.prompt.slice(0, 120));
           }
         });
       }
@@ -94,7 +94,7 @@ export const AgentPromptProvider = ({ children }: { children: ReactNode }) => {
     agentLogs.push({
       source: "chat",
       level: answer ? "info" : "warn",
-      summary: answer ? "[agent-prompt] user answered setup prompt" : "[agent-prompt] user dismissed setup prompt",
+      summary: answer ? "[agent-prompt] user answered" : "[agent-prompt] user dismissed",
       detail: current.prompt,
     });
 

@@ -12,7 +12,6 @@ import { SettingsProvider } from "./contexts/SettingsContext";
 import { PermissionsProvider } from "./contexts/PermissionsContext";
 import { CapabilitiesProvider } from "./contexts/CapabilitiesContext";
 import ApprovalDialog from "./components/permissions/ApprovalDialog";
-import AgentPromptDialog from "./components/chat/AgentPromptDialog";
 import { AgentPromptProvider } from "./contexts/AgentPromptContext";
 import { AppRuntimeBridges } from "./components/AppRuntimeBridges";
 import WelcomeDialog from "./components/companion/WelcomeDialog";
@@ -45,7 +44,6 @@ const App = () => (
           <PermissionsProvider>
             <AgentPromptProvider>
               <ApprovalDialog />
-              <AgentPromptDialog />
               <AgentConnectionProvider>
                 <AppRuntimeBridges />
                 <CapabilitiesProvider>

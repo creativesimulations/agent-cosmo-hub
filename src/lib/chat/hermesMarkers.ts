@@ -21,6 +21,49 @@ function emit(markers: HermesMarker[]) {
   for (const fn of listeners) fn(markers);
 }
 
+const stripAnsi = (s: string) =>
+  s
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, "")
+    .replace(/\x1b[@-Z\\-_]/g, "");
+
+const QR_BLOCK_LINE_RE = /^[\s▄▀█▌▐░▒▓■□▪▫]+$/;
+
+const looksLikeQrLine = (line: string): boolean => {
+  const trimmed = line.trimEnd();
+  if (trimmed.length < 24) return false;
+  const blockChars = trimmed.match(/[▄▀█▌▐░▒▓■□▪▫]/g)?.length ?? 0;
+  return blockChars >= 12 && QR_BLOCK_LINE_RE.test(trimmed);
+};
+
+export function extractTerminalQrMarkers(source: string): HermesMarker[] {
+  const normalized = stripAnsi(source).replace(/\\n/g, "\n");
+  const lines = normalized.split(/\r?\n/);
+  const markers: HermesMarker[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!looksLikeQrLine(lines[i])) continue;
+
+    const block: string[] = [];
+    let j = i;
+    while (j < lines.length && (looksLikeQrLine(lines[j]) || lines[j].trim() === "")) {
+      if (looksLikeQrLine(lines[j])) block.push(lines[j].trimEnd());
+      j += 1;
+    }
+
+    const payload = block.join("\n").trim();
+    const blockChars = payload.match(/[▄▀█▌▐░▒▓■□▪▫]/g)?.length ?? 0;
+    if (block.length >= 8 && blockChars >= 180 && !seen.has(payload)) {
+      seen.add(payload);
+      markers.push({ kind: "qr", payload, display: "terminal" });
+    }
+    i = Math.max(i, j - 1);
+  }
+
+  return markers;
+}
+
 /**
  * Remove Ronbot marker lines from assistant-visible text and collect modal
  * payloads. Run after `splitIntentsFromText` so markers inside intent fences
@@ -50,10 +93,12 @@ export function stripHermesMarkers(source: string): { text: string; markers: Her
     },
   );
 
-  text = text.replace(/\[SHOW_QR\]\s*([^\r\n]+)/gi, (_, payload: string) => {
+  text = text.replace(/\[SHOW_QR\][ \t]*([^\r\n]+)/gi, (_, payload: string) => {
     pushQr(payload, "payload");
     return "";
   });
+
+  text = text.replace(/\[SHOW_QR\][ \t]*(?:\r?\n)?/gi, "");
 
   text = text.replace(/\[REQUEST_PASSWORD\]\s*([^\r\n]*)/gi, (_, purpose: string) => {
     pushPw(purpose);

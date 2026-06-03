@@ -43,7 +43,13 @@ import type { ChatConversation, ChatMessage, ChatPersonaSignature } from "@/lib/
 import { analyzePermissionMismatch } from "@/lib/chat/permissionMismatch";
 import { ChatStreamTurnState } from "@/lib/chat/streamHandlers";
 import { fireToolUnavailableNotice } from "@/lib/chat/toolUnavailableNotice";
-import { stripHermesMarkers, publishHermesMarkers } from "@/lib/chat/hermesMarkers";
+import {
+  extractTerminalQrMarkers,
+  stripHermesMarkers,
+  publishHermesMarkers,
+  type HermesMarker,
+} from "@/lib/chat/hermesMarkers";
+import { mergeHermesMarkers } from "@/lib/chat/mergeHermesMarkers";
 
 export type { ChatConversation, ChatMessage };
 
@@ -380,7 +386,19 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           const streamTurn = new ChatStreamTurnState();
           const result = await systemAPI.chatAgent(
             item.prompt,
-            (chunk: { type: string; data?: string }) => streamTurn.handleChunk(chunk, { recordUse, setLiveSubAgentCount }),
+            (chunk: { type: string; data?: string }) => {
+              streamTurn.handleChunk(chunk, { recordUse, setLiveSubAgentCount });
+              if (chunk.type !== "stdout" && chunk.type !== "stderr") return;
+              const qrMarkers = extractTerminalQrMarkers(streamTurn.streamBuf);
+              if (!qrMarkers.length) return;
+              patchMessages(item.conversationId, (prev) =>
+                prev.map((m) =>
+                  m.id === item.placeholderId
+                    ? { ...m, inlineMarkers: mergeHermesMarkers(m.inlineMarkers, qrMarkers) }
+                    : m,
+                ),
+              );
+            },
             sessionIdRef.current ?? undefined,
             (id) => { activeStreamIdRef.current = id; },
             timeoutMs,
@@ -428,10 +446,16 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             ? splitIntentsFromText(reply)
             : { text: reply, intents: [] as AgentIntent[], errors: [] };
           let assistantVisible = split.text;
+          let inlineMarkers: HermesMarker[] | undefined;
           if (result.success && !result.missingKey && !matFailed) {
             const stripped = stripHermesMarkers(split.text);
             assistantVisible = stripped.text;
-            publishHermesMarkers(stripped.markers);
+            inlineMarkers = mergeHermesMarkers(
+              mergeHermesMarkers(undefined, stripped.markers),
+              extractTerminalQrMarkers(result.stdout || ""),
+            );
+            const modalMarkers = stripped.markers.filter((m) => m.kind === "password");
+            if (modalMarkers.length) publishHermesMarkers(modalMarkers);
           }
 
           patchMessages(item.conversationId, (prev) =>
@@ -454,6 +478,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     toolUnavailable,
                     usedCapabilities: Array.from(streamTurn.usedCapsThisTurn),
                     intents: split.intents.length > 0 ? split.intents : undefined,
+                    inlineMarkers: inlineMarkers?.length ? inlineMarkers : m.inlineMarkers,
                   }
                 : m,
             ),

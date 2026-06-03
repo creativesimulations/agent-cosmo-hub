@@ -38,6 +38,17 @@ describe("detectAgentPrompt", () => {
     expect(detected?.options.map((option) => option.value)).toEqual(["1", "2"]);
   });
 
+  it("detects numbered choices without setup-specific context", () => {
+    const detected = detectAgentPrompt([
+      "Pick one:",
+      "1. Alpha",
+      "2. Beta",
+      "Which do you want?",
+    ].join("\n"));
+    expect(detected?.inputKind).toBe("choice");
+    expect(detected?.options).toHaveLength(2);
+  });
+
   it("ignores already timed-out clarify messages", () => {
     const detected = detectAgentPrompt([
       "Which approach sounds better to you?",

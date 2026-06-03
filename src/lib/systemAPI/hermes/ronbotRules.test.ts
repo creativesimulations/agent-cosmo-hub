@@ -10,10 +10,12 @@ import {
 } from "./ronbotRules";
 
 describe("RONBOT_APP_GUIDE vs protocol", () => {
-  it("warns the agent not to use blocking clarify in one-shot chat", () => {
-    expect(RONBOT_RULES_BLOCK).toMatch(/non-interactive one-shot prompts/i);
-    expect(RONBOT_RULES_BLOCK).toMatch(/Do not use the blocking\s+`clarify` tool/i);
-    expect(RONBOT_APP_GUIDE).toMatch(/Avoid the blocking\s+`clarify`/i);
+  it("documents UI protocol without steering Hermes behavior", () => {
+    expect(RONBOT_RULES_BLOCK).toMatch(/ronbot-intent/i);
+    expect(RONBOT_RULES_BLOCK).not.toMatch(/clarify/i);
+    expect(RONBOT_RULES_BLOCK).not.toMatch(/MUST NOT|never tell|run setup commands yourself/i);
+    expect(RONBOT_APP_GUIDE).not.toMatch(/Avoid the blocking\s+`clarify`/i);
+    expect(RONBOT_APP_GUIDE).toMatch(/Hermes chooses/i);
   });
 
   it("documents every intent type with a dedicated heading", () => {
@@ -22,10 +24,10 @@ describe("RONBOT_APP_GUIDE vs protocol", () => {
     }
   });
 
-  it("includes intents-vs-markers table and response cheat-sheet", () => {
-    expect(RONBOT_APP_GUIDE).toContain("## Intents vs stream markers");
+  it("includes rendering table and response cheat-sheet", () => {
+    expect(RONBOT_APP_GUIDE).toContain("## What Ronbot renders");
     expect(RONBOT_APP_GUIDE).toContain("## Response cheat-sheet");
-    expect(RONBOT_APP_GUIDE).toMatch(/progress.*new assistant messages/i);
+    expect(RONBOT_APP_GUIDE).toMatch(/progress.*new assistant message/i);
   });
 
   it("uses current version header", () => {

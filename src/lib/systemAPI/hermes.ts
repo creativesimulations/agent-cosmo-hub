@@ -1043,7 +1043,7 @@ export const hermesAPI = {
         agentLogs.push({
           source: 'chat',
           level: 'warn',
-          summary: '[agent-prompt] setup prompt detected but no UI handler was available',
+          summary: '[agent-prompt] interactive prompt detected but no UI handler was available',
           detail: detected.context,
         });
         return;

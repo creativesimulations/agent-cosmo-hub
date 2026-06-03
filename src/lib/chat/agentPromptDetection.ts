@@ -12,9 +12,6 @@ export interface AgentPromptDetection {
   timeoutSeconds: number;
 }
 
-const SETUP_CONTEXT_RE =
-  /\b(set\s*up|setup|install(?:ation)?|wizard|connect|configure|integration|channel|whatsapp|telegram|email|phone|account|auth|login|credentials?)\b/i;
-
 const QUESTION_RE =
   /\b(which|what|choose|select|pick|enter|provide|type|send|confirm)\b[^?\n]{0,180}\?/i;
 
@@ -46,7 +43,7 @@ const extractNumberedOptions = (lines: string[]): AgentPromptOption[] => {
   const options: AgentPromptOption[] = [];
   for (const line of lines) {
     const normalized = normalizeLine(line);
-    const match = normalized.match(/^(\d{1,2})[\).:-]\s+(.{3,220})$/);
+    const match = normalized.match(/^(\d{1,2})[\).:)-]\s+(.{3,220})$/);
     if (!match) continue;
     const [, value, body] = match;
     const parts = body.split(/\s+[—-]\s+/);
@@ -83,8 +80,8 @@ const lastQuestionLine = (lines: string[]): string | null => {
 const isAgentWaitingContext = (text: string, question: string, options: AgentPromptOption[]): boolean => {
   if (/clarify\s+timed\s+out/i.test(text)) return false;
   if (options.length >= 2) return true;
-  if (SETUP_CONTEXT_RE.test(text) && REQUIRED_INPUT_RE.test(question)) return true;
-  if (/international\s+format|phone\s+number|verification\s+code|qr\s+code|api\s+key|email\s+address/i.test(question)) return true;
+  if (QUESTION_RE.test(question) || REQUIRED_INPUT_RE.test(question)) return true;
+  if (/\bclarify\b/i.test(text) && !/clarify\s+timed\s+out/i.test(text)) return true;
   return false;
 };
 

@@ -3,9 +3,8 @@ import { systemAPI } from "@/lib/systemAPI";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 
 /**
- * Once per session (after the agent is connected), refresh the Ronbot UI
- * protocol primer in ~/.hermes/AGENTS.md so the agent knows how to emit
- * `ronbot-intent` cards. Idempotent and cheap — just a file diff/write.
+ * Once per session (after the agent is connected), refresh neutral Ronbot UI
+ * protocol docs on disk (optional intents/markers). Does not change Hermes behavior.
  */
 export function useRonbotRulesBridge(): void {
   const { connected } = useAgentConnection();

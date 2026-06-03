@@ -30,6 +30,8 @@ import ChatEmptyState from "@/components/chat/ChatEmptyState";
 import SlashCommandPalette from "@/components/chat/SlashCommandPalette";
 import { useChatComposer } from "@/hooks/useChatComposer";
 import { LazyChatMessageMarkdown } from "@/components/chat/LazyChatMessageMarkdown";
+import ChatInlineMarkers from "@/components/chat/ChatInlineMarkers";
+import AgentPromptBar from "@/components/chat/AgentPromptBar";
 
 const AgentChat = () => {
   const { connected: agentConnected } = useAgentConnection();
@@ -450,6 +452,9 @@ const AgentChat = () => {
                   {msg.usedCapabilities && msg.usedCapabilities.length > 0 && msg.role === "assistant" && !msg.streaming && (
                     <CapabilityChips capabilityIds={msg.usedCapabilities} />
                   )}
+                  {msg.inlineMarkers && msg.inlineMarkers.length > 0 && msg.role === "assistant" && (
+                    <ChatInlineMarkers markers={msg.inlineMarkers} />
+                  )}
                   {msg.intents && msg.intents.length > 0 && msg.role === "assistant" && (
                     <div className="mt-2 space-y-2 -mx-1">
                       {msg.intents.map((intent) => {
@@ -496,6 +501,7 @@ const AgentChat = () => {
               if (input.startsWith("/")) setInput(input.slice(1));
             }}
           />
+          <AgentPromptBar />
           {backgroundMode && (
             <div className="mb-2 px-3 py-1.5 rounded-md border border-accent/30 bg-accent/10 text-[11px] text-accent flex items-center gap-2">
               <Moon className="w-3 h-3" />
