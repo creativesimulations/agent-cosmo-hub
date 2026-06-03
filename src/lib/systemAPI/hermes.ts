@@ -2255,20 +2255,30 @@ model: ${options.model || 'openrouter/auto'}
     error?: string;
   }> {
     if (!isElectron()) return { success: false, error: 'browser-mode' };
-    const wrote = await seedCustomPersonalityFiles(agentName);
+    // Preserve the official installer's active files as a switchable preset
+    // before Ronbot overwrites them. This also helps users recover custom files
+    // if they opt into Ronbot after connecting an existing Hermes install.
+    const existingPresets = await listPersonalityPresets().catch(() => ({ success: false, presets: [] }));
+    if (!existingPresets.presets.some((p) => p.name === 'Official_Hermes')) {
+      await savePersonalityPreset('Official_Hermes').catch(() => undefined);
+    }
+
+    const wrote = await seedCustomPersonalityFiles(agentName, { overwriteExisting: true });
     if (!wrote.success) {
       return { success: false, error: wrote.error || 'Writing default persona files failed' };
     }
     await this.writeElectronAppGuide().catch(() => undefined);
     await this.writeRonbotAgentRules().catch(() => undefined);
     await this.writeRonbotAppGuide().catch(() => undefined);
-    const preset = await saveDefaultPersonalityPreset();
-    if (!preset.success) {
+    const ronbotPreset = await savePersonalityPreset('Ronbot_Default');
+    const defaultPreset = await saveDefaultPersonalityPreset();
+    const presetError = ronbotPreset.success ? defaultPreset.error : ronbotPreset.error;
+    if (!ronbotPreset.success || !defaultPreset.success) {
       return {
         success: false,
         backupDir: wrote.backupDir,
         filesMoved: wrote.filesMoved,
-        error: preset.error ?? 'Default Saved Personality snapshot failed',
+        error: presetError ?? 'Saved Personality snapshot failed',
       };
     }
     return {

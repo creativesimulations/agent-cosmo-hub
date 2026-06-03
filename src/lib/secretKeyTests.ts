@@ -3,6 +3,13 @@ export interface SecretKeyTestResult {
   message: string;
 }
 
+type OpenRouterCreditsResponse = {
+  data?: {
+    total_credits?: number;
+    total_usage?: number;
+  };
+};
+
 const withTimeout = async (input: RequestInfo | URL, init: RequestInit, timeoutMs = 12000) => {
   const ctrl = new AbortController();
   const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
@@ -30,13 +37,21 @@ export const testKeyNow = async (envVar: string, key: string): Promise<SecretKey
   if (!token) return { ok: false, message: "Paste a key first, then test it." };
   try {
     if (envVar === "OPENROUTER_API_KEY") {
-      const r = await withTimeout("https://openrouter.ai/api/v1/models", {
+      const r = await withTimeout("https://openrouter.ai/api/v1/credits", {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
       });
-      return r.ok
-        ? { ok: true, message: "OpenRouter key is valid." }
-        : { ok: false, message: `OpenRouter rejected this key (HTTP ${r.status}).` };
+      if (!r.ok) return { ok: false, message: `OpenRouter rejected this key (HTTP ${r.status}).` };
+      const body = (await r.json().catch(() => null)) as OpenRouterCreditsResponse | null;
+      const totalCredits = body?.data?.total_credits;
+      const totalUsage = body?.data?.total_usage;
+      if (typeof totalCredits === "number" && typeof totalUsage === "number") {
+        const remaining = totalCredits - totalUsage;
+        return remaining > 0
+          ? { ok: true, message: `OpenRouter key is valid (${remaining.toFixed(2)} credits remaining).` }
+          : { ok: false, message: "OpenRouter key is valid, but the account has no remaining credits." };
+      }
+      return { ok: true, message: "OpenRouter key is valid, but credit balance could not be read." };
     }
     if (envVar === "OPENAI_API_KEY") {
       const r = await withTimeout("https://api.openai.com/v1/models", {

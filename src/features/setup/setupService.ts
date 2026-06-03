@@ -87,8 +87,22 @@ export async function finalizeAfterInstall(
     } catch (e) {
       append(`⚠ Personality seed failed: ${e instanceof Error ? e.message : String(e)}`);
     }
-  } else if (source === "local") {
-    append("ℹ Left existing persona files unchanged.");
+  } else {
+    append(
+      source === "bundled"
+        ? "ℹ Keeping official Hermes core files unchanged."
+        : "ℹ Left existing persona files unchanged.",
+    );
+    try {
+      const saved = await systemAPI.savePersonalityPreset("Official_Hermes");
+      append(
+        saved.success
+          ? "✓ Saved current core files as Official_Hermes preset."
+          : `⚠ Could not save Official_Hermes preset: ${saved.error ?? "unknown"}`,
+      );
+    } catch (e) {
+      append(`⚠ Could not save Official_Hermes preset: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   append("Stopping Hermes runtime so the next launch picks up disk state…");

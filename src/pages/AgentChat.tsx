@@ -157,7 +157,7 @@ const AgentChat = () => {
           </h1>
           <p className="text-sm text-muted-foreground flex items-center gap-2">
             {sessionId ? (
-              <>Resuming session <span className="font-mono text-[11px] text-muted-foreground/80">{sessionId}</span></>
+              <>Conversation session <span className="font-mono text-[11px] text-muted-foreground/80">{sessionId}</span></>
             ) : (
               "Interact directly with your AI agent"
             )}
@@ -219,17 +219,17 @@ const AgentChat = () => {
             <Moon className="w-4 h-4 mr-1.5" />
             Background
           </Button>
-          {sessionId && (
+          {(sessionId || messages.length > 0) && (
             <Button
               variant="ghost"
               size="sm"
               className="text-muted-foreground hover:text-foreground"
               onClick={startNewSession}
               disabled={isStreaming}
-              title="Start a fresh agent session (clears resume id but keeps message history)"
+              title="Start a fresh conversation with a new agent session"
             >
               <RotateCcw className="w-4 h-4 mr-1.5" />
-              New session
+              New conversation
             </Button>
           )}
           {messages.length > 0 && (
@@ -244,7 +244,7 @@ const AgentChat = () => {
                 <AlertDialogHeader>
                   <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This deletes every message in this chat from your device. The agent's own session history on disk is not affected. This cannot be undone.
+                    This deletes every message in the active conversation from your device. The agent's own session history on disk is not affected. This cannot be undone.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

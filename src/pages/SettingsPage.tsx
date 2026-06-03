@@ -222,21 +222,23 @@ const SettingsPage = () => {
   const handleApplyPersonalityPreset = async (presetName: string) => {
     setPresetBusy(true);
     const r = await systemAPI.applyPersonalityPreset(presetName);
-    setPresetBusy(false);
     if (r.success) {
+      await systemAPI.restartAgent().catch(() => undefined);
+      setPresetBusy(false);
       toast.success("Preset applied", {
         description: "Live persona files updated and gateway restarted.",
       });
       await refreshConnection();
       await refreshPersonalityPresets();
     } else {
+      setPresetBusy(false);
       toast.error("Apply failed", { description: r.error });
     }
   };
 
   const handleDeletePersonalityPreset = async (presetName: string) => {
-    if (presetName === "Default") {
-      toast.error("Refusing to delete the Default snapshot");
+    if (["Default", "Official_Hermes", "Ronbot_Default"].includes(presetName)) {
+      toast.error("Refusing to delete a built-in snapshot");
       return;
     }
     setPresetBusy(true);
@@ -247,6 +249,23 @@ const SettingsPage = () => {
       await refreshPersonalityPresets();
     } else {
       toast.error("Delete failed", { description: r.error });
+    }
+  };
+
+  const handleApplyBundledRonbotPersonality = async () => {
+    setPresetBusy(true);
+    const r = await systemAPI.seedRonbotPersonalityAfterInstall(name.trim() || originalName || "Ron");
+    if (r.success) {
+      await systemAPI.restartAgent().catch(() => undefined);
+      setPresetBusy(false);
+      toast.success("Ronbot personality applied", {
+        description: "Saved Official_Hermes and Ronbot_Default presets, then restarted Hermes.",
+      });
+      await refreshConnection();
+      await refreshPersonalityPresets();
+    } else {
+      setPresetBusy(false);
+      toast.error("Could not apply Ronbot personality", { description: r.error });
     }
   };
 
@@ -312,7 +331,7 @@ const SettingsPage = () => {
 
   const handleWipeSession = () => {
     startNewSession();
-    toast.success("Session ID wiped", { description: "Your next message will start a fresh agent session." });
+    toast.success("New conversation started", { description: "Your next message will start a fresh Hermes session." });
   };
 
   const handleClearChat = () => {
@@ -487,6 +506,24 @@ const SettingsPage = () => {
               <code className="font-mono text-xs">~/.hermes/personalities/&lt;name&gt;/</code>. Applying
               overwrites the active files (after a backup) and restarts the Hermes gateway.
             </p>
+            <div className="rounded-md border border-primary/20 bg-primary/5 p-3 space-y-2">
+              <p className="text-sm font-medium text-foreground">Ronbot and official Hermes presets</p>
+              <p className="text-xs text-muted-foreground">
+                Use this after installation if you kept official Hermes at first. Ronbot will save the
+                current files as <code className="font-mono">Official_Hermes</code>, apply the bundled
+                Ronbot core files, and save them as <code className="font-mono">Ronbot_Default</code>.
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={presetBusy}
+                onClick={() => void handleApplyBundledRonbotPersonality()}
+              >
+                {presetBusy ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1.5" />}
+                Apply bundled Ronbot personality
+              </Button>
+            </div>
             <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-end">
               <div className="flex-1 space-y-1">
                 <Label htmlFor="preset-name">Save current as preset</Label>
@@ -524,7 +561,14 @@ const SettingsPage = () => {
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-foreground truncate">{p.name}</p>
                       <p className="text-[11px] text-muted-foreground">
-                        Updated {new Date(p.mtimeSec * 1000).toLocaleString()}
+                        {p.name === "Official_Hermes"
+                          ? "Official Hermes core files"
+                          : p.name === "Ronbot_Default"
+                            ? "Bundled Ronbot personality and app guidance"
+                            : p.name === "Default"
+                              ? "Compatibility snapshot"
+                              : "User-created preset"}{" "}
+                        · Updated {new Date(p.mtimeSec * 1000).toLocaleString()}
                       </p>
                     </div>
                     <div className="flex gap-2 shrink-0">
@@ -543,7 +587,7 @@ const SettingsPage = () => {
                         size="sm"
                         variant="ghost"
                         className="text-destructive hover:text-destructive"
-                        disabled={presetBusy || p.name === "Default"}
+                        disabled={presetBusy || ["Default", "Official_Hermes", "Ronbot_Default"].includes(p.name)}
                         onClick={() => void handleDeletePersonalityPreset(p.name)}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -706,7 +750,7 @@ const SettingsPage = () => {
           <div className="flex flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={handleWipeSession} className="flex-1">
               <Network className="w-4 h-4 mr-2" />
-              Wipe stored session ID
+              Start new conversation
             </Button>
             <Button
               variant="outline"
@@ -718,8 +762,8 @@ const SettingsPage = () => {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Wiping the session ID forces your next message to start a fresh Hermes session.
-            Clearing history just empties this app's local copy of the conversation.
+            Starting a new conversation gives your next message a fresh Hermes session.
+            Clearing history just empties this app's local copy of the active conversation.
           </p>
         </div>
       </SettingsSection>

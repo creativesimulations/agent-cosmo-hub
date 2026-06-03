@@ -13,6 +13,7 @@ vi.mock("@/lib/systemAPI", () => ({
     getAgentName: vi.fn(),
     getHermesCliVersionSummary: vi.fn(),
     seedRonbotPersonalityAfterInstall: vi.fn(),
+    savePersonalityPreset: vi.fn(),
     stopHermesAgentRuntime: vi.fn(),
     restartAgent: vi.fn(),
     getPlatform: vi.fn(),
@@ -56,6 +57,7 @@ describe("probeAgent", () => {
       code: 0,
     });
     vi.mocked(systemAPI.restartAgent).mockResolvedValue({ success: true });
+    vi.mocked(systemAPI.savePersonalityPreset).mockResolvedValue({ success: true });
     vi.mocked(systemAPI.bootstrapStartupHealth).mockResolvedValue({
       success: true,
       steps: [],

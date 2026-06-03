@@ -113,14 +113,23 @@ export function InstallStep({
           ? "Official Hermes installer from Nous Research. Configure API keys and setup after install."
           : `Local install from: ${localPath}`}
       </p>
+      <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
+        <p className="text-sm font-medium text-foreground">Choose the starting personality</p>
+        <p className="text-xs text-muted-foreground">
+          Ronbot can keep official Hermes as-is, or apply the bundled Ronbot SOUL / PERSONALITY /
+          MEMORY / USER core files after the official installer succeeds. Either way, the active
+          files are saved under <code className="font-mono">~/.hermes/personalities/</code> so you
+          can switch later in Settings.
+        </p>
+      </div>
       <label className="glass-subtle rounded-lg border border-white/10 p-3 flex items-start gap-2 text-sm cursor-pointer">
         <Checkbox checked={replacePersona} onCheckedChange={(v) => onReplacePersonaChange(v === true)} />
         <span className="space-y-1">
           <span className="block font-medium">Apply Ronbot personality and app guidance after install</span>
           <span className="block text-xs text-muted-foreground">
             {source === "bundled"
-              ? "Leave unchecked to keep Hermes exactly as the official installer creates it."
-              : "Leave unchecked to keep the selected Hermes folder's existing core files unchanged."}
+              ? "Checked saves Official_Hermes, applies Ronbot files, then saves Ronbot_Default. Unchecked keeps official Hermes active and saves Official_Hermes."
+              : "Checked backs up the selected folder's current core files before applying Ronbot. Unchecked leaves them active and saves Official_Hermes."}
           </span>
         </span>
       </label>

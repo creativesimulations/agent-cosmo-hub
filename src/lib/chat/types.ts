@@ -33,3 +33,26 @@ export interface ChatMessage {
   intentResponses?: Record<string, IntentResponse>;
   intentResponseSummary?: string;
 }
+
+export interface ChatPersonaFileSignature {
+  path: string;
+  exists: boolean;
+  hash?: string;
+}
+
+export interface ChatPersonaSignature {
+  agentName?: string | null;
+  files: ChatPersonaFileSignature[];
+  capturedAt: Date;
+}
+
+export interface ChatConversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  sessionId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  archivedAt?: Date;
+  personaSignature?: ChatPersonaSignature;
+}

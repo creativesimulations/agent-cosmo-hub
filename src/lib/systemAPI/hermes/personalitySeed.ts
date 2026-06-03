@@ -74,6 +74,17 @@ export async function seedCustomPersonalityFiles(agentName: string): Promise<{
   written: string[];
   skipped: string[];
   error?: string;
+}>;
+export async function seedCustomPersonalityFiles(
+  agentName: string,
+  options?: { overwriteExisting?: boolean },
+): Promise<{
+  success: boolean;
+  backupDir?: string;
+  filesMoved?: number;
+  written: string[];
+  skipped: string[];
+  error?: string;
 }> {
   const mkdir = await runHermesShell(
     ['set -e', `mkdir -p "${HERMES_ROOT}"`, `mkdir -p "${MEMORIES_DIR}"`].join("\n"),
@@ -88,6 +99,7 @@ export async function seedCustomPersonalityFiles(agentName: string): Promise<{
     };
   }
 
+  const overwriteExisting = options?.overwriteExisting === true;
   const soulBody = appendPersonaMarker(buildDefaultSoulMarkdown(agentName));
   const personalityBody = appendPersonaMarker(DEFAULT_PERSONALITY_MARKDOWN);
   const memoryBody = appendPersonaMarker(buildDefaultMemoryMarkdown());
@@ -98,6 +110,7 @@ export async function seedCustomPersonalityFiles(agentName: string): Promise<{
       path: `${HERMES_ROOT}/SOUL.md`,
       next: soulBody,
       shouldWrite: (cur) =>
+        overwriteExisting ||
         isRonbotManagedOrEmpty(cur) ||
         matchesBundledDefault(cur ?? "", buildDefaultSoulMarkdown(agentName)),
     },
@@ -105,19 +118,25 @@ export async function seedCustomPersonalityFiles(agentName: string): Promise<{
       path: `${HERMES_ROOT}/PERSONALITY.md`,
       next: personalityBody,
       shouldWrite: (cur) =>
-        isRonbotManagedOrEmpty(cur) || matchesBundledDefault(cur ?? "", DEFAULT_PERSONALITY_MARKDOWN),
+        overwriteExisting ||
+        isRonbotManagedOrEmpty(cur) ||
+        matchesBundledDefault(cur ?? "", DEFAULT_PERSONALITY_MARKDOWN),
     },
     {
       path: `${MEMORIES_DIR}/MEMORY.md`,
       next: memoryBody,
       shouldWrite: (cur) =>
-        isRonbotManagedOrEmpty(cur) || matchesBundledDefault(cur ?? "", buildDefaultMemoryMarkdown()),
+        overwriteExisting ||
+        isRonbotManagedOrEmpty(cur) ||
+        matchesBundledDefault(cur ?? "", buildDefaultMemoryMarkdown()),
     },
     {
       path: `${MEMORIES_DIR}/USER.md`,
       next: userBody,
       shouldWrite: (cur) =>
-        isRonbotManagedOrEmpty(cur) || matchesBundledDefault(cur ?? "", DEFAULT_USER_MARKDOWN),
+        overwriteExisting ||
+        isRonbotManagedOrEmpty(cur) ||
+        matchesBundledDefault(cur ?? "", DEFAULT_USER_MARKDOWN),
     },
   ];
 

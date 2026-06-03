@@ -6,9 +6,16 @@ import {
   RONBOT_ELECTRON_APP_GUIDE,
   RONBOT_APP_GUIDE_VERSION,
   RONBOT_ELECTRON_APP_GUIDE_VERSION,
+  RONBOT_RULES_BLOCK,
 } from "./ronbotRules";
 
 describe("RONBOT_APP_GUIDE vs protocol", () => {
+  it("warns the agent not to use blocking clarify in one-shot chat", () => {
+    expect(RONBOT_RULES_BLOCK).toMatch(/non-interactive one-shot prompts/i);
+    expect(RONBOT_RULES_BLOCK).toMatch(/Do not use the blocking\s+`clarify` tool/i);
+    expect(RONBOT_APP_GUIDE).toMatch(/Avoid the blocking\s+`clarify`/i);
+  });
+
   it("documents every intent type with a dedicated heading", () => {
     for (const t of AGENT_INTENT_TYPES) {
       expect(RONBOT_APP_GUIDE).toContain(`### ${t} —`);

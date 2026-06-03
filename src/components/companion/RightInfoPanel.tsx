@@ -2,10 +2,12 @@
 import { useState } from "react";
 import {
   Activity,
+  Archive,
   Bot,
   CalendarClock,
   ChevronDown,
   Heart,
+  MessageSquare,
   Network,
   Power,
   PowerOff,
@@ -13,6 +15,7 @@ import {
   Cpu,
   CheckCircle2,
   AlertTriangle,
+  Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import GlassCard from "@/components/ui/GlassCard";
@@ -21,6 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { useChat } from "@/contexts/ChatContext";
 import { useAgentLiveState } from "@/hooks/useAgentLiveState";
+import { getConversationPreview } from "@/lib/chat/persistence";
 
 const formatElapsed = (ms: number): string => {
   if (ms < 0) return "—";
@@ -95,11 +99,36 @@ const EmptyRow = ({ children }: { children: React.ReactNode }) => (
   <p className="text-[11px] text-muted-foreground/60 italic px-1 py-1">{children}</p>
 );
 
+const formatConversationTime = (date: Date): string => {
+  const ageMs = Date.now() - date.getTime();
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
+
 const RightInfoPanel = () => {
   const { connected, agentRunning, setAgentRunning, connectedSince, frozenUptimeMs } =
     useAgentConnection();
-  const { isStreaming } = useChat();
+  const {
+    conversations,
+    activeConversationId,
+    personaMismatch,
+    isStreaming,
+    startNewConversation,
+    switchConversation,
+    archiveConversation,
+    continueWithCurrentPersona,
+    dismissPersonaMismatch,
+  } = useChat();
   const live = useAgentLiveState(5000);
+  const activeConversations = conversations
+    .filter((conversation) => !conversation.archivedAt)
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 
   const uptimeText = connectedSince
     ? formatElapsed(Date.now() - connectedSince)
@@ -310,6 +339,111 @@ const RightInfoPanel = () => {
                 </p>
               </div>
             ))
+          )}
+        </Section>
+
+        {/* Conversations */}
+        <Section
+          title="Conversations"
+          icon={MessageSquare}
+          count={activeConversations.length}
+          storageKey="ronbot.right.conversations"
+        >
+          <button
+            type="button"
+            onClick={() => { void startNewConversation(); }}
+            disabled={isStreaming}
+            className="w-full flex items-center justify-center gap-1.5 rounded-md border border-white/10 px-2 py-1.5 text-[11px] text-muted-foreground hover:text-foreground hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <Plus className="w-3 h-3" />
+            New conversation
+          </button>
+
+          {personaMismatch && (
+            <div className="rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] space-y-2">
+              <div className="flex gap-1.5 text-warning">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <p>
+                  This conversation used different personality or core files.
+                </p>
+              </div>
+              <p className="text-muted-foreground">
+                Continue with the current files, or start a new conversation.
+              </p>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => { void continueWithCurrentPersona(); }}
+                  className="rounded-sm bg-warning/20 px-2 py-0.5 text-warning hover:bg-warning/30"
+                >
+                  Continue
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void startNewConversation(); }}
+                  className="rounded-sm bg-white/5 px-2 py-0.5 text-muted-foreground hover:text-foreground"
+                >
+                  Start new
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissPersonaMismatch}
+                  className="ml-auto rounded-sm px-1.5 py-0.5 text-muted-foreground hover:text-foreground"
+                  aria-label="Dismiss personality warning"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+
+          {activeConversations.length === 0 ? (
+            <EmptyRow>No active conversations yet.</EmptyRow>
+          ) : (
+            activeConversations.map((conversation) => {
+              const active = conversation.id === activeConversationId;
+              return (
+                <div
+                  key={conversation.id}
+                  className={cn(
+                    "group text-[12px] rounded-md px-2 py-1.5 border transition-colors",
+                    active
+                      ? "bg-primary/10 border-primary/30"
+                      : "glass-subtle border-transparent hover:border-white/10",
+                  )}
+                >
+                  <div className="flex items-start gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => { void switchConversation(conversation.id); }}
+                      disabled={active || isStreaming}
+                      className="min-w-0 flex-1 text-left disabled:cursor-default"
+                      title={conversation.title}
+                    >
+                      <p className={cn("font-medium truncate", active ? "text-primary" : "text-foreground")}>
+                        {conversation.title}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground truncate">
+                        {getConversationPreview(conversation)}
+                      </p>
+                    </button>
+                    <span className="text-[10px] text-muted-foreground/70 shrink-0">
+                      {formatConversationTime(conversation.updatedAt)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => archiveConversation(conversation.id)}
+                      disabled={isStreaming}
+                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive disabled:opacity-40 transition-opacity"
+                      aria-label={`Archive ${conversation.title}`}
+                      title="Archive conversation"
+                    >
+                      <Archive className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })
           )}
         </Section>
       </div>
