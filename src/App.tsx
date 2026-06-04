@@ -11,7 +11,6 @@ import { SettingsProvider } from "./contexts/SettingsContext";
 import { PermissionsProvider } from "./contexts/PermissionsContext";
 import { CapabilitiesProvider } from "./contexts/CapabilitiesContext";
 import ApprovalDialog from "./components/permissions/ApprovalDialog";
-import { AgentPromptProvider } from "./contexts/AgentPromptContext";
 import { AppRuntimeBridges } from "./components/AppRuntimeBridges";
 import WelcomeDialog from "./components/companion/WelcomeDialog";
 import SetupInstallPage from "./pages/SetupInstallPage";
@@ -41,15 +40,14 @@ const App = () => (
       <HashRouter>
         <SettingsProvider>
           <PermissionsProvider>
-            <AgentPromptProvider>
-              <ApprovalDialog />
-              <AgentConnectionProvider>
-                <AppRuntimeBridges />
-                <CapabilitiesProvider>
-                  <SetupProvider>
-                    <ChatProvider>
-                      <WelcomeDialog />
-                      <Routes>
+            <ApprovalDialog />
+            <AgentConnectionProvider>
+              <AppRuntimeBridges />
+              <CapabilitiesProvider>
+                <SetupProvider>
+                  <ChatProvider>
+                    <WelcomeDialog />
+                    <Routes>
                         <Route element={<AppLayout />}>
                           <Route path="/" element={<RootRoute />} />
                           <Route path="/install" element={<SetupInstallPage />} />
@@ -72,11 +70,10 @@ const App = () => (
                         </Route>
                         <Route path="*" element={<NotFound />} />
                       </Routes>
-                    </ChatProvider>
-                  </SetupProvider>
-                </CapabilitiesProvider>
-              </AgentConnectionProvider>
-            </AgentPromptProvider>
+                  </ChatProvider>
+                </SetupProvider>
+              </CapabilitiesProvider>
+            </AgentConnectionProvider>
           </PermissionsProvider>
         </SettingsProvider>
       </HashRouter>

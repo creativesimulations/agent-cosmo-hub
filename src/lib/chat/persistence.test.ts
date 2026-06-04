@@ -6,6 +6,7 @@ import {
   createConversation,
   loadStoredConversationState,
   parseStoredConversations,
+  sanitizeStoredMessages,
   serializeConversations,
 } from "./persistence";
 import type { ChatMessage } from "./types";
@@ -84,5 +85,17 @@ describe("chat conversation persistence", () => {
     const state = buildConversationState([archived, active], "archived");
 
     expect(state.activeConversationId).toBe("active");
+  });
+});
+
+describe("sanitizeStoredMessages", () => {
+  it("removes install-demo WhatsApp user prompt and following assistant reply", () => {
+    const cleaned = sanitizeStoredMessages([
+      message("u1", "Set up WhatsApp so I can message you from WhatsApp."),
+      { id: "a1", role: "assistant", content: "WhatsApp setup is complete.", timestamp: new Date() },
+      message("u2", "Real user question"),
+    ]);
+    expect(cleaned).toHaveLength(1);
+    expect(cleaned[0].content).toBe("Real user question");
   });
 });

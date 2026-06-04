@@ -22,7 +22,7 @@ export const isBannerLine = (line: string): boolean => {
   if (/^hermes\s+--resume\b/i.test(t)) return true;
   if (/^[↻⟳⭯⟲]?\s*resumed session\b/i.test(t)) return true;
   if (/^[▶►▷]?\s*starting (a )?new session\b/i.test(t)) return true;
-  if (/^session id:\s/i.test(t)) return true;
+  if (/^session(?:\s+id)?:\s/i.test(t)) return true;
   if (/^duration:\s/i.test(t)) return true;
   if (/^messages:\s/i.test(t)) return true;
   if (/^tokens?:\s/i.test(t)) return true;

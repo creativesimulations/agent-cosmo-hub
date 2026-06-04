@@ -53,6 +53,34 @@ const toDate = (value: unknown, fallback = new Date()): Date => {
   return Number.isNaN(d.getTime()) ? fallback : d;
 };
 
+export const CHAT_CLEARED_EVENT = "ronbot-chat-cleared";
+
+/** User prompts sometimes auto-sent during install/connect smoke tests. */
+const INSTALL_ARTIFACT_USER_RE = [
+  /^set up whatsapp so i can message you from whatsapp\.?$/i,
+  /^please set up the "whatsapp" skill for me\./i,
+];
+
+export function isInstallArtifactUserMessage(message: ChatMessage): boolean {
+  if (message.role !== "user") return false;
+  const compact = message.content.replace(/\s+/g, " ").trim();
+  return INSTALL_ARTIFACT_USER_RE.some((re) => re.test(compact));
+}
+
+/** Drop install-demo user message and the assistant reply that immediately follows it. */
+export function sanitizeStoredMessages(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (let i = 0; i < messages.length; i += 1) {
+    const msg = messages[i];
+    if (isInstallArtifactUserMessage(msg)) {
+      if (i + 1 < messages.length && messages[i + 1].role === "assistant") i += 1;
+      continue;
+    }
+    out.push(msg);
+  }
+  return out;
+}
+
 export const restoreMessage = (message: StoredChatMessage): ChatMessage => ({
   ...message,
   timestamp: toDate(message.timestamp),
@@ -126,7 +154,9 @@ export const createConversation = (options?: {
 
 const normalizeConversation = (raw: Partial<StoredConversation>): ChatConversation | null => {
   if (!raw || typeof raw.id !== "string") return null;
-  const messages = Array.isArray(raw.messages) ? raw.messages.map(restoreMessage) : [];
+  const messages = sanitizeStoredMessages(
+    Array.isArray(raw.messages) ? raw.messages.map(restoreMessage) : [],
+  );
   const createdAt = toDate(raw.createdAt, messages[0]?.timestamp ?? new Date());
   const updatedAt = toDate(raw.updatedAt, messages[messages.length - 1]?.timestamp ?? createdAt);
   return {
@@ -237,11 +267,38 @@ export const loadStoredMessages = (): ChatMessage[] => {
     if (!raw) return [];
     const parsed = JSON.parse(raw) as StoredChatMessage[];
     if (!Array.isArray(parsed)) return [];
-    return parsed.map(restoreMessage);
+    return sanitizeStoredMessages(parsed.map(restoreMessage));
   } catch {
     return [];
   }
 };
+
+/** Wipe chat history from browser storage and disk (used after a fresh install). */
+export async function clearPersistedChatStorage(): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(CONVERSATIONS_STORAGE_KEY);
+    window.localStorage.removeItem(ACTIVE_CONVERSATION_STORAGE_KEY);
+    window.localStorage.removeItem(CHAT_STORAGE_KEY);
+    window.localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    /* quota / private mode */
+  }
+  if (window.electronAPI) {
+    const paths = [
+      DISK_CONVERSATIONS_PATH,
+      DISK_ACTIVE_CONVERSATION_PATH,
+      DISK_HISTORY_PATH,
+      DISK_SESSION_PATH,
+    ];
+    for (const relative of paths) {
+      const full = await resolveHomePath(relative);
+      if (!full) continue;
+      await window.electronAPI.writeFile(full, "").catch(() => undefined);
+    }
+  }
+  window.dispatchEvent(new Event(CHAT_CLEARED_EVENT));
+}
 
 export const loadStoredSessionId = (): string | null => {
   if (typeof window === "undefined") return null;

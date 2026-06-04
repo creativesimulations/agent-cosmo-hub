@@ -1,12 +1,18 @@
-import { stripAnsi } from "@/lib/systemAPI/hermes/chatOutput";
+import { isBannerLine, stripAnsi } from "@/lib/systemAPI/hermes/chatOutput";
 
 /** Max accumulated transcript per turn (chars). */
 export const TERMINAL_STREAM_MAX = 64 * 1024;
 
-const HERMES_DIAG_LINE = /^\[hermes-diag\]/;
+/** Hermes chrome lines; blank lines are kept so paragraph breaks survive streaming. */
+export function isTranscriptNoiseLine(line: string): boolean {
+  const t = line.trim();
+  if (!t) return false;
+  return isBannerLine(line);
+}
 
+/** Hermes session footer lines stripped at end-of-turn (also covered by isBannerLine). */
 const SESSION_FOOTER_LINE =
-  /^(?:Resume this session(?:\s+with)?|hermes\s+--resume\b|Session id:|Duration:|Messages:|Tokens?:|Cost:)/i;
+  /^(?:Resume this session(?:\s+with)?|hermes\s+--resume\b|Session(?:\s+id)?:|Duration:|Messages:|Tokens?:|Cost:)/i;
 
 /** Remove Ronbot-injected diagnostic lines from a stream chunk. */
 export function filterTerminalChunk(chunk: string): string {
@@ -14,7 +20,7 @@ export function filterTerminalChunk(chunk: string): string {
   if (!noAnsi) return "";
   return noAnsi
     .split(/\r?\n/)
-    .filter((line) => !HERMES_DIAG_LINE.test(line.trim()))
+    .filter((line) => !isTranscriptNoiseLine(line))
     .join("\n");
 }
 
@@ -27,21 +33,24 @@ export function appendTerminalChunk(acc: string, chunk: string): string {
   return next.slice(-TERMINAL_STREAM_MAX);
 }
 
-/** End-of-turn trim: drop trailing Hermes session footer only. */
-export function finalizeTerminalTranscript(acc: string): string {
-  const lines = acc.split(/\r?\n/);
+function trimLeadingBannerLines(lines: string[]): string[] {
+  let start = 0;
+  while (start < lines.length && isBannerLine(lines[start])) start += 1;
+  return lines.slice(start);
+}
+
+function trimTrailingBannerLines(lines: string[]): string[] {
   let end = lines.length;
   while (end > 0) {
-    const t = lines[end - 1].trim();
-    if (!t) {
-      end -= 1;
-      continue;
-    }
-    if (SESSION_FOOTER_LINE.test(t)) {
-      end -= 1;
-      continue;
-    }
-    break;
+    const t = lines[end - 1];
+    if (!isBannerLine(t) && !SESSION_FOOTER_LINE.test(t.trim())) break;
+    end -= 1;
   }
-  return lines.slice(0, end).join("\n").trimEnd();
+  return lines.slice(0, end);
+}
+
+/** End-of-turn trim: drop Hermes chrome before the reply and session footer after. */
+export function finalizeTerminalTranscript(acc: string): string {
+  const trimmed = trimTrailingBannerLines(trimLeadingBannerLines(acc.split(/\r?\n/)));
+  return trimmed.join("\n").trimEnd();
 }

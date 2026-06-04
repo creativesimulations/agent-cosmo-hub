@@ -1,4 +1,5 @@
 // Hermes v0.13.0 sync — May 2026 (Ronbot)
+import { clearPersistedChatStorage } from "@/lib/chat/persistence";
 import { classifyHermesInstallProbe } from "@/lib/systemAPI/hermes/installProbe";
 import { systemAPI } from "@/lib/systemAPI";
 import { DEFAULT_AGENT_NAME } from "./constants";
@@ -159,6 +160,9 @@ export async function finalizeAfterInstall(
   }
   append("✓ Startup health checks passed.");
   progress(INSTALL_PROGRESS.complete);
+
+  append("Clearing any prior chat history so Agent Chat starts empty…");
+  await clearPersistedChatStorage().catch(() => undefined);
 
   return { ok: true };
 }

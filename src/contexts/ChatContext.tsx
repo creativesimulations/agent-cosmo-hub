@@ -31,6 +31,7 @@ import {
   createConversation,
   deriveConversationTitle,
   ensureParentDir,
+  CHAT_CLEARED_EVENT,
   loadStoredConversationState,
   parseStoredConversations,
   resolveHomePath,
@@ -265,6 +266,20 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
 
   const markChatViewed = useCallback(() => setUnreadCount(0), []);
   useEffect(() => { if (location.pathname === "/") setUnreadCount(0); }, [location.pathname]);
+
+  useEffect(() => {
+    const resetAfterInstall = () => {
+      const conversation = createConversation();
+      conversationsRef.current = [conversation];
+      sessionIdRef.current = null;
+      setConversations([conversation]);
+      setActiveId(conversation.id);
+      setPersonaMismatch(null);
+      setUnreadCount(0);
+    };
+    window.addEventListener(CHAT_CLEARED_EVENT, resetAfterInstall);
+    return () => window.removeEventListener(CHAT_CLEARED_EVENT, resetAfterInstall);
+  }, [setActiveId]);
 
   const deleteMessage = useCallback((id: string) => {
     patchMessages(activeConversationIdRef.current, (prev) => prev.filter((m) => m.id !== id));

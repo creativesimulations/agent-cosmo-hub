@@ -30,8 +30,6 @@ import SlashCommandPalette from "@/components/chat/SlashCommandPalette";
 import { useChatComposer } from "@/hooks/useChatComposer";
 import { LazyChatMessageMarkdown } from "@/components/chat/LazyChatMessageMarkdown";
 import { extractLineImageUrls } from "@/lib/chat/lineImageUrls";
-import AgentPromptBar from "@/components/chat/AgentPromptBar";
-
 function AssistantTranscript({ content }: { content: string }) {
   const imageUrls = extractLineImageUrls(content);
   return (
@@ -491,7 +489,6 @@ const AgentChat = () => {
               if (input.startsWith("/")) setInput(input.slice(1));
             }}
           />
-          <AgentPromptBar />
           {backgroundMode && (
             <div className="mb-2 px-3 py-1.5 rounded-md border border-accent/30 bg-accent/10 text-[11px] text-accent flex items-center gap-2">
               <Moon className="w-3 h-3" />

@@ -7,9 +7,17 @@ import {
 } from "./terminalStream";
 
 describe("filterTerminalChunk", () => {
-  it("strips ANSI and hermes-diag lines", () => {
-    const raw = "\x1b[32mok\x1b[0m\n[hermes-diag] secret detail\nvisible";
-    expect(filterTerminalChunk(raw)).toBe("ok\nvisible");
+  it("strips ANSI, hermes-diag, and Hermes chrome lines", () => {
+    const raw = [
+      "\x1b[32mQuery: hi\x1b[0m",
+      "Initializing agent...",
+      "↻ Resumed session abc (1 user message)",
+      "────────────────",
+      "╭─ ⚕ Hermes ───╮",
+      "[hermes-diag] secret detail",
+      "Hello from the model",
+    ].join("\n");
+    expect(filterTerminalChunk(raw)).toBe("Hello from the model");
   });
 });
 
@@ -30,16 +38,18 @@ describe("appendTerminalChunk", () => {
 });
 
 describe("finalizeTerminalTranscript", () => {
-  it("removes trailing session footer block", () => {
+  it("removes leading and trailing Hermes chrome", () => {
     const src = [
+      "Query: how's it going?",
+      "Initializing agent...",
+      "↻ Resumed session abc",
+      "────────────────",
       "Here is the answer.",
+      "╰──────────────────╯",
       "",
       "Resume this session with:",
       "  hermes --resume abc123",
-      "Session id: abc123",
-      "Duration: 12s",
-      "Tokens: 100",
-      "Cost: $0.01",
+      "Session:        abc123",
     ].join("\n");
     expect(finalizeTerminalTranscript(src)).toBe("Here is the answer.");
   });
