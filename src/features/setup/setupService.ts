@@ -2,6 +2,8 @@
 import { classifyHermesInstallProbe } from "@/lib/systemAPI/hermes/installProbe";
 import { systemAPI } from "@/lib/systemAPI";
 import { DEFAULT_AGENT_NAME } from "./constants";
+import type { InstallProgressUpdate } from "./installProgress";
+import { INSTALL_PROGRESS } from "./installProgress";
 import type { AgentProbe, InstallLogSink, InstallSource } from "./types";
 
 const HERMES_PROBE_PATH = "~/.hermes";
@@ -62,12 +64,14 @@ export type FinalizeOptions = {
   agentName?: string;
   source: InstallSource;
   log: InstallLogSink;
+  onProgress?: (update: InstallProgressUpdate) => void;
 };
 
 export async function finalizeAfterInstall(
   options: FinalizeOptions,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { seedPersona, agentName = DEFAULT_AGENT_NAME, source, log } = options;
+  const { seedPersona, agentName = DEFAULT_AGENT_NAME, source, log, onProgress } = options;
+  const progress = (update: InstallProgressUpdate) => onProgress?.(update);
   const append = (line: string) => log([line]);
 
   if (seedPersona) {
@@ -131,6 +135,7 @@ export async function finalizeAfterInstall(
   }
   append("✓ hermes launcher resolved to a supported path.");
 
+  progress(INSTALL_PROGRESS.finalizeGateway);
   append("Starting Hermes gateway…");
   const gateway = await systemAPI.restartAgent().catch((e) => ({
     success: false,
@@ -153,6 +158,7 @@ export async function finalizeAfterInstall(
     };
   }
   append("✓ Startup health checks passed.");
+  progress(INSTALL_PROGRESS.complete);
 
   return { ok: true };
 }

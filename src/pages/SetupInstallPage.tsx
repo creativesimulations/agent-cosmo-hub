@@ -104,6 +104,7 @@ export default function SetupInstallPage() {
                   installing={setup.installing}
                   installCancelling={setup.installCancelling}
                   progress={setup.installProgress}
+                  progressLabel={setup.installProgressLabel}
                   logLines={setup.logLines}
                   failure={setup.installFailure}
                   preflightReady={preflightReady}

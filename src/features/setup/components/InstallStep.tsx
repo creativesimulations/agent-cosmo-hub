@@ -18,6 +18,7 @@ type Props = {
   installing: boolean;
   installCancelling: boolean;
   progress: number;
+  progressLabel: string;
   logLines: string[];
   failure: InstallFailure | null;
   preflightReady: boolean;
@@ -35,6 +36,7 @@ export function InstallStep({
   installing,
   installCancelling,
   progress,
+  progressLabel,
   logLines,
   failure,
   preflightReady,
@@ -85,7 +87,18 @@ export function InstallStep({
             {installCancelling ? "Cancelling..." : "Cancel installation"}
           </Button>
         </div>
-        <Progress value={progress} className="h-2" />
+        <div className="space-y-1.5">
+          <Progress value={progress} className="h-2" />
+          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span className="truncate">{progressLabel || "Installing…"}</span>
+            <span className="shrink-0 tabular-nums">{progress}%</span>
+          </div>
+          {progress >= 74 && progress < 90 && (
+            <p className="text-xs text-muted-foreground">
+              Phase 2 (browser tools) can take 10–25 minutes with little npm output — heartbeat lines mean the step is still running, not frozen.
+            </p>
+          )}
+        </div>
         <StreamingLogPanel
           lines={logLines.length > 0 ? logLines : ["Waiting for installer output..."]}
           variant="install"
@@ -209,6 +222,11 @@ export function InstallStep({
           </Button>
         </div>
       )}
+      <p className="text-xs text-muted-foreground">
+        Already have a broken or partial install? Use{" "}
+        <strong>Settings → Uninstall Hermes</strong> or connect flow <strong>Reset &amp; reinstall</strong> to
+        delete <code className="font-mono">~/.hermes</code> before retrying.
+      </p>
       <Button
         className="w-full gradient-primary text-primary-foreground"
         disabled={!preflightReady}

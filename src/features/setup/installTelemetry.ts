@@ -25,7 +25,7 @@ export function pushInstallEvent(event: InstallEvent): void {
 export async function persistInstallReport(params: {
   events: InstallEvent[];
   logLines: string[];
-  result: "ok" | "error";
+  result: "ok" | "error" | "partial";
   errorCode?: string;
 }): Promise<void> {
   const { events, logLines, result, errorCode } = params;

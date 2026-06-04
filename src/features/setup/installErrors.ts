@@ -141,11 +141,34 @@ export function classifyInstallFailure(message: string, manualCommand?: string, 
       message,
     };
   }
-  if (lower.includes("timeout")) {
+  const timedOut =
+    lower.includes("timeout") ||
+    lower.includes("timed out") ||
+    lower.includes("no output for");
+  if (
+    timedOut &&
+    (lower.includes("installing node.js dependencies") ||
+      lower.includes("npm install") ||
+      lower.includes("agent-browser"))
+  ) {
+    return {
+      code: "timeout",
+      title: "Installer timed out during browser tools setup",
+      message,
+      manualCommand: [
+        'export PATH="$HOME/.hermes/node/bin:$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
+        'cd "$HOME/.hermes/hermes-agent" && npm install',
+      ].join("\n"),
+      hint:
+        "The Python agent usually installed successfully. Finish npm in WSL, then run `hermes doctor --fix` and restart the gateway from Diagnostics or Channels.",
+    };
+  }
+  if (timedOut) {
     return {
       code: "timeout",
       title: "Installer timed out",
       message,
+      hint: "Retry the install, or run the official installer in a WSL terminal if the log shows most steps already succeeded.",
     };
   }
   if (lower.includes("verify")) {

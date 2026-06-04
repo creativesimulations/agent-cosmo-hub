@@ -150,6 +150,7 @@ function registerCommandHandlers(ipcMain, IPC) {
     return new Promise((resolve) => {
       const streamId = options.streamId;
       const timeoutMs = options.timeout ?? 60000;
+      const idleTimeoutMs = options.idleTimeoutMs ?? 0;
       const shellOverride = process.platform === 'win32' ? true : '/bin/bash';
       const opts = {
         cwd: options.cwd || os.homedir(),
@@ -164,27 +165,49 @@ function registerCommandHandlers(ipcMain, IPC) {
       let timedOut = false;
       let collectedStdout = '';
       let collectedStderr = '';
+      let lastActivityAt = Date.now();
 
       const finish = (result) => {
         if (settled) return;
         settled = true;
-        if (timer) clearTimeout(timer);
+        if (absoluteTimer) clearTimeout(absoluteTimer);
+        if (idlePollTimer) clearInterval(idlePollTimer);
         resolve(result);
       };
 
-      const timer = timeoutMs > 0
+      const noteActivity = () => {
+        lastActivityAt = Date.now();
+      };
+
+      const killForTimeout = (message) => {
+        timedOut = true;
+        event.sender.send(IPC.COMMAND_OUTPUT, {
+          streamId,
+          type: 'stderr',
+          data: message,
+        });
+        terminateChildTree(child);
+      };
+
+      const absoluteTimer = timeoutMs > 0
         ? setTimeout(() => {
-          timedOut = true;
-          event.sender.send(IPC.COMMAND_OUTPUT, {
-            streamId,
-            type: 'stderr',
-            data: `[process] Command timed out after ${timeoutMs}ms\n`,
-          });
-          terminateChildTree(child);
+          killForTimeout(`[process] Command timed out after ${timeoutMs}ms\n`);
         }, timeoutMs)
         : null;
 
+      const idlePollTimer = idleTimeoutMs > 0
+        ? setInterval(() => {
+          if (settled || timedOut) return;
+          if (Date.now() - lastActivityAt >= idleTimeoutMs) {
+            killForTimeout(
+              `[process] No output for ${idleTimeoutMs}ms — install may be stuck (idle timeout). If npm is still running in WSL, wait and retry browser tools from Diagnostics.\n`,
+            );
+          }
+        }, 5000)
+        : null;
+
       child.stdout.on('data', (data) => {
+        noteActivity();
         const chunk = data.toString();
         collectedStdout += chunk;
         event.sender.send(IPC.COMMAND_OUTPUT, {
@@ -195,6 +218,7 @@ function registerCommandHandlers(ipcMain, IPC) {
       });
 
       child.stderr.on('data', (data) => {
+        noteActivity();
         const chunk = data.toString();
         collectedStderr += chunk;
         event.sender.send(IPC.COMMAND_OUTPUT, {
@@ -213,7 +237,7 @@ function registerCommandHandlers(ipcMain, IPC) {
         });
         finish({
           success: !timedOut && code === 0,
-          code: timedOut ? 124 : (code ?? 0),
+          code: timedOut ? 124 : (code ?? 0), // idle or absolute cap
           stdout: collectedStdout,
           stderr: collectedStderr,
         });

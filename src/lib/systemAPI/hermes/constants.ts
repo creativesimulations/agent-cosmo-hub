@@ -7,15 +7,17 @@ export const HERMES_CONFIG = '$HOME/.hermes/config.yaml';
 export const INSTALL_SCRIPT =
   'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh';
 
-/**
- * Official Hermes installer (v0.13+). Ronbot skips the upstream interactive
- * setup wizard because the desktop app owns post-install configuration UX.
- */
-export const buildOfficialHermesInstallScript = (): string =>
-  `curl -fsSL ${INSTALL_SCRIPT} | bash -s -- --skip-setup`;
+export {
+  buildOfficialHermesInstallScript,
+  buildHermesCoreInstallScript,
+  buildHermesBrowserInstallScript,
+  HERMES_CORE_INSTALL_STAGES,
+} from './installScripts';
+
+import { buildOfficialHermesInstallScript as buildOfficialInstaller } from './installScripts';
 
 /** @deprecated use buildOfficialHermesInstallScript — kept for grep/tests migration */
-export const buildInstallerRunScript = (): string => buildOfficialHermesInstallScript();
+export const buildInstallerRunScript = (): string => buildOfficialInstaller();
 
 /** Inline script size limit before staging to disk (argv / ENAMETOOLONG safety). */
 export const INLINE_SCRIPT_LIMIT = 4096;

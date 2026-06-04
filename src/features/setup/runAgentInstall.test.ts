@@ -8,6 +8,10 @@ vi.mock("@/lib/systemAPI", () => ({
     checkFfmpeg: vi.fn(),
     getPlatform: vi.fn(),
     installHermes: vi.fn(),
+    installHermesCore: vi.fn(),
+    installHermesBrowser: vi.fn(),
+    verifyHermesInstall: vi.fn(),
+    inspectHermesInstall: vi.fn(),
     installHermesFromLocalFolder: vi.fn(),
   },
 }));
@@ -63,10 +67,29 @@ describe("runAgentInstall", () => {
     });
     vi.mocked(evaluateInstallContract).mockResolvedValue(passingContract());
     vi.mocked(finalizeAfterInstall).mockResolvedValue({ ok: true });
-    vi.mocked(systemAPI.installHermes).mockImplementation(async (_extras, onOutput, onStreamId) => {
+    vi.mocked(systemAPI.installHermesCore).mockImplementation(async (onOutput, onStreamId) => {
       onStreamId?.("install-stream");
-      onOutput?.({ type: "stdout", data: "install line\n" });
-      return { success: true, stdout: "installed\n", stderr: "", code: 0 };
+      onOutput?.({ type: "stdout", data: "[ronbot-install] core install stages finished\n" });
+      return { success: true, stdout: "core\n", stderr: "", code: 0 };
+    });
+    vi.mocked(systemAPI.installHermesBrowser).mockImplementation(async (onOutput) => {
+      onOutput?.({ type: "stdout", data: "Node.js dependencies installed\n" });
+      return { success: true, stdout: "browser\n", stderr: "", code: 0 };
+    });
+    vi.mocked(systemAPI.verifyHermesInstall).mockResolvedValue({
+      success: true,
+      stdout: "verified\n",
+      stderr: "",
+      code: 0,
+    });
+    vi.mocked(systemAPI.inspectHermesInstall).mockResolvedValue({
+      hasDir: true,
+      hasEnv: false,
+      hasConfig: true,
+      hasVenvCli: true,
+      hasPathCli: false,
+      hasCliRuns: true,
+      hasModelLine: false,
     });
   });
 
@@ -76,13 +99,18 @@ describe("runAgentInstall", () => {
     const result = await runAgentInstall({ ...baseParams(log), seedPersona: true });
 
     expect(result.ok).toBe(true);
-    expect(systemAPI.installHermes).toHaveBeenCalledWith(undefined, expect.any(Function), undefined);
-    expect(finalizeAfterInstall).toHaveBeenCalledWith({
-      seedPersona: true,
-      agentName: "Ronbot",
-      source: "bundled",
-      log: expect.any(Function),
-    });
+    expect(systemAPI.installHermesCore).toHaveBeenCalled();
+    expect(systemAPI.installHermesBrowser).toHaveBeenCalled();
+    expect(systemAPI.verifyHermesInstall).toHaveBeenCalled();
+    expect(finalizeAfterInstall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        seedPersona: true,
+        agentName: "Ronbot",
+        source: "bundled",
+        log: expect.any(Function),
+        onProgress: expect.any(Function),
+      }),
+    );
     expect(log.flat().join("\n")).toContain("Agent installed");
   });
 
@@ -110,12 +138,21 @@ describe("runAgentInstall", () => {
       expect(result.manualCommand).toBe("sudo apt-get install -y git");
       expect(result.failure?.code).toBe("git_missing");
     }
-    expect(systemAPI.installHermes).not.toHaveBeenCalled();
+    expect(systemAPI.installHermesCore).not.toHaveBeenCalled();
   });
 
   it("classifies installer stderr into a friendly recovery failure", async () => {
     const log: string[][] = [];
-    vi.mocked(systemAPI.installHermes).mockResolvedValue({
+    vi.mocked(systemAPI.inspectHermesInstall).mockResolvedValue({
+      hasDir: false,
+      hasEnv: false,
+      hasConfig: false,
+      hasVenvCli: false,
+      hasPathCli: false,
+      hasCliRuns: false,
+      hasModelLine: false,
+    });
+    vi.mocked(systemAPI.installHermesCore).mockResolvedValue({
       success: false,
       stdout: "",
       stderr: "python3-venv is not installed\n",
@@ -129,7 +166,7 @@ describe("runAgentInstall", () => {
       expect(result.failure?.code).toBe("privilege");
       expect(result.failure?.autoInstallId).toBe("python3-venv");
     }
-    expect(log.flat().join("\n")).toContain("Installation failed");
+    expect(log.flat().join("\n")).toContain("Core install failed");
     expect(finalizeAfterInstall).not.toHaveBeenCalled();
   });
 });

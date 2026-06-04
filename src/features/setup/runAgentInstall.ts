@@ -1,8 +1,13 @@
 // Hermes v0.13.0 sync — May 2026 (Ronbot)
 import { systemAPI } from "@/lib/systemAPI";
-import { createStreamLineParser } from "./streamOutput";
+import { hasUsableHermesInstall } from "@/lib/systemAPI/hermes/installProbe";
+import { LOCAL_INSTALL_PIP_EXTRAS } from "./constants";
+import { INSTALL_PROGRESS } from "./installProgress";
+import { createInstallStreamHandler } from "./installStream";
+import type { StreamEvent } from "./types";
 import { finalizeAfterInstall } from "./setupService";
 import type { InstallLogSink, InstallSource } from "./types";
+import type { InstallProgressUpdate } from "./installProgress";
 import { evaluateInstallContract } from "./installContract";
 import { classifyInstallFailure, type InstallFailure } from "./installErrors";
 import { pushInstallEvent, type InstallEvent } from "./installTelemetry";
@@ -26,6 +31,7 @@ export type RunInstallParams = {
   requestSudo: SudoRequester;
   isAborted: () => boolean;
   onStreamId?: (id: string) => void;
+  onProgress?: (update: InstallProgressUpdate) => void;
 };
 
 export type RunInstallResult =
@@ -33,7 +39,11 @@ export type RunInstallResult =
   | { ok: false; message: string; cancelled?: boolean; failure?: InstallFailure; manualCommand?: string; events?: InstallEvent[] };
 
 export async function runAgentInstall(params: RunInstallParams): Promise<RunInstallResult> {
-  const { source, localPath, seedPersona, agentName, log, requestSudo, isAborted, onStreamId } = params;
+  const { source, localPath, seedPersona, agentName, log, requestSudo, isAborted, onStreamId, onProgress } =
+    params;
+  const reportProgress = (update: InstallProgressUpdate) => {
+    if (!isAborted()) onProgress?.(update);
+  };
   const events: InstallEvent[] = [];
   const emit = (event: InstallEvent) => {
     events.push(event);
@@ -43,6 +53,7 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
     if (!isAborted()) log([line]);
   };
 
+  reportProgress(INSTALL_PROGRESS.preflight);
   append("Checking desktop bridge health…");
   const bridge = await systemAPI.checkDesktopBridge();
   if (!bridge.ok) {
@@ -98,6 +109,7 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
       : `Installing from local folder with extras: ${LOCAL_INSTALL_PIP_EXTRAS.join(", ")}…`,
   );
 
+  reportProgress(INSTALL_PROGRESS.apt);
   const aptPackages = await collectInstallAptPackages(source, log);
   emit({
     ts: new Date().toISOString(),
@@ -140,31 +152,109 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
     message: aptPackages.length ? "System dependency setup finished" : "No system dependency setup needed",
   });
 
-  const { parse, flush } = createStreamLineParser((lines) => log(lines));
+  const runStreamedStep = async (
+    phase: "core" | "browser",
+    run: (onStream: (event: StreamEvent) => void) => Promise<Awaited<ReturnType<typeof systemAPI.installHermesCore>>>,
+  ) => {
+    const stream = createInstallStreamHandler({
+      phase,
+      onLines: (lines) => {
+        if (!isAborted()) log(lines);
+      },
+      onProgress: reportProgress,
+    });
+    try {
+      return await run(stream.parse);
+    } finally {
+      stream.flush();
+      stream.dispose();
+    }
+  };
+
   emit({
     ts: new Date().toISOString(),
     phase: "installer",
     step: "run-hermes-installer",
     status: "info",
-    message: source === "bundled" ? "Running official installer" : "Running local-folder install",
+    message: source === "bundled" ? "Running official installer (core, then browser)" : "Running local-folder install",
   });
-  const result = await runHermesInstaller(source, localPath, parse, onStreamId);
-  flush();
-  if (isAborted()) return { ok: false, message: "Cancelled", cancelled: true };
 
-  if (!result.success) {
-    const lines = [`✗ Installation failed (exit ${result.code ?? "?"})`, ...summarizeCommandFailureOutput(result)];
-    log(lines.length > 1 ? lines : [`✗ Installation failed (exit ${result.code ?? "?"})`, `--- details ---`, tailCommandOutput(result, 20)]);
-    const message = "Hermes installer exited with an error.";
-    const failureOutput = [result.stderr, result.stdout].filter(Boolean).join("\n");
+  let coreResult: Awaited<ReturnType<typeof systemAPI.installHermesCore>>;
+  let browserResult: Awaited<ReturnType<typeof systemAPI.installHermesBrowser>> | undefined;
+
+  if (source === "bundled") {
+    reportProgress(INSTALL_PROGRESS.coreStart);
+    append("Phase 1/2: Installing Hermes core (Python, CLI, config)…");
+    coreResult = await runStreamedStep("core", (onStream) => systemAPI.installHermesCore(onStream, onStreamId));
+    if (isAborted()) return { ok: false, message: "Cancelled", cancelled: true };
+
+    if (!coreResult.success) {
+      const probe = await systemAPI.inspectHermesInstall().catch(() => null);
+      if (probe && hasUsableHermesInstall(probe)) {
+        append("⚠ Core installer reported an error, but ~/.hermes looks usable — continuing with browser tools.");
+      } else {
+        const lines = [`✗ Core install failed (exit ${coreResult.code ?? "?"})`, ...summarizeCommandFailureOutput(coreResult)];
+        log(lines.length > 1 ? lines : [`✗ Core install failed`, tailCommandOutput(coreResult, 20)]);
+        const message = "Hermes core install exited with an error.";
+        const failureOutput = [coreResult.stderr, coreResult.stdout].filter(Boolean).join("\n");
+        emit({
+          ts: new Date().toISOString(),
+          phase: "installer",
+          step: "run-hermes-installer",
+          status: "error",
+          message: `${message} Exit ${coreResult.code ?? "?"}`,
+        });
+        return { ok: false, message, failure: classifyInstallFailure(message, undefined, failureOutput), events };
+      }
+    }
+    reportProgress(INSTALL_PROGRESS.coreDone);
+    append("✓ Core install finished.");
+
+    reportProgress(INSTALL_PROGRESS.browserStart);
+    append("Phase 2/2: Installing browser tools (npm + Playwright — often 10–25 min)…");
+    browserResult = await runStreamedStep("browser", (onStream) => systemAPI.installHermesBrowser(onStream, onStreamId));
+    if (isAborted()) return { ok: false, message: "Cancelled", cancelled: true };
+    if (!browserResult.success) {
+      append("⚠ Browser tools install did not complete. Chat and most tools still work; retry from Diagnostics later.");
+      reportProgress(INSTALL_PROGRESS.browserSkipped);
+    } else {
+      reportProgress(INSTALL_PROGRESS.browserDone);
+      append("✓ Browser tools install finished.");
+    }
+  } else {
+    reportProgress(INSTALL_PROGRESS.coreStart);
+    coreResult = await runStreamedStep("core", (onStream) =>
+      runHermesInstaller(source, localPath, onStream, onStreamId),
+    );
+    if (isAborted()) return { ok: false, message: "Cancelled", cancelled: true };
+    if (!coreResult.success) {
+      const lines = [`✗ Installation failed (exit ${coreResult.code ?? "?"})`, ...summarizeCommandFailureOutput(coreResult)];
+      log(lines.length > 1 ? lines : [`✗ Installation failed`, tailCommandOutput(coreResult, 20)]);
+      const message = "Hermes installer exited with an error.";
+      const failureOutput = [coreResult.stderr, coreResult.stdout].filter(Boolean).join("\n");
+      emit({
+        ts: new Date().toISOString(),
+        phase: "installer",
+        step: "run-hermes-installer",
+        status: "error",
+        message: `${message} Exit ${coreResult.code ?? "?"}`,
+      });
+      return { ok: false, message, failure: classifyInstallFailure(message, undefined, failureOutput), events };
+    }
+    reportProgress(INSTALL_PROGRESS.coreDone);
+  }
+
+  const verified = await systemAPI.verifyHermesInstall({ core: coreResult, browser: browserResult });
+  if (!verified.success) {
+    const message = "Install finished but Ronbot could not verify a usable Hermes CLI under ~/.hermes.";
     emit({
       ts: new Date().toISOString(),
       phase: "installer",
-      step: "run-hermes-installer",
+      step: "verify-install",
       status: "error",
-      message: `${message} Exit ${result.code ?? "?"}`,
+      message,
     });
-    return { ok: false, message, failure: classifyInstallFailure(message, undefined, failureOutput), events };
+    return { ok: false, message, failure: classifyInstallFailure(message), events };
   }
 
   emit({
@@ -182,7 +272,14 @@ export async function runAgentInstall(params: RunInstallParams): Promise<RunInst
     status: "info",
     message: "Running post-install verification",
   });
-  const finalized = await finalizeAfterInstall({ seedPersona, agentName, source, log });
+  reportProgress(INSTALL_PROGRESS.finalizeStart);
+  const finalized = await finalizeAfterInstall({
+    seedPersona,
+    agentName,
+    source,
+    log,
+    onProgress: reportProgress,
+  });
   if (isAborted()) return { ok: false, message: "Cancelled", cancelled: true };
   if (finalized.ok === false) {
     const failMessage = finalized.message;

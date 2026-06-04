@@ -36,6 +36,7 @@ type SetupContextValue = {
   installCancelling: boolean;
   installSucceeded: boolean;
   installProgress: number;
+  installProgressLabel: string;
   logLines: string[];
   installFailure: InstallFailure | null;
   guardAgentName: string | null;
@@ -79,6 +80,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
   const [installCancelling, setInstallCancelling] = useState(false);
   const [installSucceeded, setInstallSucceeded] = useState(false);
   const [installProgress, setInstallProgress] = useState(0);
+  const [installProgressLabel, setInstallProgressLabel] = useState("");
   const [logLines, setLogLines] = useState<string[]>([]);
   const [installFailure, setInstallFailure] = useState<InstallFailure | null>(null);
   const [guardAgentName, setGuardAgentName] = useState<string | null>(null);
@@ -106,6 +108,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
     setLogLines([]);
     setInstallFailure(null);
     setInstallProgress(0);
+    setInstallProgressLabel("");
     setInstallCancelling(false);
     setInstallSucceeded(false);
     setWizardStep("prereqs");
@@ -252,14 +255,10 @@ export function SetupProvider({ children }: { children: ReactNode }) {
     setInstallCancelling(false);
     setInstallSucceeded(false);
     setInstallProgress(5);
+    setInstallProgressLabel("Preparing install…");
     setLogLines([]);
     setInstallFailure(null);
     activeInstallStreamIdRef.current = null;
-
-    const progressTimer = window.setInterval(() => {
-      if (installGenRef.current !== gen) return;
-      setInstallProgress((p) => Math.min(p + 2, 90));
-    }, 800);
 
     const seedPersona = replacePersona;
     const result = await runAgentInstall({
@@ -278,9 +277,12 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       onStreamId: (id) => {
         if (installGenRef.current === gen) activeInstallStreamIdRef.current = id;
       },
+      onProgress: ({ percent, label }) => {
+        if (installGenRef.current !== gen) return;
+        setInstallProgress(percent);
+        setInstallProgressLabel(label);
+      },
     });
-
-    window.clearInterval(progressTimer);
     if (installGenRef.current !== gen) return;
     activeInstallStreamIdRef.current = null;
 
@@ -304,6 +306,28 @@ export function SetupProvider({ children }: { children: ReactNode }) {
         toast.error("Could not verify connection after install");
       }
     } else if (result.ok === false && !result.cancelled) {
+      invalidateAgentProbeCache();
+      const recovered = await refreshConnection();
+      if (recovered) {
+        appendLog([
+          "⚠ Installer reported an error, but the Hermes CLI under ~/.hermes looks usable.",
+          "If browser tools failed, finish `npm install` in WSL (see copy command on this screen), then open Diagnostics.",
+        ]);
+        setInstallProgress(100);
+        setInstallSucceeded(true);
+        setWizardStep("done");
+        setInstallFailure(result.failure ?? null);
+        void persistInstallReport({
+          events: result.events ?? [],
+          logLines: installLogBuffer,
+          result: "partial",
+          errorCode: result.failure?.code,
+        });
+        toast.warning("Hermes is installed with warnings", {
+          description: result.failure?.hint ?? result.message,
+        });
+        return;
+      }
       setInstallFailure(result.failure ?? null);
       void persistInstallReport({
         events: result.events ?? [],
@@ -358,20 +382,25 @@ export function SetupProvider({ children }: { children: ReactNode }) {
 
   const guardResetAndReinstall = useCallback(
     async (onLog: (lines: string[]) => void) => {
-      onLog(["Uninstalling existing Hermes…"]);
+      onLog(["Stopping Hermes and removing ~/.hermes…"]);
+      await systemAPI.stopHermesAgentRuntime().catch(() => undefined);
       const result = await systemAPI.hermesUninstall((event) => {
-        if (event.data) onLog([event.data.trim()].filter(Boolean));
+        if ((event.type === "stdout" || event.type === "stderr") && event.data) {
+          const lines = event.data.replace(/\r\n/g, "\n").split("\n").map((l) => l.trim()).filter(Boolean);
+          if (lines.length) onLog(lines);
+        }
       });
       if (!result.success) {
         onLog([`✗ Uninstall failed: ${result.stderr || result.stdout || "unknown"}`]);
         return false;
       }
       invalidateAgentProbeCache();
-      onLog(["✓ Uninstalled. Starting fresh install wizard."]);
+      await refreshConnection();
+      onLog(["✓ Removed ~/.hermes. Continue with Install agent on the next screen."]);
       goWizardPrereqs("bundled");
       return true;
     },
-    [goWizardPrereqs],
+    [goWizardPrereqs, refreshConnection],
   );
 
   const blocking = useMemo<SetupBlockingState>(() => {
@@ -394,6 +423,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       installCancelling,
       installSucceeded,
       installProgress,
+      installProgressLabel,
       logLines,
       installFailure,
       guardAgentName,
@@ -430,6 +460,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       installCancelling,
       installSucceeded,
       installProgress,
+      installProgressLabel,
       logLines,
       installFailure,
       guardAgentName,

@@ -36,6 +36,8 @@ import {
   BROWSER_EXECUTABLE_FIX_SCRIPT,
 } from './hermes/constants';
 import { runOfficialHermesInstall, runLocalFolderHermesInstall } from './hermes/installRun';
+import { buildHermesBrowserInstallScript, buildHermesCoreInstallScript } from './hermes/installScripts';
+import { INSTALL_BROWSER_STREAM, INSTALL_CORE_STREAM } from './hermes/installTimeouts';
 import { fetchInstalledSkillsList } from './hermes/listSkills';
 import { materializeHermesEnv } from './hermes/materializeEnv';
 import { parseBrowserBlock, type BrowserBlockState } from './hermes/browserBlock';
@@ -555,7 +557,41 @@ export const hermesAPI = {
     return { ok: r.success, text: text.slice(0, 800), looksLikeV013 };
   },
 
-  /** Install the agent using the official install script.
+  /** Core Hermes install (staged official script, no browser/npm). */
+  async installCore(onOutput?: CommandOutputHandler, onStreamId?: (id: string) => void): Promise<CommandResult> {
+    return runHermesShell(
+      buildHermesCoreInstallScript(),
+      { ...INSTALL_CORE_STREAM, onStreamId },
+      onOutput,
+    );
+  },
+
+  /** Browser tools install (official node-deps stage). Non-fatal if this fails after core. */
+  async installBrowser(onOutput?: CommandOutputHandler, onStreamId?: (id: string) => void): Promise<CommandResult> {
+    const browserResult = await runHermesShell(
+      buildHermesBrowserInstallScript(),
+      { ...INSTALL_BROWSER_STREAM, onStreamId },
+      onOutput,
+    );
+    await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15_000 }, onOutput).catch(() => undefined);
+    return browserResult;
+  },
+
+  /** Verify ~/.hermes after core (+ optional browser) install steps. */
+  async verifyInstall(
+    pipeline: { core: CommandResult; browser?: CommandResult },
+    onOutput?: CommandOutputHandler,
+  ): Promise<CommandResult> {
+    const merged: CommandResult = {
+      success: pipeline.core.success,
+      code: pipeline.core.code,
+      stdout: `${pipeline.core.stdout}${pipeline.browser?.stdout ?? ''}`,
+      stderr: `${pipeline.core.stderr}${pipeline.browser?.stderr ?? ''}`,
+    };
+    return finalizeInstallVerification(merged, onOutput);
+  },
+
+  /** Install the agent using the official install script (core + browser + verify).
    *  On Windows we always run inside WSL because hermes-agent is not published
    *  to PyPI and requires the install script (which expects a POSIX shell). */
   async install(extras?: string[], onOutput?: CommandOutputHandler, onStreamId?: (id: string) => void): Promise<CommandResult> {
@@ -721,6 +757,14 @@ export const hermesAPI = {
     agentLogs.push({ source: 'system', level: 'warn', summary: 'Uninstalling Hermes…' });
     const script = [
       'set +e',
+      'export PATH="$HOME/.hermes/venv/bin:$HOME/.hermes/bin:$HOME/.local/bin:$PATH"',
+      'echo "[uninstall] stopping Hermes gateway and CLI…"',
+      'if command -v hermes >/dev/null 2>&1; then',
+      '  hermes gateway stop 2>/dev/null || true',
+      'fi',
+      'systemctl --user stop hermes-gateway.service 2>/dev/null || true',
+      'systemctl --user stop hermes-gateway 2>/dev/null || true',
+      'pkill -f "gateway/run.py" 2>/dev/null || true',
       'echo "[uninstall] removing ~/.hermes (config, venv, skills, logs, state)"',
       'rm -rf "$HOME/.hermes"',
       'echo "[uninstall] removing ~/.local/bin/hermes symlink"',

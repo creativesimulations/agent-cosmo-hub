@@ -20,4 +20,21 @@ describe("classifyInstallFailure", () => {
     expect(failure.autoInstallId).toBe("build-tools");
     expect(failure.manualCommand).toContain("build-essential python3-dev libffi-dev");
   });
+
+  it("classifies npm/browser timeout with resume command", () => {
+    const failure = classifyInstallFailure(
+      "Hermes installer exited with an error.",
+      undefined,
+      [
+        "✓ All dependencies installed",
+        "→ Installing Node.js dependencies (browser tools)...",
+        "[process] Command timed out after 600000ms",
+      ].join("\n"),
+    );
+
+    expect(failure.code).toBe("timeout");
+    expect(failure.title).toContain("browser tools");
+    expect(failure.manualCommand).toContain("npm install");
+    expect(failure.hint).toContain("doctor");
+  });
 });

@@ -60,6 +60,9 @@ export const systemAPI = {
   // Hermes Agent
   getHermesCliVersionSummary: hermesAPI.getHermesCliVersionSummary.bind(hermesAPI),
   installHermes: hermesAPI.install.bind(hermesAPI),
+  installHermesCore: hermesAPI.installCore.bind(hermesAPI),
+  installHermesBrowser: hermesAPI.installBrowser.bind(hermesAPI),
+  verifyHermesInstall: hermesAPI.verifyInstall.bind(hermesAPI),
   installHermesFromLocalFolder: hermesAPI.installFromLocalFolder.bind(hermesAPI),
   hermesDoctor: hermesAPI.doctor.bind(hermesAPI),
   analyzeDoctorIssues: hermesAPI.analyzeDoctorIssues.bind(hermesAPI),

@@ -2,16 +2,22 @@
 import type { CommandResult } from '../types';
 import type { CommandOutputHandler } from './shell';
 import { runHermesShell } from './shell';
-import { buildOfficialHermesInstallScript, BROWSER_EXECUTABLE_FIX_SCRIPT } from './constants';
+import { BROWSER_EXECUTABLE_FIX_SCRIPT } from './constants';
+import { buildHermesBrowserInstallScript, buildHermesCoreInstallScript } from './installScripts';
+import { INSTALL_BROWSER_STREAM, INSTALL_CORE_STREAM } from './installTimeouts';
 
 export type FinalizeInstall = (
   result: CommandResult,
   onOutput?: CommandOutputHandler,
 ) => Promise<CommandResult>;
 
+function isIdleTimeout(result: CommandResult): boolean {
+  const text = [result.stderr, result.stdout].join('\n');
+  return result.code === 124 && /no output for/i.test(text);
+}
+
 /**
- * Official `curl … | bash` installer only (Hermes v0.13+). No Ronbot-managed
- * venv bootstrap or post-script pip extras — the script owns the full install.
+ * Official installer in two phases: core (fast path to usable CLI) then browser tools.
  */
 export async function runOfficialHermesInstall(
   _extras: string[] | undefined,
@@ -20,11 +26,48 @@ export async function runOfficialHermesInstall(
   onStreamId?: (id: string) => void,
 ): Promise<CommandResult> {
   void _extras;
-  const script = buildOfficialHermesInstallScript();
-  const baseResult = await runHermesShell(script, { timeout: 600_000, onStreamId }, onOutput);
-  if (!baseResult.success) return baseResult;
+
+  onOutput?.({ type: 'stdout', data: '[ronbot-install] Phase 1/2: Hermes core (Python, CLI, config)\n' });
+  const coreScript = buildHermesCoreInstallScript();
+  const coreResult = await runHermesShell(
+    coreScript,
+    { ...INSTALL_CORE_STREAM, onStreamId },
+    onOutput,
+  );
+
+  if (!coreResult.success) {
+    if (isIdleTimeout(coreResult)) {
+      onOutput?.({
+        type: 'stderr',
+        data: '[ronbot-install] Core install produced no output for a long time. It may still be running in WSL — check with: ps aux | grep install\n',
+      });
+    }
+    return coreResult;
+  }
+
+  onOutput?.({ type: 'stdout', data: '[ronbot-install] Phase 2/2: Browser tools (npm + Playwright, optional)\n' });
+  const browserScript = buildHermesBrowserInstallScript();
+  const browserResult = await runHermesShell(
+    browserScript,
+    { ...INSTALL_BROWSER_STREAM, onStreamId },
+    onOutput,
+  );
+
+  if (!browserResult.success) {
+    onOutput?.({
+      type: 'stderr',
+      data: '[ronbot-install] Browser tools step did not finish cleanly. Core Hermes should still work; you can retry from Diagnostics or run: cd ~/.hermes/hermes-agent && npm install\n',
+    });
+  }
+
   await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15_000 }, onOutput).catch(() => undefined);
-  return finalize(baseResult, onOutput);
+  const merged: CommandResult = {
+    success: coreResult.success,
+    code: coreResult.code,
+    stdout: `${coreResult.stdout}${browserResult.stdout}`,
+    stderr: `${coreResult.stderr}${browserResult.stderr}`,
+  };
+  return finalize(merged, onOutput);
 }
 
 /** pip install -e from an existing source folder (already a POSIX path). */
@@ -79,7 +122,7 @@ export async function runLocalFolderHermesInstall(
     'echo "[local-install] done."',
   ].join('\n');
 
-  const result = await runHermesShell(script, { timeout: 600_000, onStreamId }, onOutput);
+  const result = await runHermesShell(script, { ...INSTALL_CORE_STREAM, onStreamId }, onOutput);
   if (!result.success) return result;
   await runHermesShell(BROWSER_EXECUTABLE_FIX_SCRIPT, { timeout: 15_000 }, onOutput).catch(() => undefined);
   return finalize(result, onOutput);
