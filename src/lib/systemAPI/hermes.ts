@@ -80,6 +80,11 @@ import {
   stripAnsi,
 } from './hermes/chatOutput';
 import { finalizeTerminalTranscript } from '../chat/terminalStream';
+import {
+  disposeConversationChat as disposePersistentChat,
+  runPersistentChatTurn,
+} from './hermes/persistentChatSession';
+import { finalizeTerminalTranscript } from '../chat/terminalStream';
 import { parseSubAgentLog } from './hermes/subAgentLog';
 import { tailAgentLog as runTailAgentLog } from './hermes/tailAgentLog';
 import {
@@ -491,6 +496,34 @@ export const setBrowserCdpUrl = async (
   return result;
 };
 
+const shellEscapeForScript = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+/** Run Hermes under a pseudo-TTY so approval prompts can read stdin. */
+const wrapCommandInPty = (command: string): string =>
+  `script -qefc "${shellEscapeForScript(command)}" /dev/null`;
+
+const processChatTranscript = (
+  prompt: string,
+  stdout: string,
+  resumeId?: string,
+  sessionWasInvalid = false,
+): { cleaned: string; sessionId: string | null | undefined; diagnostics: string } => {
+  const rawLines = stripAnsi(stdout || '')
+    .split('\n')
+    .map((line) => line.replace(/\r/g, ''));
+  const diagnostics = rawLines
+    .filter((line) => /^\[hermes-diag\]/.test(line.trim()))
+    .map((line) => line.trim().replace(/^\[hermes-diag\]\s*/, ''))
+    .join('\n');
+  const filtered = rawLines.filter((line) => !/^\[hermes-diag\]/.test(line.trim()));
+  while (filtered.length > 0 && isEchoLine(filtered[0], prompt)) {
+    filtered.shift();
+  }
+  const cleaned = finalizeTerminalTranscript(filtered.join('\n'), prompt);
+  const sessionId = extractSessionId(stdout || '', resumeId, sessionWasInvalid);
+  return { cleaned, sessionId, diagnostics };
+};
+
 /** Hermes Agent installation, configuration, and lifecycle */
 export const hermesAPI = {
   /** Force-write secrets to ~/.hermes/.env and verify. Used by Diagnostics
@@ -508,6 +541,11 @@ export const hermesAPI = {
   /** Turn on file logging so the SubAgents tab can show delegation activity. */
   async enableFileLogging() {
     return enableHermesFileLogging();
+  },
+
+  /** Tear down the long-running Hermes chat process for a Ronbot conversation. */
+  async disposeConversationChat(conversationKey: string) {
+    return disposePersistentChat(conversationKey);
   },
 
   /** Read the active managed permissions block (for Diagnostics). */
@@ -916,6 +954,7 @@ export const hermesAPI = {
     onStreamId?: (id: string) => void,
     timeoutMs?: number,
     permissions?: PermissionsConfig,
+    conversationKey?: string,
   ): Promise<CommandResult & { reply?: string; diagnostics?: string; sessionId?: string; missingKey?: { provider: string; envVar: string }; materializeFailed?: boolean; timedOut?: boolean }> {
     const startedAt = Date.now();
     agentLogs.push({
@@ -967,10 +1006,60 @@ export const hermesAPI = {
     // flag: `hermes chat --resume <id> -q "..."`. Do not use `-p` here — `-p`
     // is the global profile selector, not a prompt flag.
     await ensureHermesChatCaps();
-    const noColorFlag = getHermesChatCaps().supportsNoColor ? ' --no-color' : '';
-    const chatInvocation = resumeId
-      ? `hermes chat --resume ${JSON.stringify(resumeId)} -q "$PROMPT"${noColorFlag} 2>&1`
-      : `hermes chat -q "$PROMPT"${noColorFlag} 2>&1`;
+    const caps = getHermesChatCaps();
+    const noColorFlag = caps.supportsNoColor ? ' --no-color' : '';
+    const quietFlag = caps.supportsQuiet ? ' --quiet' : '';
+    const effectiveTimeout = Math.max(60_000, timeoutMs ?? 600_000);
+
+    if (conversationKey) {
+      try {
+        const persistentResult = await runPersistentChatTurn(conversationKey, {
+          prompt,
+          resumeId,
+          noColorFlag,
+          quietFlag,
+          timeoutMs: effectiveTimeout,
+          onOutput,
+          onStreamId,
+        });
+        const { cleaned, sessionId, diagnostics } = processChatTranscript(
+          prompt,
+          persistentResult.stdout || persistentResult.reply || '',
+          resumeId,
+          false,
+        );
+        let finalReply = finalizeTerminalTranscript(cleaned, prompt) || cleaned;
+        const timedOut = !persistentResult.success && persistentResult.code === 124;
+        if (timedOut) {
+          const seconds = Math.round(effectiveTimeout / 1000);
+          finalReply = [
+            `⏱ The agent didn't finish within the ${seconds}s chat timeout.`,
+            '',
+            'Raise the limit in Settings → Sessions & history → "Per-prompt timeout".',
+          ].join('\n');
+        }
+        return {
+          ...persistentResult,
+          reply: finalReply,
+          diagnostics,
+          sessionId,
+          timedOut,
+        };
+      } catch (err) {
+        agentLogs.push({
+          source: 'chat',
+          level: 'warn',
+          summary: 'Persistent Hermes session failed — falling back to one-shot chat',
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        await disposePersistentChat(conversationKey).catch(() => undefined);
+      }
+    }
+
+    const hermesOneShot = resumeId
+      ? `hermes chat --resume ${JSON.stringify(resumeId)} -q "$PROMPT"${quietFlag}${noColorFlag} 2>&1`
+      : `hermes chat -q "$PROMPT"${quietFlag}${noColorFlag} 2>&1`;
+    const chatInvocation = wrapCommandInPty(hermesOneShot);
     const script = [
       'set -e',
       'export PATH="$HOME/.hermes/venv/bin:$HOME/.local/bin:$PATH"',
@@ -1006,10 +1095,35 @@ export const hermesAPI = {
     let activeStreamId: string | null = null;
     let promptBuffer = '';
     let answeringPrompt = false;
+    let pendingApproval: { action: ReturnType<typeof guessAction>; target: string } | null = null;
+
+    const answerApproval = (action: ReturnType<typeof guessAction>, target: string) => {
+      const handler = getApprovalHandler();
+      const sid = activeStreamId;
+      if (!handler) {
+        recordPermissionEvent({ action, target, decision: 'auto-denied', prompted: false });
+        if (sid) void coreAPI.writeStreamStdin(sid, 'd\n').catch(() => undefined);
+        return;
+      }
+      if (!sid) {
+        pendingApproval = { action, target };
+        return;
+      }
+      answeringPrompt = true;
+      pendingApproval = null;
+      promptBuffer = '';
+      void handler({ action, target }).then((choice) => {
+        void coreAPI.writeStreamStdin(sid, choiceToStdin(choice)).catch(() => undefined);
+        answeringPrompt = false;
+      });
+    };
+
     const wrappedOnStreamId = (id: string) => {
       activeStreamId = id;
       onStreamId?.(id);
+      if (pendingApproval) answerApproval(pendingApproval.action, pendingApproval.target);
     };
+
     const interceptingOnOutput: CommandOutputHandler = (chunk) => {
       onOutput?.(chunk);
       if (chunk.type !== 'stdout' && chunk.type !== 'stderr') return;
@@ -1019,9 +1133,6 @@ export const hermesAPI = {
       if (answeringPrompt) return;
       if (!matchesApprovalPrompt(promptBuffer)) return;
 
-      // Pull the 20 lines preceding the prompt as context — this is what
-      // gets shown to the user as "What" in the approval dialog so they
-      // can see the actual command/path the agent wants to act on.
       const lines = promptBuffer.split('\n').filter((l) => l.trim());
       let promptIdx = lines.findIndex((l) => matchesApprovalPrompt(l));
       if (promptIdx < 0) promptIdx = lines.length - 1;
@@ -1038,26 +1149,8 @@ export const hermesAPI = {
         });
       }
 
-      const handler = getApprovalHandler();
-      const sid = activeStreamId;
-      if (!handler || !sid) {
-        // No UI mounted — auto-deny so the agent doesn't hang forever.
-        recordPermissionEvent({ action, target, decision: 'auto-denied', prompted: false });
-        void coreAPI.writeStreamStdin(sid || '', 'd\n').catch(() => { /* */ });
-        promptBuffer = '';
-        return;
-      }
-      answeringPrompt = true;
-      promptBuffer = '';
-      void handler({ action, target }).then((choice) => {
-        void coreAPI.writeStreamStdin(sid, choiceToStdin(choice)).catch(() => { /* */ });
-        answeringPrompt = false;
-      });
+      answerApproval(action, target);
     };
-
-    // Use the caller-provided timeout when given (the UI exposes this as
-    // a setting), otherwise fall back to a generous 10 min default.
-    const effectiveTimeout = Math.max(60_000, timeoutMs ?? 600_000);
     let result = await runHermesShell(script, { timeout: effectiveTimeout, onStreamId: wrappedOnStreamId }, interceptingOnOutput);
 
     // Hermes refuses unknown resume ids with:
@@ -1074,42 +1167,19 @@ export const hermesAPI = {
         level: 'warn',
         summary: `Stale resume id ${resumeId} — starting a fresh session`,
       });
-      const freshInvocation = `hermes chat -q "$PROMPT"${noColorFlag} 2>&1`;
+      const freshInvocation = wrapCommandInPty(`hermes chat -q "$PROMPT"${quietFlag}${noColorFlag} 2>&1`);
       const freshScript = script.replace(chatInvocation, freshInvocation);
       result = await runHermesShell(freshScript, { timeout: effectiveTimeout, onStreamId: wrappedOnStreamId }, interceptingOnOutput);
     }
 
     const timedOut = !result.success && (result.code === 124 || /timed out after/i.test(result.stderr || ''));
 
-    // Pull diagnostic lines out separately so we can show them to the user
-    // when there's an error, but keep them out of the normal reply.
-    const rawLines = stripAnsi(result.stdout || '')
-      .split('\n')
-      .map((line) => line.replace(/\r/g, ''));
-
-    const diagnostics = rawLines
-      .filter((line) => /^\[hermes-diag\]/.test(line.trim()))
-      .map((line) => line.trim().replace(/^\[hermes-diag\]\s*/, ''))
-      .join('\n');
-
-    // Capture the session id Hermes prints in its footer:
-    //   "Resume this session with:\n  hermes --resume 20260420_064718_7199c1"
-    // We need this so the next turn can call `hermes chat --resume <id>` and
-    // keep the conversation context — without it every turn is a fresh
-    // session and the agent has no memory of what we just said.
-    const sessionId = extractSessionId(result.stdout || '', resumeId, sessionWasInvalid);
-    // Terminal-transcript model: keep CLI-visible lines; only drop Ronbot diag
-    // lines here. ChatContext prefers the live stream accumulator; this reply
-    // is a fallback when streaming produced no content.
-    const cleaned = (() => {
-      const filtered = rawLines.filter((line) => !/^\[hermes-diag\]/.test(line.trim()));
-
-      while (filtered.length > 0 && isEchoLine(filtered[0], prompt)) {
-        filtered.shift();
-      }
-
-      return finalizeTerminalTranscript(filtered.join('\n'));
-    })();
+    const { cleaned, sessionId, diagnostics } = processChatTranscript(
+      prompt,
+      result.stdout || '',
+      resumeId,
+      sessionWasInvalid,
+    );
 
     // Detect Hermes's "no inference provider" / "missing API key" error so the
     // UI can render an actionable CTA → Secrets tab.
@@ -1143,7 +1213,7 @@ export const hermesAPI = {
       }
     }
 
-    let finalReply = finalizeTerminalTranscript(cleaned) || stripAnsi(result.stdout || '').trim();
+    let finalReply = finalizeTerminalTranscript(cleaned, prompt) || stripAnsi(result.stdout || '').trim();
     const finalDiag = diagnostics || (mat.success ? '' : `materializeEnv failed: ${mat.error || 'unknown'}`);
 
     // Replace whatever partial output we got with a clear, actionable

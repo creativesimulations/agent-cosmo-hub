@@ -76,6 +76,7 @@ export const buildHermesShellCommand = async (script: string): Promise<string> =
 const HERMES_CHAT_CAPS: { probed: boolean } & HermesChatCliCaps = {
   probed: false,
   supportsNoColor: DEFAULT_HERMES_CHAT_CAPS.supportsNoColor,
+  supportsQuiet: DEFAULT_HERMES_CHAT_CAPS.supportsQuiet,
 };
 
 let hermesCapsProbePromise: Promise<void> | null = null;
@@ -96,6 +97,7 @@ export async function ensureHermesChatCaps(): Promise<void> {
       const out = (r.stdout || "") + (r.stderr || "");
       const parsed = parseHermesChatHelp(out);
       HERMES_CHAT_CAPS.supportsNoColor = parsed.supportsNoColor;
+      HERMES_CHAT_CAPS.supportsQuiet = parsed.supportsQuiet;
     } catch {
       Object.assign(HERMES_CHAT_CAPS, DEFAULT_HERMES_CHAT_CAPS);
     } finally {

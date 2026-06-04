@@ -29,15 +29,28 @@ describe("appendTerminalChunk", () => {
     expect(acc).toBe("line1\nline2");
   });
 
-  it("caps buffer size", () => {
-    const big = "x".repeat(TERMINAL_STREAM_MAX + 1000);
+  it("caps buffer size but preserves the start of the transcript", () => {
+    const head = "START-";
+    const big = head + "x".repeat(TERMINAL_STREAM_MAX + 1000);
     const acc = appendTerminalChunk("", big);
-    expect(acc.length).toBe(TERMINAL_STREAM_MAX);
-    expect(acc).toBe(big.slice(-TERMINAL_STREAM_MAX));
+    expect(acc.length).toBeLessThanOrEqual(TERMINAL_STREAM_MAX + 64);
+    expect(acc.startsWith(head)).toBe(true);
+    expect(acc).toContain("[middle truncated]");
   });
 });
 
 describe("finalizeTerminalTranscript", () => {
+  it("keeps reply text when Hermes chrome is absent", () => {
+    const src = "The answer starts here without any banner.\nSecond line.";
+    expect(finalizeTerminalTranscript(src)).toBe(src);
+  });
+
+  it("strips echoed user prompt at the start", () => {
+    const prompt = "Please fix the gateway";
+    const src = ["Please fix the gateway", "", "Here is what I found."].join("\n");
+    expect(finalizeTerminalTranscript(src, prompt)).toBe("Here is what I found.");
+  });
+
   it("removes leading and trailing Hermes chrome", () => {
     const src = [
       "Query: how's it going?",

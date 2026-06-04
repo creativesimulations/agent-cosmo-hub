@@ -300,6 +300,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       toast({ title: "Agent is busy", description: "Wait for the current reply to finish before switching conversations." });
       return;
     }
+    await systemAPI.disposeConversationChat?.(activeConversationIdRef.current).catch(() => undefined);
     const personaSignature = await capturePersonaSignature().catch(() => undefined);
     const conversation = createConversation({ personaSignature });
     setConversations((prev) => [conversation, ...prev]);
@@ -317,6 +318,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       toast({ title: "Agent is busy", description: "Wait for the current reply to finish before switching conversations." });
       return;
     }
+    await systemAPI.disposeConversationChat?.(activeConversationIdRef.current).catch(() => undefined);
     const target = conversationsRef.current.find((conversation) => conversation.id === id);
     if (!target || target.archivedAt) return;
     const currentSignature = await capturePersonaSignature().catch(() => undefined);
@@ -438,6 +440,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             (id) => { activeStreamIdRef.current = id; },
             timeoutMs,
             settingsRef.current.permissions,
+            item.conversationId,
           );
 
           liveSubAgents.finalizeRunning();
@@ -483,7 +486,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             streamTurn.approvalPromptSeen,
           );
           const toolUnavailable = result.success && !result.missingKey ? detectToolUnavailable(reply) : undefined;
-          const streamedTranscript = finalizeTerminalTranscript(streamAcc);
+          const streamedTranscript = finalizeTerminalTranscript(streamAcc, item.prompt);
           const assistantVisible =
             result.success && !result.missingKey && !matFailed
               ? streamedTranscript || reply
@@ -578,6 +581,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const stop = useCallback(async () => {
     stopRequestedRef.current = true;
     const sid = activeStreamIdRef.current;
+    await systemAPI.disposeConversationChat?.(activeConversationIdRef.current).catch(() => undefined);
     if (sid) {
       await systemAPI.killStream(sid).catch(() => undefined);
       activeStreamIdRef.current = null;

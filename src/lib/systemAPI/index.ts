@@ -79,6 +79,7 @@ export const systemAPI = {
   startAgent: hermesAPI.start.bind(hermesAPI),
   stopHermesAgentRuntime: hermesAPI.stopHermesAgentRuntime.bind(hermesAPI),
   chatAgent: hermesAPI.chat.bind(hermesAPI),
+  disposeConversationChat: hermesAPI.disposeConversationChat.bind(hermesAPI),
   writeInitialConfig: hermesAPI.writeInitialConfig.bind(hermesAPI),
   setAgentName: hermesAPI.setAgentName.bind(hermesAPI),
   getAgentName: hermesAPI.getAgentName.bind(hermesAPI),

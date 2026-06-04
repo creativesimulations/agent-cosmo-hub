@@ -1,7 +1,10 @@
-import { isBannerLine, stripAnsi } from "@/lib/systemAPI/hermes/chatOutput";
+import { isBannerLine, isEchoLine, stripAnsi } from "@/lib/systemAPI/hermes/chatOutput";
 
 /** Max accumulated transcript per turn (chars). */
 export const TERMINAL_STREAM_MAX = 64 * 1024;
+
+/** Preserve the start of long replies when the buffer rolls over. */
+const TRANSCRIPT_HEAD_KEEP = 16 * 1024;
 
 /** Hermes chrome lines; blank lines are kept so paragraph breaks survive streaming. */
 export function isTranscriptNoiseLine(line: string): boolean {
@@ -30,13 +33,39 @@ export function appendTerminalChunk(acc: string, chunk: string): string {
   if (!piece) return acc;
   const next = acc + piece;
   if (next.length <= TERMINAL_STREAM_MAX) return next;
-  return next.slice(-TERMINAL_STREAM_MAX);
+  const head = next.slice(0, TRANSCRIPT_HEAD_KEEP);
+  const tailBudget = TERMINAL_STREAM_MAX - TRANSCRIPT_HEAD_KEEP - 32;
+  const tail = next.slice(-Math.max(0, tailBudget));
+  return `${head}\n…[middle truncated]…\n${tail}`;
+}
+
+/** True when Hermes printed its usual pre-reply chrome (box, init, query echo). */
+export function hasLeadingHermesChrome(lines: string[]): boolean {
+  const head = lines.slice(0, 16);
+  return head.some((line) => {
+    const t = line.trim();
+    if (!t) return false;
+    if (/[│┃╭╮╰╯┌┐└┘─━═╔╗╚╝]/.test(t)) return true;
+    if (/^query:\s/i.test(t)) return true;
+    if (/^initializing agent/i.test(t)) return true;
+    if (/^[↻⟳]?\s*resumed session/i.test(t)) return true;
+    if (/^[▶►]?\s*starting (a )?new session/i.test(t)) return true;
+    return false;
+  });
 }
 
 function trimLeadingBannerLines(lines: string[]): string[] {
+  if (!hasLeadingHermesChrome(lines)) return lines;
   let start = 0;
   while (start < lines.length && isBannerLine(lines[start])) start += 1;
   return lines.slice(start);
+}
+
+export function stripLeadingEchoLines(lines: string[], userPrompt?: string): string[] {
+  if (!userPrompt?.trim()) return lines;
+  const out = [...lines];
+  while (out.length > 0 && isEchoLine(out[0], userPrompt)) out.shift();
+  return out;
 }
 
 function trimTrailingBannerLines(lines: string[]): string[] {
@@ -50,7 +79,9 @@ function trimTrailingBannerLines(lines: string[]): string[] {
 }
 
 /** End-of-turn trim: drop Hermes chrome before the reply and session footer after. */
-export function finalizeTerminalTranscript(acc: string): string {
-  const trimmed = trimTrailingBannerLines(trimLeadingBannerLines(acc.split(/\r?\n/)));
+export function finalizeTerminalTranscript(acc: string, userPrompt?: string): string {
+  let lines = stripLeadingEchoLines(acc.split(/\r?\n/), userPrompt);
+  while (lines.length > 0 && !lines[0].trim()) lines = lines.slice(1);
+  const trimmed = trimTrailingBannerLines(trimLeadingBannerLines(lines));
   return trimmed.join("\n").trimEnd();
 }
