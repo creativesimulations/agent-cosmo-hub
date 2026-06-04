@@ -11,7 +11,7 @@ import { RONBOT_MEMORY_UI_POINTER } from "./ronbotRules";
 
 export function buildDefaultMemoryMarkdown(): string {
   const base = DEFAULT_MEMORY_MARKDOWN.trimEnd();
-  if (base.includes("~/.ronbot/APP_GUIDE.md")) return base;
+  if (base.includes("ELECTRON_APP_GUIDE.md")) return base;
   return `${base}\n\n${RONBOT_MEMORY_UI_POINTER}`;
 }
 

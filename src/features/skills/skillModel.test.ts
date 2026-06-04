@@ -11,7 +11,7 @@ describe("skillModel", () => {
       requiredSecrets: ["GOOGLE_CLIENT_ID"],
     });
     expect(gw).toContain("google-workspace");
-    expect(gw).toContain("hermes auth google-workspace");
+    expect(gw).toContain("GOOGLE_CLIENT_ID");
     expect(gw).not.toContain("Gmail, Calendar, Drive, Docs, Sheets");
 
     const generic = skillSetupPrompt({
@@ -20,7 +20,7 @@ describe("skillModel", () => {
       source: "user",
     });
     expect(generic).toContain("my-custom-skill");
-    expect(generic).toContain("credential_request");
+    expect(generic).toContain("set up");
     expect(generic).not.toContain("hermes auth");
   });
 

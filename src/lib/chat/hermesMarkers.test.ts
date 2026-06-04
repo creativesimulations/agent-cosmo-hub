@@ -39,6 +39,17 @@ describe("stripHermesMarkers", () => {
     expect(markers).toEqual([{ kind: "password", purpose: "API token" }]);
   });
 
+  it("strips REQUEST_CREDENTIALS with purpose", () => {
+    const { markers } = stripHermesMarkers("x\n[REQUEST_CREDENTIALS] Slack token\ny");
+    expect(markers).toEqual([{ kind: "password", purpose: "Slack token" }]);
+  });
+
+  it("strips UPDATE_DASHBOARD and sets dashboardRefresh", () => {
+    const { text, dashboardRefresh } = stripHermesMarkers("Hi\n[UPDATE_DASHBOARD]\nBye");
+    expect(text).not.toContain("UPDATE_DASHBOARD");
+    expect(dashboardRefresh).toBe(true);
+  });
+
   it("parses SHOW_BRAID_GRAPH with following mermaid fence", () => {
     const src = [
       "Intro",

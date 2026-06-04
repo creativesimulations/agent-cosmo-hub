@@ -1,5 +1,4 @@
 import type { ToolUnavailableHit } from "@/lib/toolUnavailable";
-import type { AgentIntent, IntentResponse } from "@/lib/agentIntents";
 import type { HermesMarker } from "@/lib/chat/hermesMarkers";
 
 export interface ChatMessage {
@@ -30,9 +29,6 @@ export interface ChatMessage {
   };
   toolUnavailable?: ToolUnavailableHit;
   usedCapabilities?: string[];
-  intents?: AgentIntent[];
-  intentResponses?: Record<string, IntentResponse>;
-  intentResponseSummary?: string;
   /** QR / braid markers shown inline with this assistant message. */
   inlineMarkers?: HermesMarker[];
 }

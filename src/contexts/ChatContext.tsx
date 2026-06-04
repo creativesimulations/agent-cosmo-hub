@@ -19,7 +19,6 @@ import { handleAgentReplyArrived } from "@/lib/notify";
 import { liveSubAgents } from "@/lib/liveSubAgents";
 import { detectToolUnavailable } from "@/lib/toolUnavailable";
 import { useCapabilities } from "./CapabilitiesContext";
-import { splitIntentsFromText, formatIntentResponse, type AgentIntent, type IntentResponse } from "@/lib/agentIntents";
 import { useAgentConnection } from "./AgentConnectionContext";
 import {
   ACTIVE_CONVERSATION_STORAGE_KEY,
@@ -47,6 +46,7 @@ import {
   extractTerminalQrMarkers,
   stripHermesMarkers,
   publishHermesMarkers,
+  publishDashboardRefresh,
   type HermesMarker,
 } from "@/lib/chat/hermesMarkers";
 import { mergeHermesMarkers } from "@/lib/chat/mergeHermesMarkers";
@@ -90,7 +90,6 @@ interface ChatContextValue {
   dismissPersonaMismatch: () => void;
   draft: string;
   setDraft: Dispatch<SetStateAction<string>>;
-  sendIntentResponse: (assistantMsgId: string, intent: AgentIntent, response: IntentResponse) => Promise<void>;
   personalityRestartPending: boolean;
   markPersonalityDraftSent: () => void;
   clearPersonalityRestart: () => void;
@@ -442,13 +441,10 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             streamTurn.approvalPromptSeen,
           );
           const toolUnavailable = result.success && !result.missingKey ? detectToolUnavailable(reply) : undefined;
-          const split = result.success && !result.missingKey
-            ? splitIntentsFromText(reply)
-            : { text: reply, intents: [] as AgentIntent[], errors: [] };
-          let assistantVisible = split.text;
+          let assistantVisible = reply;
           let inlineMarkers: HermesMarker[] | undefined;
           if (result.success && !result.missingKey && !matFailed) {
-            const stripped = stripHermesMarkers(split.text);
+            const stripped = stripHermesMarkers(reply);
             assistantVisible = stripped.text;
             inlineMarkers = mergeHermesMarkers(
               mergeHermesMarkers(undefined, stripped.markers),
@@ -456,6 +452,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             );
             const modalMarkers = stripped.markers.filter((m) => m.kind === "password");
             if (modalMarkers.length) publishHermesMarkers(modalMarkers);
+            if (stripped.dashboardRefresh) publishDashboardRefresh();
           }
 
           patchMessages(item.conversationId, (prev) =>
@@ -477,7 +474,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     permissionMismatch,
                     toolUnavailable,
                     usedCapabilities: Array.from(streamTurn.usedCapsThisTurn),
-                    intents: split.intents.length > 0 ? split.intents : undefined,
                     inlineMarkers: inlineMarkers?.length ? inlineMarkers : m.inlineMarkers,
                   }
                 : m,
@@ -542,26 +538,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     void drainQueue();
   }, [agentRunning, drainQueue, patchMessages]);
 
-  const sendIntentResponse = useCallback(async (assistantMsgId: string, intent: AgentIntent, response: IntentResponse) => {
-    patchMessages(activeConversationIdRef.current, (prev) =>
-      prev.map((m) =>
-        m.id === assistantMsgId
-          ? { ...m, intentResponses: { ...(m.intentResponses || {}), [intent.id]: response } }
-          : m,
-      ),
-    );
-    const { prompt, summary } = formatIntentResponse(response, intent);
-    const beforeIds = new Set(messagesRef.current.filter((m) => m.role === "user").map((m) => m.id));
-    await sendMessage(prompt);
-    patchMessages(activeConversationIdRef.current, (prev) =>
-      prev.map((m) =>
-        m.role === "user" && !beforeIds.has(m.id) && m.content === prompt.trim()
-          ? { ...m, intentResponseSummary: summary }
-          : m,
-      ),
-    );
-  }, [patchMessages, sendMessage]);
-
   const stop = useCallback(async () => {
     stopRequestedRef.current = true;
     const sid = activeStreamIdRef.current;
@@ -608,7 +584,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         dismissPersonaMismatch,
         draft,
         setDraft,
-        sendIntentResponse,
         personalityRestartPending,
         markPersonalityDraftSent: () => setPersonalityRestartPending(true),
         clearPersonalityRestart: () => setPersonalityRestartPending(false),

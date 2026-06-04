@@ -120,7 +120,6 @@ export const systemAPI = {
   applyPersonalityPreset: hermesAPI.applyPersonalityPreset.bind(hermesAPI),
   deletePersonalityPreset: hermesAPI.deletePersonalityPreset.bind(hermesAPI),
   writeRonbotAgentRules: hermesAPI.writeRonbotAgentRules.bind(hermesAPI),
-  writeRonbotAppGuide: hermesAPI.writeRonbotAppGuide.bind(hermesAPI),
   writeElectronAppGuide: hermesAPI.writeElectronAppGuide.bind(hermesAPI),
   seedRonbotPersonalityAfterInstall: hermesAPI.seedRonbotPersonalityAfterInstall.bind(hermesAPI),
   // Prereqs (extras)

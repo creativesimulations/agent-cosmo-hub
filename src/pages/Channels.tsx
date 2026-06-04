@@ -14,7 +14,7 @@ import type { DiscoveredCapability } from "@/lib/capabilities/types";
  * Setup is fully agent-driven via chat: clicking "Set up" seeds the
  * capability's setup prompt into the chat composer; the agent owns
  * credential collection, OAuth, QR pairing, gateway lifecycle, and
- * runtime repair via the intent protocol. The renderer never shells
+ * runtime repair via chat. The renderer never shells
  * out to Hermes for any setup-style action.
  */
 

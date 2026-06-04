@@ -4,7 +4,7 @@ import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 
 /**
  * Once per session (after the agent is connected), refresh neutral Ronbot UI
- * protocol docs on disk (optional intents/markers). Does not change Hermes behavior.
+ * ELECTRON_APP_GUIDE on disk (optional stream markers). Does not change Hermes behavior.
  */
 export function useRonbotRulesBridge(): void {
   const { connected } = useAgentConnection();
@@ -16,7 +16,6 @@ export function useRonbotRulesBridge(): void {
         if (cancelled) return;
         await Promise.all([
           systemAPI.writeRonbotAgentRules?.(),
-          systemAPI.writeRonbotAppGuide?.(),
           systemAPI.writeElectronAppGuide?.(),
         ]);
       } catch {

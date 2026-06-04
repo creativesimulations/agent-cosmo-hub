@@ -89,7 +89,7 @@ const serializePersonaSignature = (signature?: ChatPersonaSignature): StoredPers
 
 export const deriveConversationTitle = (messages: ChatMessage[]): string => {
   const firstUser = messages.find((m) => m.role === "user" && m.content.trim());
-  const source = firstUser?.intentResponseSummary || firstUser?.content || "";
+  const source = firstUser?.content || "";
   const compact = source.replace(/\s+/g, " ").trim();
   if (!compact) return "New conversation";
   return compact.length > 42 ? `${compact.slice(0, 39)}...` : compact;
@@ -97,9 +97,7 @@ export const deriveConversationTitle = (messages: ChatMessage[]): string => {
 
 export const getConversationPreview = (conversation: ChatConversation): string => {
   const last = [...conversation.messages].reverse().find((m) => m.content.trim());
-  const source = last?.role === "user" && last.intentResponseSummary
-    ? last.intentResponseSummary
-    : last?.content || "";
+  const source = last?.content || "";
   const compact = source.replace(/\s+/g, " ").trim();
   if (!compact) return "No messages yet";
   return compact.length > 64 ? `${compact.slice(0, 61)}...` : compact;

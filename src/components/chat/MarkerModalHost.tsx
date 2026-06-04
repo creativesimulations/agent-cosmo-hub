@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { subscribeHermesMarkers, type HermesMarker } from "@/lib/chat/hermesMarkers";
 import { useChat } from "@/contexts/ChatContext";
 
-/** Password marker only — QR and braid render inline in the chat thread. */
+/** Credential marker only — QR and braid render inline in the chat thread. */
 const MarkerModalHost = () => {
   const { setDraft } = useChat();
   const [queue, setQueue] = useState<HermesMarker[]>([]);
@@ -46,7 +46,7 @@ const MarkerModalHost = () => {
     <Dialog open={active?.kind === "password"} onOpenChange={(o) => !o && advance()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Secret requested</DialogTitle>
+          <DialogTitle>Credential requested</DialogTitle>
           <DialogDescription>
             {active?.kind === "password"
               ? `The agent needs: ${active.purpose}. Enter a value — it will be inserted into your chat draft (not logged by Ronbot).`

@@ -29,7 +29,7 @@ const PersonalityDialog = ({ open, onOpenChange }: Props) => {
     setDraft(
       "I'd like to adjust your personality. Please update your SOUL.md / base behavior so that you ____. " +
         "Also keep this baseline: you operate inside the Ronbot desktop app and proactively manage it for me — " +
-        "see ~/.ronbot/APP_GUIDE.md for the UI protocol and never ask me to open a separate terminal or paste secrets in plain chat.",
+        "see ~/.hermes/ELECTRON_APP_GUIDE.md for Ronbot UI markers; use #/secrets for API keys — never ask me to open a separate terminal.",
     );
     onOpenChange(false);
     navigate("/");

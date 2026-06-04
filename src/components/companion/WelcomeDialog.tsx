@@ -61,7 +61,7 @@ const WelcomeDialog = () => {
             <br />
             <br />
             The panel on the right shows what I'm doing right now: my health,
-            active sub-agents, scheduled jobs, and heartbeat tasks.
+            active sub-agents and scheduled jobs (refreshed every few seconds).
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

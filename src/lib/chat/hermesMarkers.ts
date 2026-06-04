@@ -6,8 +6,10 @@ export type HermesMarker =
   | { kind: "braid"; mermaid?: string };
 
 type MarkerListener = (markers: HermesMarker[]) => void;
+type DashboardListener = () => void;
 
 const listeners = new Set<MarkerListener>();
+const dashboardListeners = new Set<DashboardListener>();
 
 export function subscribeHermesMarkers(fn: MarkerListener): () => void {
   listeners.add(fn);
@@ -16,9 +18,20 @@ export function subscribeHermesMarkers(fn: MarkerListener): () => void {
   };
 }
 
+export function subscribeDashboardRefresh(fn: DashboardListener): () => void {
+  dashboardListeners.add(fn);
+  return () => {
+    dashboardListeners.delete(fn);
+  };
+}
+
 function emit(markers: HermesMarker[]) {
   if (!markers.length) return;
   for (const fn of listeners) fn(markers);
+}
+
+export function publishDashboardRefresh() {
+  for (const fn of dashboardListeners) fn();
 }
 
 const stripAnsi = (s: string) =>
@@ -65,19 +78,22 @@ export function extractTerminalQrMarkers(source: string): HermesMarker[] {
 }
 
 /**
- * Remove Ronbot marker lines from assistant-visible text and collect modal
- * payloads. Run after `splitIntentsFromText` so markers inside intent fences
- * stay untouched (intents are stripped earlier).
+ * Remove Ronbot marker lines from assistant-visible text and collect UI payloads.
  */
-export function stripHermesMarkers(source: string): { text: string; markers: HermesMarker[] } {
+export function stripHermesMarkers(source: string): {
+  text: string;
+  markers: HermesMarker[];
+  dashboardRefresh: boolean;
+} {
   const markers: HermesMarker[] = [];
   let text = source;
+  let dashboardRefresh = false;
 
   const pushQr = (payload: string, display?: "terminal" | "payload") => {
     const p = payload.trim();
     if (p) markers.push({ kind: "qr", payload: p, display });
   };
-  const pushPw = (purpose: string) => {
+  const pushCredential = (purpose: string) => {
     markers.push({ kind: "password", purpose: purpose.trim() || "credential" });
   };
   const pushBraid = (diagram?: string) => {
@@ -100,8 +116,13 @@ export function stripHermesMarkers(source: string): { text: string; markers: Her
 
   text = text.replace(/\[SHOW_QR\][ \t]*(?:\r?\n)?/gi, "");
 
+  text = text.replace(/\[REQUEST_CREDENTIALS\]\s*([^\r\n]*)/gi, (_, purpose: string) => {
+    pushCredential(purpose);
+    return "";
+  });
+
   text = text.replace(/\[REQUEST_PASSWORD\]\s*([^\r\n]*)/gi, (_, purpose: string) => {
-    pushPw(purpose);
+    pushCredential(purpose);
     return "";
   });
 
@@ -113,8 +134,13 @@ export function stripHermesMarkers(source: string): { text: string; markers: Her
     },
   );
 
+  text = text.replace(/\[UPDATE_DASHBOARD\][ \t]*(?:\r?\n)?/gi, () => {
+    dashboardRefresh = true;
+    return "";
+  });
+
   const cleaned = text.replace(/\n{3,}/g, "\n\n").trimEnd();
-  return { text: cleaned, markers };
+  return { text: cleaned, markers, dashboardRefresh };
 }
 
 export function publishHermesMarkers(markers: HermesMarker[]) {

@@ -25,7 +25,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 
-import { IntentCard } from "@/components/intents";
 import ChatEmptyState from "@/components/chat/ChatEmptyState";
 import SlashCommandPalette from "@/components/chat/SlashCommandPalette";
 import { useChatComposer } from "@/hooks/useChatComposer";
@@ -50,7 +49,6 @@ const AgentChat = () => {
     startNewSession,
     draft,
     setDraft,
-    sendIntentResponse,
     personalityRestartPending,
     markPersonalityDraftSent,
     clearPersonalityRestart,
@@ -66,7 +64,7 @@ const AgentChat = () => {
   const [bannerDismissed, setBannerDismissed] = useState(false);
   // Voice mode + background-session toggles. These ride alongside chat — turning
   // them on prepends a hint to the next outgoing message that the agent's
-  // intent layer interprets (`/voice on`, `/background <prompt>`). They reset
+  // agent interprets (`/voice on`, `/background <prompt>`). They reset
   // automatically after sending so the user doesn't have to remember to flip
   // them back.
   const [voiceMode, setVoiceMode] = useState(false);
@@ -366,11 +364,7 @@ const AgentChat = () => {
                     (msg.role === "assistant" && !msg.streaming ? (
                       <LazyChatMessageMarkdown content={msg.content} />
                     ) : (
-                    <p className="text-sm whitespace-pre-wrap">
-                      {msg.role === "user" && msg.intentResponseSummary
-                        ? msg.intentResponseSummary
-                        : msg.content}
-                    </p>
+                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                     ))}
                   {msg.streaming && (
                     <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
@@ -454,24 +448,6 @@ const AgentChat = () => {
                   )}
                   {msg.inlineMarkers && msg.inlineMarkers.length > 0 && msg.role === "assistant" && (
                     <ChatInlineMarkers markers={msg.inlineMarkers} />
-                  )}
-                  {msg.intents && msg.intents.length > 0 && msg.role === "assistant" && (
-                    <div className="mt-2 space-y-2 -mx-1">
-                      {msg.intents.map((intent) => {
-                        const previousResponse = msg.intentResponses?.[intent.id];
-                        return (
-                          <IntentCard
-                            key={intent.id}
-                            intent={intent}
-                            responded={!!previousResponse}
-                            previousResponse={previousResponse}
-                            onRespond={(response) => {
-                              void sendIntentResponse(msg.id, intent, response);
-                            }}
-                          />
-                        );
-                      })}
-                    </div>
                   )}
                   {msg.diagnostics && (msg.missingKey || msg.materializeFailed || msg.content.startsWith("Error") || msg.content.startsWith("Failed")) && (
                     <details className="mt-2 text-[11px] text-muted-foreground/70">

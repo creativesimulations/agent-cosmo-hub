@@ -17,8 +17,6 @@ import {
 import type { PermissionsConfig } from '../permissions';
 import {
   RONBOT_RULES_BLOCK,
-  RONBOT_APP_GUIDE,
-  RONBOT_APP_GUIDE_VERSION,
   RONBOT_ELECTRON_APP_GUIDE,
   RONBOT_ELECTRON_APP_GUIDE_VERSION,
 } from './hermes/ronbotRules';
@@ -2219,9 +2217,8 @@ model: ${options.model || 'openrouter/auto'}
    *
    * Hermes auto-injects AGENTS.md (alongside SOUL.md and .cursorrules) into
    * every conversation. We use that to teach the agent ONE thing only — the
-   * Ronbot UI protocol (the `ronbot-intent` fenced JSON envelope and when
-   * to use each intent type). We deliberately do NOT re-explain Hermes
-   * features (cron, skills, MCP) — Hermes already knows those.
+   * Ronbot visual companion (simple chat markers). We deliberately do NOT
+   * re-explain Hermes features (cron, skills, MCP) — Hermes already knows those.
    *
    * Idempotent: replaces the block in place between
    * `<!-- ronbot:rules:start -->` and `<!-- ronbot:rules:end -->`,
@@ -2249,23 +2246,6 @@ model: ${options.model || 'openrouter/auto'}
       next = `${body.trimEnd()}${sep}${startTag}\n${block}\n${endTag}\n`;
     }
     return writeHermesFile(path, next, '600');
-  },
-
-  /**
-   * Write/refresh the full Ronbot app reference at ~/.ronbot/APP_GUIDE.md.
-   * The agent greps this when it needs intent JSON examples or recipe
-   * walkthroughs (WhatsApp setup, Google Workspace OAuth, etc.).
-   * Idempotent: rewrites only when the version header differs.
-   */
-  async writeRonbotAppGuide(): Promise<{ success: boolean; error?: string }> {
-    if (!isElectron()) return { success: false, error: 'browser-mode' };
-    const path = '$HOME/.ronbot/APP_GUIDE.md';
-    const existing = await readHermesFile(path).catch(
-      () => ({ success: false, content: '' }),
-    );
-    const body = existing.success && existing.content ? existing.content : '';
-    if (body.includes(RONBOT_APP_GUIDE_VERSION)) return { success: true };
-    return writeHermesFile(path, RONBOT_APP_GUIDE, '600');
   },
 
   /**
@@ -2309,7 +2289,6 @@ model: ${options.model || 'openrouter/auto'}
     }
     await this.writeElectronAppGuide().catch(() => undefined);
     await this.writeRonbotAgentRules().catch(() => undefined);
-    await this.writeRonbotAppGuide().catch(() => undefined);
     const ronbotPreset = await savePersonalityPreset('Ronbot_Default');
     const defaultPreset = await saveDefaultPersonalityPreset();
     const presetError = ronbotPreset.success ? defaultPreset.error : ronbotPreset.error;

@@ -5,7 +5,7 @@
  * the live agent capability registry as a fuzzy-filterable list. Selecting
  * an entry replaces the input with that capability's `setupPrompt` so the
  * user doesn't have to remember the exact wording — the agent then drives
- * the rest via the intent protocol.
+ * the rest via normal chat (and optional stream markers).
  *
  * The list is **not** hard-coded — it's derived from
  * `useCapabilities().discovered`, so new channels/tools/skills the agent

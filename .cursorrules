@@ -93,7 +93,7 @@ When install script fails/exits with error:
 - Chat renders Markdown + Mermaid.
 - Support modal markers in agent output:
   - `[SHOW_QR]`
-  - `[REQUEST_PASSWORD]`
+  - `[REQUEST_CREDENTIALS]` (alias: `[REQUEST_PASSWORD]`)
   - `[SHOW_BRAID_GRAPH]`
 
 ## Architecture — Never Break
