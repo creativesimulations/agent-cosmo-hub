@@ -24,7 +24,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 import { useChat } from "@/contexts/ChatContext";
 import { useAgentLiveState } from "@/hooks/useAgentLiveState";
-import { subscribeDashboardRefresh } from "@/lib/chat/hermesMarkers";
 import { getConversationPreview } from "@/lib/chat/persistence";
 
 const formatElapsed = (ms: number): string => {
@@ -127,8 +126,6 @@ const RightInfoPanel = () => {
     dismissPersonaMismatch,
   } = useChat();
   const live = useAgentLiveState(5000);
-
-  useEffect(() => subscribeDashboardRefresh(() => live.refresh()), [live.refresh]);
 
   const activeConversations = conversations
     .filter((conversation) => !conversation.archivedAt)

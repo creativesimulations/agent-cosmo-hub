@@ -3,8 +3,8 @@ import { systemAPI } from "@/lib/systemAPI";
 import { useAgentConnection } from "@/contexts/AgentConnectionContext";
 
 /**
- * Once per session (after the agent is connected), refresh neutral Ronbot UI
- * ELECTRON_APP_GUIDE on disk (optional stream markers). Does not change Hermes behavior.
+ * Once per session (after the agent is connected), refresh Ronbot UI guides on
+ * disk (terminal-style chat companion). Does not change Hermes behavior.
  */
 export function useRonbotRulesBridge(): void {
   const { connected } = useAgentConnection();

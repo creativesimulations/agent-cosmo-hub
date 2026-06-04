@@ -29,8 +29,25 @@ import ChatEmptyState from "@/components/chat/ChatEmptyState";
 import SlashCommandPalette from "@/components/chat/SlashCommandPalette";
 import { useChatComposer } from "@/hooks/useChatComposer";
 import { LazyChatMessageMarkdown } from "@/components/chat/LazyChatMessageMarkdown";
-import ChatInlineMarkers from "@/components/chat/ChatInlineMarkers";
+import { extractLineImageUrls } from "@/lib/chat/lineImageUrls";
 import AgentPromptBar from "@/components/chat/AgentPromptBar";
+
+function AssistantTranscript({ content }: { content: string }) {
+  const imageUrls = extractLineImageUrls(content);
+  return (
+    <>
+      <pre className="text-sm font-mono whitespace-pre-wrap break-words">{content}</pre>
+      {imageUrls.map((url) => (
+        <img
+          key={url}
+          src={url}
+          alt=""
+          className="mt-2 max-w-full rounded-md border border-white/10"
+        />
+      ))}
+    </>
+  );
+}
 
 const AgentChat = () => {
   const { connected: agentConnected } = useAgentConnection();
@@ -361,10 +378,10 @@ const AgentChat = () => {
                     </p>
                   )}
                   {(!msg.queued || msg.role === "user" || msg.content) &&
-                    (msg.role === "assistant" && !msg.streaming ? (
-                      <LazyChatMessageMarkdown content={msg.content} />
+                    (msg.role === "assistant" ? (
+                      <AssistantTranscript content={msg.content} />
                     ) : (
-                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                      <LazyChatMessageMarkdown content={msg.content} />
                     ))}
                   {msg.streaming && (
                     <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
@@ -445,9 +462,6 @@ const AgentChat = () => {
                   )}
                   {msg.usedCapabilities && msg.usedCapabilities.length > 0 && msg.role === "assistant" && !msg.streaming && (
                     <CapabilityChips capabilityIds={msg.usedCapabilities} />
-                  )}
-                  {msg.inlineMarkers && msg.inlineMarkers.length > 0 && msg.role === "assistant" && (
-                    <ChatInlineMarkers markers={msg.inlineMarkers} />
                   )}
                   {msg.diagnostics && (msg.missingKey || msg.materializeFailed || msg.content.startsWith("Error") || msg.content.startsWith("Failed")) && (
                     <details className="mt-2 text-[11px] text-muted-foreground/70">

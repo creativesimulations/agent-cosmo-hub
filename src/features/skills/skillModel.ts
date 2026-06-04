@@ -46,7 +46,11 @@ export function skillSetupPrompt(skill: ListedSkill): string {
     skill.requiredSecrets && skill.requiredSecrets.length > 0
       ? ` Required secrets: ${skill.requiredSecrets.join(", ")}.`
       : "";
-  return `Please set up the "${skill.name}" skill for me.${secrets} When finished, confirm it works and tell me what I can ask you to do with this skill.`;
+  const whatsappHint =
+    skill.name.toLowerCase() === "whatsapp"
+      ? " For QR pairing, paste the URL or pairing code in plain text in chat (no special UI markers)."
+      : "";
+  return `Please set up the "${skill.name}" skill for me.${secrets}${whatsappHint} When finished, confirm it works and tell me what I can ask you to do with this skill.`;
 }
 
 export function skillRowKey(skill: ListedSkill): string {

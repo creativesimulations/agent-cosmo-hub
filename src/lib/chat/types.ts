@@ -1,5 +1,4 @@
 import type { ToolUnavailableHit } from "@/lib/toolUnavailable";
-import type { HermesMarker } from "@/lib/chat/hermesMarkers";
 
 export interface ChatMessage {
   id: string;
@@ -29,8 +28,6 @@ export interface ChatMessage {
   };
   toolUnavailable?: ToolUnavailableHit;
   usedCapabilities?: string[];
-  /** QR / braid markers shown inline with this assistant message. */
-  inlineMarkers?: HermesMarker[];
 }
 
 export interface ChatPersonaFileSignature {

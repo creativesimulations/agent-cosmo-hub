@@ -76,10 +76,10 @@ import {
 import {
   classifyChatError,
   extractSessionId,
-  isBannerLine,
   isEchoLine,
   stripAnsi,
 } from './hermes/chatOutput';
+import { finalizeTerminalTranscript } from '../chat/terminalStream';
 import { detectAgentPrompt, promptDetectionSignature } from '../chat/agentPromptDetection';
 import { getAgentPromptHandler } from '../agentPromptBridge';
 import { parseSubAgentLog } from './hermes/subAgentLog';
@@ -904,20 +904,13 @@ export const hermesAPI = {
     return r;
   },
 
-  /** Send a single chat prompt to the agent and return its reply.
+  /** Send a single chat prompt and return a terminal-faithful transcript.
    *
-   *  Hermes ships a non-interactive single-query mode: `hermes chat -q "..."`
-   *  We use that instead of piping into the interactive TUI (which would
-   *  just dump its splash banner and exit without ever calling the model).
+   *  Uses `hermes chat -q "..."` (and `--resume` when cached). Streamed
+   *  stdout/stderr are shown live in Ronbot chat; `reply` is a fallback
+   *  when the UI accumulator is empty (minimal trim: diag lines, echo, footer).
    *
-   *  Notes:
-   *  - Secrets are materialized to ~/.hermes/.env right before invocation
-   *    so OPENROUTER_API_KEY (and friends) are visible to the agent.
-   *  - We force a dumb terminal so the CLI doesn't emit ANSI/box-drawing
-   *    chrome around the answer.
-   *  - Timeout is generous (180s) because first-token latency on remote
-   *    providers like OpenRouter can be slow, and tool-using turns can
-   *    take multiple round-trips. */
+   *  Secrets are materialized to ~/.hermes/.env before invocation. */
   async chat(
     prompt: string,
     onOutput?: CommandOutputHandler,
@@ -1145,13 +1138,12 @@ export const hermesAPI = {
     // keep the conversation context — without it every turn is a fresh
     // session and the agent has no memory of what we just said.
     const sessionId = extractSessionId(result.stdout || '', resumeId, sessionWasInvalid);
+    // Terminal-transcript model: keep CLI-visible lines; only drop Ronbot diag
+    // lines here. ChatContext prefers the live stream accumulator; this reply
+    // is a fallback when streaming produced no content.
     const cleaned = (() => {
-      const filtered = rawLines.filter((line) => !isBannerLine(line));
+      const filtered = rawLines.filter((line) => !/^\[hermes-diag\]/.test(line.trim()));
 
-      // Hermes sometimes echoes the user's prompt at the start of the reply
-      // (often wrapped/indented, sometimes only the tail). Detect and remove
-      // any leading lines that are a substring of, or fully contained within,
-      // the original prompt.
       while (filtered.length > 0 && isEchoLine(filtered[0], prompt)) {
         filtered.shift();
       }
@@ -1191,7 +1183,7 @@ export const hermesAPI = {
       }
     }
 
-    let finalReply = cleaned || stripAnsi(result.stdout || '').trim();
+    let finalReply = finalizeTerminalTranscript(cleaned) || stripAnsi(result.stdout || '').trim();
     const finalDiag = diagnostics || (mat.success ? '' : `materializeEnv failed: ${mat.error || 'unknown'}`);
 
     // Replace whatever partial output we got with a clear, actionable
@@ -2261,8 +2253,8 @@ model: ${options.model || 'openrouter/auto'}
    *
    * Hermes auto-injects AGENTS.md (alongside SOUL.md and .cursorrules) into
    * every conversation. We use that to teach the agent ONE thing only — the
-   * Ronbot visual companion (simple chat markers). We deliberately do NOT
-   * re-explain Hermes features (cron, skills, MCP) — Hermes already knows those.
+   * Ronbot visual companion (terminal-style chat transcript). We deliberately
+   * do NOT re-explain Hermes features (cron, skills, MCP) — Hermes already knows those.
    *
    * Idempotent: replaces the block in place between
    * `<!-- ronbot:rules:start -->` and `<!-- ronbot:rules:end -->`,
@@ -2293,7 +2285,7 @@ model: ${options.model || 'openrouter/auto'}
   },
 
   /**
-   * Short Electron UI primer under ~/.hermes/ (next to SOUL / AGENTS).
+   * Terminal-style Electron UI primer under ~/.hermes/ (next to SOUL / AGENTS).
    * Idempotent when the version header matches.
    */
   async writeElectronAppGuide(): Promise<{ success: boolean; error?: string }> {

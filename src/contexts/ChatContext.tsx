@@ -42,14 +42,9 @@ import type { ChatConversation, ChatMessage, ChatPersonaSignature } from "@/lib/
 import { analyzePermissionMismatch } from "@/lib/chat/permissionMismatch";
 import { ChatStreamTurnState } from "@/lib/chat/streamHandlers";
 import { fireToolUnavailableNotice } from "@/lib/chat/toolUnavailableNotice";
-import {
-  extractTerminalQrMarkers,
-  stripHermesMarkers,
-  publishHermesMarkers,
-  publishDashboardRefresh,
-  type HermesMarker,
-} from "@/lib/chat/hermesMarkers";
-import { mergeHermesMarkers } from "@/lib/chat/mergeHermesMarkers";
+import { appendTerminalChunk, finalizeTerminalTranscript } from "@/lib/chat/terminalStream";
+
+const LIVE_STREAM_THROTTLE_MS = 75;
 
 export type { ChatConversation, ChatMessage };
 
@@ -383,20 +378,46 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           const timeoutMs = Math.max(60, settingsRef.current.chatTimeoutSec || 600) * 1000;
           setLiveSubAgentCount(0);
           const streamTurn = new ChatStreamTurnState();
+          let streamAcc = "";
+          let lastLiveFlush = 0;
+          let liveFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+          const flushLiveTranscript = (force = false) => {
+            const now = Date.now();
+            if (!force && now - lastLiveFlush < LIVE_STREAM_THROTTLE_MS) return;
+            lastLiveFlush = now;
+            if (liveFlushTimer) {
+              clearTimeout(liveFlushTimer);
+              liveFlushTimer = null;
+            }
+            const content = streamAcc;
+            patchMessages(item.conversationId, (prev) =>
+              prev.map((m) =>
+                m.id === item.placeholderId ? { ...m, content, streaming: true } : m,
+              ),
+            );
+          };
+
+          const scheduleLiveFlush = () => {
+            if (liveFlushTimer) return;
+            const delay = Math.max(0, LIVE_STREAM_THROTTLE_MS - (Date.now() - lastLiveFlush));
+            liveFlushTimer = setTimeout(() => {
+              liveFlushTimer = null;
+              flushLiveTranscript(true);
+            }, delay);
+          };
+
           const result = await systemAPI.chatAgent(
             item.prompt,
             (chunk: { type: string; data?: string }) => {
               streamTurn.handleChunk(chunk, { recordUse, setLiveSubAgentCount });
-              if (chunk.type !== "stdout" && chunk.type !== "stderr") return;
-              const qrMarkers = extractTerminalQrMarkers(streamTurn.streamBuf);
-              if (!qrMarkers.length) return;
-              patchMessages(item.conversationId, (prev) =>
-                prev.map((m) =>
-                  m.id === item.placeholderId
-                    ? { ...m, inlineMarkers: mergeHermesMarkers(m.inlineMarkers, qrMarkers) }
-                    : m,
-                ),
-              );
+              if ((chunk.type !== "stdout" && chunk.type !== "stderr") || !chunk.data) return;
+              streamAcc = appendTerminalChunk(streamAcc, chunk.data);
+              if (Date.now() - lastLiveFlush >= LIVE_STREAM_THROTTLE_MS) {
+                flushLiveTranscript(true);
+              } else {
+                scheduleLiveFlush();
+              }
             },
             sessionIdRef.current ?? undefined,
             (id) => { activeStreamIdRef.current = id; },
@@ -405,6 +426,12 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           );
 
           liveSubAgents.finalizeRunning();
+          if (liveFlushTimer) {
+            clearTimeout(liveFlushTimer);
+            liveFlushTimer = null;
+          }
+          flushLiveTranscript(true);
+
           if (stopRequestedRef.current) {
             patchMessages(item.conversationId, (prev) =>
               prev.map((m) =>
@@ -441,19 +468,11 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             streamTurn.approvalPromptSeen,
           );
           const toolUnavailable = result.success && !result.missingKey ? detectToolUnavailable(reply) : undefined;
-          let assistantVisible = reply;
-          let inlineMarkers: HermesMarker[] | undefined;
-          if (result.success && !result.missingKey && !matFailed) {
-            const stripped = stripHermesMarkers(reply);
-            assistantVisible = stripped.text;
-            inlineMarkers = mergeHermesMarkers(
-              mergeHermesMarkers(undefined, stripped.markers),
-              extractTerminalQrMarkers(result.stdout || ""),
-            );
-            const modalMarkers = stripped.markers.filter((m) => m.kind === "password");
-            if (modalMarkers.length) publishHermesMarkers(modalMarkers);
-            if (stripped.dashboardRefresh) publishDashboardRefresh();
-          }
+          const streamedTranscript = finalizeTerminalTranscript(streamAcc);
+          const assistantVisible =
+            result.success && !result.missingKey && !matFailed
+              ? streamedTranscript || reply
+              : reply;
 
           patchMessages(item.conversationId, (prev) =>
             prev.map((m) =>
@@ -474,7 +493,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                     permissionMismatch,
                     toolUnavailable,
                     usedCapabilities: Array.from(streamTurn.usedCapsThisTurn),
-                    inlineMarkers: inlineMarkers?.length ? inlineMarkers : m.inlineMarkers,
                   }
                 : m,
             ),
@@ -498,6 +516,10 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           toast({ title: "Agent error", description: msg, variant: "destructive" });
           if (!onChatPageRef.current) setUnreadCount((n) => n + 1);
         } finally {
+          if (liveFlushTimer) {
+            clearTimeout(liveFlushTimer);
+            liveFlushTimer = null;
+          }
           activeStreamIdRef.current = null;
           setLiveSubAgentCount(0);
         }
